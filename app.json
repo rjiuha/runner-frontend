@@ -1,0 +1,36 @@
+{
+  "name": "runner-game",
+  "displayName": "Runner Game",
+  "expo": {
+    "slug": "runner-game",
+    "name": "Runner Game",
+    "description": "Рейс на выживание",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./src/assets/images/icon.png",
+    "splash": {
+  
+      "image": "./src/assets/images/icon.png",
+      "resizeMode": "cover",
+      "backgroundColor": "#2c3e50"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.runnergame.app"
+    },
+    "android": {
+      "package": "com.runnergame.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./src/assets/images/foreground.png",
+        "backgroundColor": "#2c3e50"
+      }
+    },
+    "web": {
+      "favicon": "./src/assets/images/favicon.png"
+    }
+  }
+}
