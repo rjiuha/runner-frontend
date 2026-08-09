@@ -1,63 +1,26 @@
 // App.js
 import React from 'react';
+import { StatusBar } from 'expo-status-bar';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
-import { createStackNavigator } from '@react-navigation/stack';
-import AuthScreen from './src/screens/AuthScreen';
-import MainMenuScreen from './src/screens/MainMenuScreen';
-import GameListScreen from './src/screens/GameListScreen';
-//import CreateRoomScreen from './src/screens/CreateRoomScreen';
-//import GameBoardScreen from './src/screens/GameBoardScreen';
-const Stack = createStackNavigator();
+
+import { AuthProvider } from './src/context/AuthContext';
+import RootNavigator from './src/navigation/RootNavigator';
 
 /**
- * Точка входа приложения
+ * Точка входа. Здесь только провайдеры — вся логика в RootNavigator.
+ * Порядок важен: AuthProvider должен быть ВЫШЕ навигатора,
+ * потому что навигатор решает, какие экраны показывать, по состоянию авторизации.
  */
 export default function App() {
   return (
-    
-    <NavigationContainer>
-      <Stack.Navigator initialRouteName="Auth">
-        {/* Экран авторизации/регистрации */}
-        <Stack.Screen 
-          name="Auth" 
-          component={AuthScreen} 
-          options={{ headerShown: false }} 
-        />
-        
-        {/* Главное меню */}
-        <Stack.Screen 
-          name="MainMenu" 
-          component={MainMenuScreen} 
-          options={{ title: 'Главное меню', lazy: 'true' }} 
-          
-        />
-        
-        {/* Список игр */}
-        <Stack.Screen 
-          name="GameList" 
-          component={GameListScreen} 
-          options={{ title: 'Список игр', lazy: 'true' }} 
-        />
-        
-        {/*
-        <Stack.Screen 
-          name="CreateRoom" 
-          component={CreateRoomScreen} 
-          options={{ title: 'Новая игра', lazy: 'true', headerStyle: { backgroundColor: '#e74c3c' } }} 
-        />
-        
-        {/*
-        <Stack.Screen 
-          name="GameBoard" 
-          component={GameBoardScreen} 
-          options={{ 
-            headerShown: false, 
-            presentation: 'fullScreenModal', // На весь экран без шапки
-            animationType: 'slide',
-            lazy: 'true'
-          }} 
-        />*/}
-      </Stack.Navigator>
-    </NavigationContainer>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <NavigationContainer>
+            <StatusBar style="light" />
+            <RootNavigator />
+          </NavigationContainer>
+        </AuthProvider>
+      </SafeAreaProvider>
   );
 }

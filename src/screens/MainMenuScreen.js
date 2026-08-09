@@ -1,94 +1,121 @@
 // src/screens/MainMenuScreen.js
-import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, SafeAreaView, ScrollView } from 'react-native';
-//import { useGame } from '../hooks/useGame';
+import React, { useCallback, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
+
+import Screen from '../components/ui/Screen';
+import MenuCard from '../components/menu/MenuCard';
+import ProfileCard from '../components/menu/ProfileCard';
+import CreateLobbyModal from '../components/menu/CreateLobbyModal';
+import { useAuth } from '../hooks/useAuth';
+import { lobbyApi } from '../api/lobby';
+import { ROUTES } from '../navigation/routes';
+import { notify, confirm } from '../lib/notify';
+import { colors, spacing, font } from '../theme';
 
 export default function MainMenuScreen({ navigation }) {
- // const { user, createRoom, activeGameId, roomState, handleReconnect } = useGame('MAIN_MENU');
+  const { user, signOut } = useAuth();
+
+  const [activeLobby, setActiveLobby] = useState(null);
+  const [creating, setCreating] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+
+  /**
+   * useFocusEffect, а не useEffect: проверять активное лобби нужно
+   * при КАЖДОМ возврате на экран (вышел из лобби → баннер должен исчезнуть),
+   * а не только при первом монтировании.
+   */
+  useFocusEffect(
+      useCallback(() => {
+        let cancelled = false;
+
+        lobbyApi
+            .mine()
+            .then((lobby) => { if (!cancelled) setActiveLobby(lobby); })
+            // «нет лобби» бек отдаёт ошибкой — для нас это норма, а не сбой
+            .catch(() => { if (!cancelled) setActiveLobby(null); });
+
+        return () => { cancelled = true; };
+      }, []),
+  );
+
+  const handleCreate = async (maxPlayers) => {
+    setCreating(true);
+    try {
+      const lobby = await lobbyApi.create(maxPlayers);
+      setModalOpen(false);
+      navigation.navigate(ROUTES.LOBBY, { lobbyId: lobby.id });
+    } catch (e) {
+      // Самый частый случай — «ты уже в лобби».
+      // Тогда не показываем ошибку, а просто отводим туда, где он есть.
+      const existing = await lobbyApi.mine().catch(() => null);
+      if (existing) {
+        setModalOpen(false);
+        navigation.navigate(ROUTES.LOBBY, { lobbyId: existing.id });
+        return;
+      }
+      notify('Не удалось создать лобби', e.userMessage ?? e.message);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const handleLogout = () => {
+    confirm('Выйти из аккаунта?', 'Придётся войти заново', signOut, 'Выйти');
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        
-        {/* Шапка с информацией о пользователе */}
-        <View style={styles.header}>
-          <Text style={styles.greeting}>Привет, {/*user?.name ||*/ 'Гость'}</Text>
-          <Text style={styles.subtitle}>Добро пожаловать в Runner Game</Text>
-        </View>
+      <Screen dark={false} scroll contentContainerStyle={styles.content}>
+        <ProfileCard username={user?.username} />
 
-        {/* Статус активной игры (если есть) */}
-        {activeGameId && (
-          <TouchableOpacity 
-            style={[styles.card, styles.reconnectCard]} 
-            //onPress={() => handleReconnect()}
-          >
-            <Text style={styles.cardTitle}>🔄 Переподключиться</Text>
-            <Text style={styles.cardDesc}>ID: {activeGameId}</Text>
-            <Text style={{color: '#f1c40f', fontSize: 12}}>Статус: {/*roomState.status*/}</Text>
-          </TouchableOpacity>
+        {/* Возврат в лобби, если игрок из него выпал */}
+        {activeLobby && (
+            <MenuCard
+                title="🔄 Вернуться в лобби"
+                description={`Игроков: ${activeLobby.players.length}/${activeLobby.maxPlayers}`}
+                color={colors.success}
+                onPress={() => navigation.navigate(ROUTES.LOBBY, { lobbyId: activeLobby.id })}
+            />
         )}
 
-        {/* Кнопка создания игры */}
-        <TouchableOpacity 
-          style={[styles.card, styles.createBtn]} 
-          //onPress={() => createRoom()}
-        >
-          <Text style={styles.cardTitle}>🏁 Создать игру</Text>
-          <Text style={styles.cardDesc}>Пригласить до 3 друзей в комнату ожидания</Text>
-        </TouchableOpacity>
+        <MenuCard
+            title="🏁 Создать лобби"
+            description="Собрать игроков и начать партию"
+            color={colors.danger}
+            onPress={() => setModalOpen(true)}
+        />
 
-        {/* Кнопка списка игр */}
-        <TouchableOpacity 
-          style={[styles.card, styles.listBtn]} 
-          onPress={() => navigation.navigate('GameList')}
-        >
-          <Text style={styles.cardTitle}>📋 Список игр</Text>
-          <Text style={styles.cardDesc}>Подключиться к существующей игре</Text>
-        </TouchableOpacity>
+        <MenuCard
+            title="🔍 Найти лобби"
+            description="Присоединиться к открытой игре"
+            color={colors.info}
+            onPress={() => navigation.navigate(ROUTES.LOBBY_SEARCH)}
+        />
 
-        {/* Кнопка выхода */}
-        <TouchableOpacity 
-          style={[styles.card, styles.logoutBtn]} 
-          onPress={() =>  navigation.navigate('Auth')}
-        >
-          <Text style={styles.cardTitle}>🚪 Выйти</Text>
-        </TouchableOpacity>
-      </ScrollView>
-    </SafeAreaView>
+        {/* Заготовки под MVP-2 — оставлены намеренно, чтобы был виден план */}
+        <View style={styles.soonBlock}>
+          <Text style={styles.soonLabel}>Скоро</Text>
+          <MenuCard title="🛒 Магазин" description="Скины и бонусы" color={colors.muted} disabled />
+          <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
+        </View>
+
+        <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
+
+        <CreateLobbyModal
+            visible={modalOpen}
+            busy={creating}
+            onClose={() => setModalOpen(false)}
+            onSubmit={handleCreate}
+        />
+      </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#ecf0f1' },
-  scrollContent: { padding: 20 },
-  
-  header: { 
-    marginBottom: 30, 
-    alignItems: 'center',
-    borderBottomWidth: 1,
-    borderBottomColor: '#bdc3c7',
-    paddingBottom: 20
+  content: { padding: spacing.lg },
+  soonBlock: { marginTop: spacing.sm, opacity: 0.7 },
+  soonLabel: {
+    fontSize: font.tiny, color: colors.textSecondary,
+    textTransform: 'uppercase', marginBottom: spacing.sm, letterSpacing: 1,
   },
-  greeting: { fontSize: 24, fontWeight: 'bold', color: '#2c3e50' },
-  subtitle: { fontSize: 16, color: '#7f8c8d', marginTop: 5 },
-  
-  card: { 
-    backgroundColor: 'white', 
-    borderRadius: 12, 
-    padding: 20, 
-    marginBottom: 15, 
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3
-  },
-  
-  createBtn: { backgroundColor: '#e74c3c' }, // Красный для создания (акцент)
-  listBtn: { backgroundColor: '#3498db' },   // Синий для списка
-  reconnectCard: { backgroundColor: '#2ecc71' }, // Зеленый для ре-коннекта
-  logoutBtn: { backgroundColor: '#95a5a6', marginTop: 'auto', marginBottom: 0 },
-  
-  cardTitle: { fontSize: 20, fontWeight: 'bold', color: 'white', marginBottom: 8 },
-  cardDesc: { fontSize: 14, color: 'rgba(255,255,255,0.9)' }
 });
