@@ -1,5 +1,5 @@
 // src/screens/LobbySearchScreen.js
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, RefreshControl, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
@@ -41,18 +41,29 @@ export default function LobbySearchScreen({ navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [joiningId, setJoiningId] = useState(null);
   const [error, setError] = useState(null);
+  // Счётчик запросов: useFocusEffect дёргает load() на каждый фокус, а его
+  // ещё можно нажать вручную (Retry/pull-to-refresh) поверх уже летящего
+  // запроса. Без этого более ранний, но позже завершившийся запрос перезаписывал
+  // состояние свежего — списку то мерещилась ошибка, то пустота, хотя бэк
+  // всё это время отдавал одно и то же (см. CLAUDE.md).
+  const requestIdRef = useRef(0);
 
   const load = useCallback(async (isRefresh = false) => {
+    const requestId = ++requestIdRef.current;
     if (isRefresh) setRefreshing(true);
     setError(null);
     try {
       const { items } = await lobbyApi.search({ limit: 20 });
+      if (requestId !== requestIdRef.current) return; // устарел — уже пошёл более новый запрос
       setLobbies(items);
     } catch (e) {
+      if (requestId !== requestIdRef.current) return;
       setError(e.userMessage ?? e.message);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, []);
 
