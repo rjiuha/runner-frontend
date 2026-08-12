@@ -65,7 +65,7 @@ export default function ParallaxBackground() {
   return (
       <View style={styles.container} pointerEvents="none">
         <Animated.Image
-            source={require('../../assets/images/auth_background_landscape.png')}
+            source={require('../../assets/images/auth_background_landscape.jpg')}
             style={[
               styles.bg,
               { width: imgW, height: imgH, top: -(imgH - screenH) / 2, left: -(imgW - screenW) / 2 },
@@ -78,6 +78,12 @@ export default function ParallaxBackground() {
 }
 
 const styles = StyleSheet.create({
-  container: { ...StyleSheet.absoluteFillObject, zIndex: -1, overflow: 'hidden' },
+  // Раньше здесь был zIndex: -1 — на Android отрицательный zIndex может
+  // привести к тому, что вью вообще не рисуется (особенно рядом со сложными
+  // соседями, как на GameBoardScreen), и фон пропадал только на мобильных.
+  // Тот же эффект "фон позади всего" даёт порядок рендера: компонент и так
+  // всегда вставляется первым ребёнком, а более поздние соседи по умолчанию
+  // рисуются поверх — zIndex тут не нужен вовсе.
+  container: { ...StyleSheet.absoluteFillObject, overflow: 'hidden' },
   bg: { position: 'absolute' },
 });

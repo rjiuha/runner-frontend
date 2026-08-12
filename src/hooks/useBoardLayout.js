@@ -26,6 +26,15 @@ export function useBoardLayout() {
     );
 
     const arrowBtnSize = Math.floor(screenH * 0.15);
+
+    // Высота зоны переключателя игроков в левой панели — считаем от реальных
+    // пикселей окна (как arrowBtnSize), а не долей flex (flex:1/flex:4 внутри
+    // панели): на вебе цепочка flex-высот от корня навигатора до панели не
+    // всегда даёт панели реальную высоту экрана (нет чёткого height:100% на
+    // каждом уровне), из-за чего flex-пропорция переключателя не соблюдалась
+    // и он визуально расползался почти на пол-экрана. Фиксированный пиксельный
+    // размер не зависит от этой цепочки.
+    const switcherH = Math.floor(screenH * 0.15);
     const roadZoneW = Math.max(0, screenW - leftPanelW);
     const roadBudgetW = Math.max(0, roadZoneW - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2);
     const roadBudgetH = Math.max(0, screenH - ROAD_AREA_SPACING * 2);
@@ -33,13 +42,19 @@ export function useBoardLayout() {
     const segmentW = Math.floor(roadBudgetW / COLS);
     const segmentH = Math.floor(roadBudgetH / ROWS);
 
-    const minOffset = -(TOTAL_COLS - COLS) * segmentW;
+    // Нечётные ряды в BoardGrid сдвинуты вправо на segmentW/2 (кирпичная кладка),
+    // поэтому их правый край дальше, чем у чётных — без запаса на пол-ячейки
+    // прокрутка упиралась в границу раньше, чем последняя колонка нечётных
+    // рядов успевала полностью появиться на экране (баг: обрезанный
+    // крайний правый фрагмент на нечётных дорожках).
+    const minOffset = -((TOTAL_COLS - COLS) * segmentW + segmentW / 2);
 
     return {
         screenW,
         screenH,
         leftPanelW,
         arrowBtnSize,
+        switcherH,
         roadContainerW: segmentW * COLS,   // ровно один фрагмент 8 колонок в ширину
         roadContainerH: segmentH * ROWS,   // все 6 дорожек по высоте, без обрезки
         segmentW,

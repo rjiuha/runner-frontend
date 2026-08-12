@@ -4,9 +4,11 @@ import { ScrollView, StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
- * Переключатель карточек игроков — кнопки с именами (не голые стрелки),
- * активная подсвечена цветом игрока. Горизонтальный скролл — подстраховка
- * на случай длинных имён/узкой панели, а не основной способ навигации.
+ * Переключатель игроков — компактный горизонтальный ряд именных пилюль,
+ * расположен НАД зоной информации об игроке (см. PlayerInfoPanel: switcher
+ * flex:1 / infoColumn flex:4 в колоночной раскладке — панель делит высоту,
+ * не ширину). Активная пилюля подсвечена цветом игрока. Горизонтальный
+ * скролл — подстраховка на случай длинных имён/узкой панели.
  */
 export default function PlayerSwitcher({ players, activeId, onSelect }) {
     return (
@@ -39,15 +41,15 @@ export default function PlayerSwitcher({ players, activeId, onSelect }) {
 }
 
 const styles = StyleSheet.create({
-    row: { paddingBottom: spacing.xs },
+    row: { alignItems: 'center', paddingBottom: 2 },
     pill: {
-        borderWidth: 2,
+        borderWidth: 1.5,
         borderRadius: radius.pill,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.xs,
-        marginRight: spacing.sm,
-        maxWidth: 130,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        marginRight: 6,
+        maxWidth: 92,
     },
-    label: { color: colors.textOnDark, fontSize: font.small, fontWeight: '600' },
+    label: { color: colors.textOnDark, fontSize: font.tiny, fontWeight: '600' },
     labelActive: { color: '#fff', fontWeight: 'bold' },
 });

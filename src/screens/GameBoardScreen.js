@@ -13,8 +13,9 @@ import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments } from '../lib/board';
 import { notify } from '../lib/notify';
-import { BOARD_LAYOUT, PLAYER_COLORS } from '../constants/GameConstants';
+import { BOARD_LAYOUT, PLAYER_ABILITY_ORDER, PLAYER_COLORS, RUNNER_TYPES } from '../constants/GameConstants';
 import { MOCK_GAME } from '../constants/mockGameData';
+import { colors } from '../theme';
 
 /**
  * Экран игровой сессии. Пока данные — мок в форме реального ответа
@@ -32,6 +33,7 @@ export default function GameBoardScreen() {
     const {
         leftPanelW,
         arrowBtnSize,
+        switcherH,
         roadContainerW,
         roadContainerH,
         segmentW,
@@ -57,6 +59,9 @@ export default function GameBoardScreen() {
     const [selectedRunnerId, setSelectedRunnerId] = useState(null);
     // { [playerId]: { boost: diceIndex|null, heal:..., reaper:..., ghost:... } }
     const [diceAssignments, setDiceAssignments] = useState({});
+    // { [playerId]: { [runnerId]: diceIndex[] } } — первый индекс = ход,
+    // остальные (если на бегуна брошен ещё кубик) = накат.
+    const [moveAssignments, setMoveAssignments] = useState({});
 
     const players = useMemo(
         () =>
@@ -85,6 +90,27 @@ export default function GameBoardScreen() {
             shotSound.play();
 
             if (!selectedRunnerId) return;
+            const runner = runners.find((r) => r.id === selectedRunnerId);
+            if (!runner) return;
+
+            // Уже размещённого на поле бегуна (кроме Жнеца — ему по правилам
+            // можно куда угодно, см. gate на активное усиление в
+            // PlayerInfoPanel) можно двигать только на одну клетку: вперёд по
+            // трассе (col+1, та же дорожка) или на соседнюю дорожку (та же
+            // колонка, row±1). Выход за верхнюю/нижнюю дорожку невозможен уже
+            // потому, что за пределами 0..rows-1 клеток на доске просто нет —
+            // тапнуть там нечего. Первое размещение из резерва (segment == null)
+            // без ограничений, как и раньше.
+            if (runner.segment != null && runner.type !== RUNNER_TYPES.REAPER) {
+                const currentGlobalCol = runner.segment * cols + runner.positionX;
+                const currentRow = runner.positionY;
+
+                const isForward = cell.col === currentGlobalCol + 1 && cell.row === currentRow;
+                const isLaneChange = cell.col === currentGlobalCol && Math.abs(cell.row - currentRow) === 1;
+
+                if (!isForward && !isLaneChange) return; // недопустимый ход — тап просто игнорируется
+            }
+
             setRunners((prev) =>
                 prev.map((r) =>
                     r.id === selectedRunnerId
@@ -99,20 +125,42 @@ export default function GameBoardScreen() {
             );
             setSelectedRunnerId(null);
         },
-        [shotSound, selectedRunnerId, cols],
+        [shotSound, selectedRunnerId, runners, cols],
     );
 
     const handleAssignDice = useCallback((playerId, abilityKey, diceIndex) => {
-        setDiceAssignments((prev) => ({
-            ...prev,
-            [playerId]: { ...prev[playerId], [abilityKey]: diceIndex },
-        }));
+        setDiceAssignments((prev) => {
+            // По правилам за ход активно только одно усиление — назначение
+            // нового кубика сбрасывает остальные зоны этого игрока, а не
+            // добавляется к ним.
+            const cleared = Object.fromEntries(PLAYER_ABILITY_ORDER.map((key) => [key, null]));
+            return { ...prev, [playerId]: { ...cleared, [abilityKey]: diceIndex } };
+        });
     }, []);
 
     const handleUnassignDice = useCallback((playerId, abilityKey) => {
         setDiceAssignments((prev) => {
             if (prev[playerId]?.[abilityKey] == null) return prev;
             return { ...prev, [playerId]: { ...prev[playerId], [abilityKey]: null } };
+        });
+    }, []);
+
+    const handleAssignMove = useCallback((playerId, runnerId, diceIndex) => {
+        setMoveAssignments((prev) => {
+            const playerMoves = prev[playerId] ?? {};
+            const current = playerMoves[runnerId] ?? [];
+            if (current.includes(diceIndex)) return prev; // уже назначен этот кубик — повторный дроп игнорируем
+            return { ...prev, [playerId]: { ...playerMoves, [runnerId]: [...current, diceIndex] } };
+        });
+    }, []);
+
+    const handleUnassignMove = useCallback((playerId, runnerId, diceIndex) => {
+        setMoveAssignments((prev) => {
+            const playerMoves = prev[playerId] ?? {};
+            const current = playerMoves[runnerId] ?? [];
+            if (!current.length) return prev;
+            const next = current.filter((i) => i !== diceIndex);
+            return { ...prev, [playerId]: { ...playerMoves, [runnerId]: next } };
         });
     }, []);
 
@@ -133,8 +181,12 @@ export default function GameBoardScreen() {
                 diceAssignments={diceAssignments}
                 onAssignDice={handleAssignDice}
                 onUnassignDice={handleUnassignDice}
+                moveAssignments={moveAssignments}
+                onAssignMove={handleAssignMove}
+                onUnassignMove={handleUnassignMove}
                 onEndTurn={handleEndTurn}
                 width={leftPanelW}
+                switcherHeight={switcherH}
             />
 
             <View style={styles.roadZone}>
@@ -144,6 +196,7 @@ export default function GameBoardScreen() {
                     <BoardGrid
                         gridData={gridData}
                         rows={rows}
+                        cols={cols}
                         segmentW={segmentW}
                         segmentH={segmentH}
                         xOffset={xOffset}
@@ -164,6 +217,15 @@ export default function GameBoardScreen() {
 }
 
 const styles = StyleSheet.create({
-    wrapper: { flex: 1, flexDirection: 'row' },
+    // backgroundColor — та же тёмная тема, что Screen.js подставляет под
+    // ParallaxBackground на всех остальных экранах (SafeAreaView с
+    // {backgroundColor: bg}). У GameBoardScreen своего Screen-каркаса нет
+    // (полноэкранный альбомный экран, фон вставляет вручную), и без этого
+    // фолбэка, если Animated.Image парallax-фона не успевает/не может
+    // отрисоваться (тяжёлый экран, много одновременных картинок, смена
+    // ориентации на Android через useLockLandscape), из-под него на Android
+    // просвечивает белый фон Activity по умолчанию — раньше сквозь пустоту
+    // ничего не было видно, кроме белого.
+    wrapper: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
     roadZone: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
 });

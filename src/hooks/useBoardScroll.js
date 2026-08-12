@@ -76,7 +76,11 @@ export function useBoardScroll({ minOffset, segmentW, cols, totalBlocks, webScro
 
             if (targetBlockIndex === quotient) return; // на границе — двигаться некуда
 
-            const targetOffset = -targetBlockIndex * blockWidth;
+            // Последний блок — не чистое кратное blockWidth: minOffset уже включает
+            // запас на "кирпичный" сдвиг нечётных рядов (см. useBoardLayout), иначе
+            // самая правая колонка нечётных дорожек в последнем блоке не долистывалась.
+            const targetOffset =
+                targetBlockIndex === totalBlocks - 1 ? minOffsetRef.current : -targetBlockIndex * blockWidth;
             isAnimatingRef.current = true;
             Animated.timing(mobileXOffset, {
                 toValue: targetOffset,
