@@ -38,3 +38,20 @@ export function normalizeLobbyList(raw) {
         limit: raw?.limit ?? 0,
     };
 }
+
+/**
+ * RunnerGame::toArray() отдаёт форму, уже совпадающую с тем, что читают
+ * компоненты доски (см. constants/mockGameData.js) — лишней перекладки полей
+ * не нужно. version защищаем дефолтом на случай, если бек когда-нибудь снова
+ * перестанет её отдавать (как было с Lobby).
+ */
+export function normalizeRunnerGame(raw) {
+    if (!raw) return null;
+
+    return {
+        ...raw,
+        version: raw.version ?? 0,
+        gamePlayers: raw.gamePlayers ?? [],
+        runners: raw.runners ?? [],
+    };
+}
