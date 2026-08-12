@@ -10,7 +10,7 @@ import AuthScreen from '../screens/AuthScreen';
 import MainMenuScreen from '../screens/MainMenuScreen';
 import LobbySearchScreen from '../screens/LobbySearchScreen';
 import LobbyScreen from '../screens/LobbyScreen';
-// import RunnerGameScreen from '../screens/RunnerGameScreen';
+import GameBoardScreen from '../screens/GameBoardScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -61,24 +61,25 @@ export default function RootNavigator() {
                     />
 
                     {
-          <Stack.Screen
-            name={ROUTES.LOBBY}
-            component={LobbyScreen}
-            // выход из лобби — только через POST /api/lobby/leave,
-            // случайный свайп не должен уводить с экрана
-            options={{ title: 'Лобби', gestureEnabled: false }}
-          />
+                        <Stack.Screen
+                            name={ROUTES.LOBBY}
+                            component={LobbyScreen}
+                            // выход из лобби — только через POST /api/lobby/leave,
+                            // случайный свайп не должен уводить с экрана
+                            options={{ title: 'Лобби', gestureEnabled: false }}
+                        />
 
-                        /*<Stack.Screen
-                          name={ROUTES.RUNNER_GAME}
-                          component={RunnerGameScreen}
-                          options={{
+
+                    }
+                    <Stack.Screen
+                        name={ROUTES.RUNNER_GAME}
+                        component={GameBoardScreen}
+                        options={{
                             headerShown: false,
                             gestureEnabled: false,
                             presentation: 'fullScreenModal',
-                          }}
-                        />
-                        */}
+                        }}
+                    />
                 </>
             )}
         </Stack.Navigator>
