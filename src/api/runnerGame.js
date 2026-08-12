@@ -25,6 +25,10 @@ export const runnerGameApi = {
     shoot: (accept, direction) =>
         request('/runner_game/shoot', { method: 'POST', body: { accept, direction } }),
 
-    ability: (accept, details) =>
+    // details: null (не undefined!) — при accept:false бэк падает 500-й, если
+    // ключ "details" вообще отсутствует в теле запроса (нетипизированное
+    // свойство DTO остаётся неинициализированным — см. CLAUDE.md). JSON.stringify
+    // выкидывает undefined-поля из тела, поэтому дефолт именно null.
+    ability: (accept, details = null) =>
         request('/runner_game/ability', { method: 'POST', body: { accept, details } }),
 };

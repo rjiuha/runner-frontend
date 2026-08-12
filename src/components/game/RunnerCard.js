@@ -10,45 +10,50 @@ import { colors, font, radius, spacing } from '../../theme';
  * Карточка одного бегуна (Джаггернаут/Штурмовик/Скаут) на планшете игрока:
  * иконка, статус, до 2 ячеек повреждений с типом жетона (см. предупреждение
  * про damageTokens в mockGameData.js — на бэке этого поля пока нет), и зона
- * для кубика хода (RunnerDiceSlot) — перетащи кубик из трея, чтобы назначить
- * бегуну ход; второй кубик на уже занятого — накат.
- * Тап по карточке (кроме зоны кубика) выбирает бегуна для тап-плейсмента на доске.
+ * для кубика хода (RunnerDiceSlot) — перетащи кубик из трея на карточку,
+ * чтобы выбрать бегуна на этот ход (реальный POST /runner_game/select,
+ * см. GameBoardScreen). `active` — это бегун, которого игрок выбрал в этом
+ * ходу (player.activeRunner с бэка), `healTarget` — сейчас ждём тап по
+ * карточке как цель для команды "Лечение" (pendingAbility в GameBoardScreen).
  */
 export default function RunnerCard({
     runner,
     color,
-    selected,
+    active,
+    healTarget,
     onPress,
-    moveDiceValues = [],
+    moveDiceValue = null,
     moveHoverState,
     onMoveDiceMeasured,
-    onRemoveMoveDice,
 }) {
     const display = RUNNER_DISPLAY[runner.type];
     const slots = runner.damageTokens ?? [null, null];
     const placed = runner.segment != null;
 
     return (
-        <TouchableOpacity style={[styles.card, selected && styles.cardSelected]} onPress={onPress} activeOpacity={0.8}>
+        <TouchableOpacity
+            style={[styles.card, active && styles.cardSelected, healTarget && styles.cardHealTarget]}
+            onPress={onPress}
+            activeOpacity={0.8}
+        >
             <View style={styles.topRow}>
-                <RunnerToken type={runner.type} color={color} size={36} selected={selected} />
+                <RunnerToken type={runner.type} color={color} size={36} selected={active} />
 
                 <View style={styles.info}>
                     <Text style={styles.name}>{display?.label ?? runner.type}</Text>
                     <Text style={[styles.status, { color: statusColor(runner.status) }]}>
                         {RUNNER_STATUS_LABEL[runner.status] ?? runner.status}
                     </Text>
-                    <Text style={styles.placement}>{placed ? 'на поле' : 'в резерве — нажми клетку'}</Text>
+                    <Text style={styles.placement}>{placed ? 'на поле' : 'в резерве'}</Text>
                 </View>
             </View>
 
             <View style={styles.bottomRow}>
                 <RunnerDiceSlot
                     zoneKey={`move:${runner.id}`}
-                    values={moveDiceValues}
+                    value={moveDiceValue}
                     hoverState={moveHoverState}
                     onMeasured={onMoveDiceMeasured}
-                    onRemove={onRemoveMoveDice}
                 />
 
                 <View style={styles.slots}>
@@ -86,6 +91,7 @@ const styles = StyleSheet.create({
         borderColor: 'transparent',
     },
     cardSelected: { borderColor: colors.primary },
+    cardHealTarget: { borderColor: colors.success },
     topRow: { flexDirection: 'row', alignItems: 'center' },
     bottomRow: {
         flexDirection: 'row',

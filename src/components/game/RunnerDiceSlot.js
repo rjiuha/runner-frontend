@@ -1,18 +1,17 @@
 // src/components/game/RunnerDiceSlot.js
 import React, { useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
- * Зона на карточке бегуна для перетаскивания кубика хода. Первый брошенный
- * кубик — обычное перемещение; если на уже занятого бегуна бросить ещё
- * один (лишний кубик при нехватке бегунов) — это "накат", копим оба
- * значения и просто показываем бейдж. Как и AbilityZone, сама зона не
- * решает правила (тут их и нет — любой кубик подходит любому бегуну),
- * только измеряет себя через measureInWindow для хит-тестинга в
- * PlayerInfoPanel.
+ * Зона на карточке бегуна для перетаскивания кубика хода (шаг SELECT).
+ * Значение приходит с бэка (runner.dice/rollDice) — как только SELECT
+ * реально прошёл, кубик "занят" на сервере, снять его тут нельзя (в отличие
+ * от зон усилий это не pending-стейт, а уже подтверждённое действие). Сама
+ * зона не решает правила (любой кубик подходит любому бегуну), только
+ * измеряет себя через measureInWindow для хит-тестинга в PlayerInfoPanel.
  */
-export default function RunnerDiceSlot({ zoneKey, values, hoverState, onMeasured, onRemove }) {
+export default function RunnerDiceSlot({ zoneKey, value, hoverState, onMeasured }) {
     const ref = useRef(null);
 
     const measure = () => {
@@ -24,19 +23,14 @@ export default function RunnerDiceSlot({ zoneKey, values, hoverState, onMeasured
     const highlight = hoverState === 'valid' ? styles.hover : null;
 
     return (
-        <View ref={ref} onLayout={measure} style={[styles.slot, values.length > 0 && styles.slotFilled, highlight]}>
-            {values.length === 0 && <Text style={styles.placeholder}>кубик хода</Text>}
-            {values.map(({ diceIndex, value }) => (
-                <TouchableOpacity
-                    key={diceIndex}
-                    onPress={() => onRemove(diceIndex)}
-                    style={styles.chip}
-                    activeOpacity={0.7}
-                >
+        <View ref={ref} onLayout={measure} style={[styles.slot, value != null && styles.slotFilled, highlight]}>
+            {value == null ? (
+                <Text style={styles.placeholder}>кубик хода</Text>
+            ) : (
+                <View style={styles.chip}>
                     <Text style={styles.chipText}>{value}</Text>
-                </TouchableOpacity>
-            ))}
-            {values.length > 1 && <Text style={styles.nakatBadge}>накат</Text>}
+                </View>
+            )}
         </View>
     );
 }
@@ -66,5 +60,4 @@ const styles = StyleSheet.create({
         marginRight: 2,
     },
     chipText: { color: '#fff', fontSize: 11, fontWeight: 'bold' },
-    nakatBadge: { color: colors.warning, fontSize: 8, fontWeight: 'bold', marginLeft: 2 },
 });

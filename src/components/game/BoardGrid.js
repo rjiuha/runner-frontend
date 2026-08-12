@@ -4,6 +4,7 @@ import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react
 import { BOARD_LAYOUT, SEGMENT_IMAGES } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
+import { colors } from '../../theme';
 
 /**
  * Прокручиваемая сетка сегментов дороги. Ряды через один сдвинуты на
@@ -38,6 +39,7 @@ export default function BoardGrid({
     runners = [],
     playerColorById = {},
     selectedRunnerId = null,
+    highlightedCells = null,
     onCellPress,
 }) {
     const runnersByCell = useMemo(() => indexRunnersByCell(runners), [runners]);
@@ -76,24 +78,28 @@ export default function BoardGrid({
                     >
                         {gridData
                             .filter((seg) => seg.row === rowIdx)
-                            .map((cell) => (
-                                <TouchableOpacity
-                                    key={cell.id}
-                                    onPress={() => onCellPress?.(cell)}
-                                    style={{ width: segmentW, height: segmentH }}
-                                    activeOpacity={0.75}
-                                >
-                                    <Image
-                                        source={SEGMENT_IMAGES[cell.type] || SEGMENT_IMAGES.road}
-                                        style={{
-                                            width: segmentW,
-                                            height: segmentH,
-                                            resizeMode: 'stretch',
-                                            opacity: 0.9,
-                                        }}
-                                    />
-                                </TouchableOpacity>
-                            ))}
+                            .map((cell) => {
+                                const highlighted = highlightedCells?.has(cell.id) ?? false;
+                                return (
+                                    <TouchableOpacity
+                                        key={cell.id}
+                                        onPress={() => onCellPress?.(cell)}
+                                        style={{ width: segmentW, height: segmentH }}
+                                        activeOpacity={0.75}
+                                    >
+                                        <Image
+                                            source={SEGMENT_IMAGES[cell.type] || SEGMENT_IMAGES.road}
+                                            style={{
+                                                width: segmentW,
+                                                height: segmentH,
+                                                resizeMode: 'stretch',
+                                                opacity: 0.9,
+                                            }}
+                                        />
+                                        {highlighted && <View style={styles.highlight} pointerEvents="none" />}
+                                    </TouchableOpacity>
+                                );
+                            })}
                     </View>
                 ))}
 
@@ -141,6 +147,14 @@ export default function BoardGrid({
 const styles = StyleSheet.create({
     container: { overflow: 'hidden' },
     row: { flexDirection: 'row', alignItems: 'center' },
+    // Легальная клетка для тапа в текущем шаге (MOVE/SHOOT/reaper-размещение/
+    // первый выход на трассу) — см. highlightedCells, считает GameBoardScreen.
+    highlight: {
+        ...StyleSheet.absoluteFillObject,
+        borderWidth: 3,
+        borderColor: colors.success,
+        backgroundColor: `${colors.success}33`,
+    },
     // Один слой на всю сетку, растянутый по размеру Animated.View (сумма
     // строк) — см. комментарий в JSX про то, почему токены больше не
     // вложены в ячейки.

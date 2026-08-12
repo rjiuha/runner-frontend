@@ -18,14 +18,16 @@ import { colors } from '../../theme';
  *
  * "Использованный" слот (value === null — кубик уже отдан на усиление)
  * жест не ловит и рисуется как пустое место, а не тусклая кость.
+ * draggable=false — кубик виден (не отдан), но жест выключен: не мой ход
+ * или не тот шаг хода (см. dragMode в PlayerInfoPanel).
  */
-export default function DiceDie({ value, onDragMove, onDrop, size = 44 }) {
+export default function DiceDie({ value, draggable = true, onDragMove, onDrop, size = 44 }) {
     const translateX = useSharedValue(0);
     const translateY = useSharedValue(0);
     const dragging = useSharedValue(false);
 
     const pan = Gesture.Pan()
-        .enabled(value != null)
+        .enabled(value != null && draggable)
         .onStart(() => {
             dragging.value = true;
         })
