@@ -42,6 +42,24 @@ export function useBoardScroll({ minOffset, segmentW, cols, totalBlocks, webScro
                 const clamped = Math.max(minOffsetRef.current, Math.min(0, newOffset));
                 mobileXOffset.setValue(clamped);
             },
+            // Лёгкая инерция по скорости флика при отпускании — без снэпа к фрагментам,
+            // палец по-прежнему двигает трек свободно, просто отпускание не обрывает
+            // движение резко. Это грубая оценка "наката" по времени, а не физическая
+            // симуляция, но на ощупь ближе к обычному тачскролу.
+            onPanResponderRelease: (_evt, gestureState) => {
+                if (Math.abs(gestureState.vx) < 0.15) return;
+
+                const current = mobileXOffset._value;
+                const projected = current + gestureState.vx * 180;
+                const target = Math.max(minOffsetRef.current, Math.min(0, projected));
+
+                Animated.timing(mobileXOffset, {
+                    toValue: target,
+                    duration: 280,
+                    easing: Easing.out(Easing.quad),
+                    useNativeDriver: true,
+                }).start();
+            },
         }),
     ).current;
 

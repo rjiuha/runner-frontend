@@ -1,0 +1,83 @@
+// src/components/game/RunnerCard.js
+import React from 'react';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import RunnerToken from './RunnerToken';
+import { DAMAGE_TOKENS, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_STATUS_LABEL } from '../../constants/GameConstants';
+import { colors, font, radius, spacing } from '../../theme';
+
+/**
+ * Карточка одного бегуна (Джаггернаут/Штурмовик/Скаут) на планшете игрока:
+ * иконка, статус, до 2 ячеек повреждений с типом жетона (см. предупреждение
+ * про damageTokens в mockGameData.js — на бэке этого поля пока нет).
+ * Тап выбирает бегуна для тап-плейсмента на доске (GameBoardScreen).
+ */
+export default function RunnerCard({ runner, color, selected, onPress }) {
+    const display = RUNNER_DISPLAY[runner.type];
+    const slots = runner.damageTokens ?? [null, null];
+    const placed = runner.segment != null;
+
+    return (
+        <TouchableOpacity style={[styles.card, selected && styles.cardSelected]} onPress={onPress} activeOpacity={0.8}>
+            <RunnerToken type={runner.type} color={color} size={36} selected={selected} />
+
+            <View style={styles.info}>
+                <Text style={styles.name}>{display?.label ?? runner.type}</Text>
+                <Text style={[styles.status, { color: statusColor(runner.status) }]}>
+                    {RUNNER_STATUS_LABEL[runner.status] ?? runner.status}
+                </Text>
+                <Text style={styles.placement}>{placed ? 'на поле' : 'в резерве — нажми клетку'}</Text>
+            </View>
+
+            <View style={styles.slots}>
+                {slots.map((token, i) => {
+                    const meta = token ? DAMAGE_TOKENS[token.type] : null;
+                    return (
+                        <View
+                            key={i}
+                            style={[styles.slot, meta && { backgroundColor: meta.color, borderColor: meta.color }]}
+                        >
+                            {meta && <Text style={styles.slotText}>{meta.short}</Text>}
+                        </View>
+                    );
+                })}
+            </View>
+        </TouchableOpacity>
+    );
+}
+
+function statusColor(status) {
+    if (status === RUNNER_STATUS.DESTROYED) return colors.danger;
+    if (status === RUNNER_STATUS.BROKEN) return colors.warning;
+    if (status === RUNNER_STATUS.DAMAGED) return colors.warning;
+    return colors.success;
+}
+
+const styles = StyleSheet.create({
+    card: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: colors.bgLight,
+        borderRadius: radius.md,
+        padding: spacing.sm,
+        marginBottom: spacing.xs,
+        borderWidth: 2,
+        borderColor: 'transparent',
+    },
+    cardSelected: { borderColor: colors.primary },
+    info: { flex: 1, marginLeft: spacing.sm },
+    name: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
+    status: { fontSize: font.tiny, marginTop: 2, fontWeight: '600' },
+    placement: { fontSize: 10, color: colors.textOnDarkSecondary, marginTop: 1 },
+    slots: { flexDirection: 'row' },
+    slot: {
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        borderWidth: 1,
+        borderColor: colors.textOnDarkSecondary,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginLeft: 4,
+    },
+    slotText: { fontSize: 8, color: '#fff', fontWeight: 'bold' },
+});

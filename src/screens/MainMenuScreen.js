@@ -99,6 +99,23 @@ export default function MainMenuScreen({ navigation }) {
           <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
         </View>
 
+        {/*
+          ВРЕМЕННО: GameBoardScreen пока рисует мок (constants/mockGameData.js)
+          независимо от параметров навигации, а настоящий путь туда — только
+          через лобби (нужно 2+ игрока, оба готовы, бэк создаёт партию).
+          Прямая кнопка — чтобы смотреть вёрстку доски без этого ритуала.
+          Убрать, когда экран подключится к реальному /api/runner_game.
+        */}
+        <View style={styles.soonBlock}>
+          <Text style={styles.soonLabel}>Для разработки</Text>
+          <MenuCard
+              title="🧪 Тест игровой доски"
+              description="Открыть GameBoardScreen на моковых данных, без лобби"
+              color={colors.muted}
+              onPress={() => navigation.navigate(ROUTES.RUNNER_GAME)}
+          />
+        </View>
+
         <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
 
         <CreateLobbyModal

@@ -127,9 +127,12 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
         );
         esRef.current = es;
 
-        es.addEventListener('open', () => {
-            if (gen === genRef.current) sync(gen);
-        });
+        // Снапшот грузим сразу, а не по 'open': если Mercure-хаб недоступен
+        // (порт закрыт, CORS, хаб не поднят), 'open' не наступит никогда,
+        // а раньше это означало вечный спиннер — sync() просто не вызывался.
+        // REST и SSE независимы: буфер событий (bufferRef) уже умеет принимать
+        // события, пришедшие до/во время sync, так что запуск здесь безопасен.
+        sync(gen);
 
         es.addEventListener('message', (ev) => {
             if (gen !== genRef.current || !ev?.data) return;

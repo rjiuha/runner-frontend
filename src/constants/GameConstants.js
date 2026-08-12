@@ -1,5 +1,6 @@
 // src/constants/GameConstants.js
 import { Platform } from 'react-native';
+import { colors } from '../theme';
 /**
  * Конфигурация игры на основе правил PDF и структуры бэкенда
  */
@@ -30,13 +31,14 @@ export const GAME_CONFIG = {
     DESTROYED: 'destroyed'     // Уничтожена
   },
   
-  // Типы ячеек на поле (из правил)
+  // Типы ячеек на поле — зеркалят RoadType (бэк) и имена файлов в assets/tracks/*.json
   CELL_TYPES: {
-    ROAD: 'road',              // Дорога - 1 очко
-    MUD: 'mud',                // Грязь - 2 очка
-    OFFROAD: 'offroad',        // Бездорожье - 1 очко
-    DANGER: 'danger',          // Опасность (мин, разбитая машина)
-    IMPASSABLE: 'impassable'   // Непроходимая
+    ROAD: 'road',
+    SAND: 'sand',
+    MUD: 'mud',
+    WALL: 'wall',
+    DANGER: 'danger',
+    ANOMALY: 'anomaly'
   },
   
   // Размеры машин
@@ -121,14 +123,18 @@ export const ASSET_SIZES = {
 };
 
 /**
- * Изображения сегментов дороги для рендера поля (GameBoardScreen/BoardGrid)
+ * Изображения ячеек дороги для рендера поля (GameBoardScreen/BoardGrid).
+ * Ключи — значения RoadType с бэка и values из assets/tracks/*.json ('road'/
+ * 'sand'/'mud'/'wall'/'danger'); 'anomaly' своего ассета не имеет и в
+ * lib/board.js падает на 'danger'. Файл dirt_base.png визуально изображает
+ * грязь, поэтому ключ — 'mud', а не имя файла.
  */
 export const SEGMENT_IMAGES = {
-  sand: require('../assets/images/sand_base.png'),
-  road: require('../assets/images/road_base.png'),
-  wall: require('../assets/images/wall_base.png'),
-  dirt: require('../assets/images/dirt_base.png'),
-  danger: require('../assets/images/danger_base.png'),
+  road: require('../assets/images/road/road_base.png'),
+  sand: require('../assets/images/road/sand_base.png'),
+  mud: require('../assets/images/road/dirt_base.png'),
+  wall: require('../assets/images/road/wall_base.png'),
+  danger: require('../assets/images/road/danger_base.png'),
 };
 
 /**
@@ -187,13 +193,84 @@ export const WEBSOCKET_EVENTS = {
 };
 
 /**
- * Типы эффектов жетонов урона (из правил PDF)
+ * Типы бегунов — зеркалят RunnerType (бэк). Игровые названия (скаут/штурмовик/
+ * джаггернаут) — художественные имена поверх бэковых tank/athlete/sprinter.
  */
-export const DAMAGE_TOKEN_EFFECTS = {
-  JUMP: 'jump',                 // Прыжок - бросок кубика направления + трюков
-  STUN: 'stun',                 // Ступор - медленное перемещение
-  SKID: 'skid',                 // Занос - движение в указанном направлении
-  DENT: 'dent',                 // Вмятина - просто занимает ячейку
-  RICOCHET: 'ricochet',         // Рикошет - цепная реакция урона
-  OFFROAD: 'offroad'            // Бездорожье - перемещение на 1 очко
+export const RUNNER_TYPES = {
+  TANK: 'tank',
+  ATHLETE: 'athlete',
+  SPRINTER: 'sprinter',
+  REAPER: 'reaper',
+  BALL: 'ball',
+};
+
+/** Порядок карточек бегунов на планшете игрока (Танк → Атлет → Спринтер, как в правилах) */
+export const RUNNER_ORDER = [RUNNER_TYPES.TANK, RUNNER_TYPES.ATHLETE, RUNNER_TYPES.SPRINTER];
+
+export const RUNNER_DISPLAY = {
+  [RUNNER_TYPES.TANK]: { label: 'Джаггернаут', icon: require('../assets/images/runner/jaggernaut.png'), size: 3 },
+  [RUNNER_TYPES.ATHLETE]: { label: 'Штурмовик', icon: require('../assets/images/runner/trooper.png'), size: 2 },
+  [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', icon: require('../assets/images/runner/scout.png'), size: 1 },
+  [RUNNER_TYPES.REAPER]: { label: 'Жнец', icon: require('../assets/images/runner/reaper.png'), size: 0 },
+};
+
+/** Состояния бегуна — зеркалят RunnerStatus (бэк) */
+export const RUNNER_STATUS = {
+  HEALTHY: 'healthy',
+  DAMAGED: 'damaged',
+  BROKEN: 'broken',
+  DESTROYED: 'destroyed',
+};
+
+export const RUNNER_STATUS_LABEL = {
+  [RUNNER_STATUS.HEALTHY]: 'Исправен',
+  [RUNNER_STATUS.DAMAGED]: 'Повреждён',
+  [RUNNER_STATUS.BROKEN]: 'Неисправен',
+  [RUNNER_STATUS.DESTROYED]: 'Уничтожен',
+};
+
+/** Грани кубика перемещения (D6) — ассеты D:\runner-frontend\src\assets\images\dice */
+export const DICE_FACE_IMAGES = {
+  1: require('../assets/images/dice/dice_p2_1.png'),
+  2: require('../assets/images/dice/dice_p2_2.png'),
+  3: require('../assets/images/dice/dice_p2_3.png'),
+  4: require('../assets/images/dice/dice_p2_4.png'),
+  5: require('../assets/images/dice/dice_p2_5.png'),
+  6: require('../assets/images/dice/dice_p2_6.png'),
+};
+
+/**
+ * Командные усиления — зеркалят PlayerAbility (бэк, без служебного unghost).
+ * min/max — допустимый номинал кубика для активации (см. правила), используется
+ * только для визуальной подсказки при перетаскивании кубика на зону.
+ */
+export const PLAYER_ABILITIES = {
+  boost: { label: 'Буст', min: 1, max: 3, hint: 'кубик 1–3' },
+  heal: { label: 'Лечение', min: 6, max: 6, hint: 'кубик 6' },
+  reaper: { label: 'Жнец', min: 1, max: 6, hint: 'любой кубик' },
+  ghost: { label: 'Призрак', min: 3, max: 5, hint: 'кубик 3–5' },
+};
+
+export const PLAYER_ABILITY_ORDER = ['boost', 'heal', 'reaper', 'ghost'];
+
+/**
+ * Жетоны повреждений — зеркалят Damage (бэк). "damage" в правилах называется
+ * «Вмятина» — эффекта на ход не даёт, просто занимает ячейку повреждения.
+ */
+export const DAMAGE_TOKENS = {
+  damage: { label: 'Вмятина', short: 'ВМТ', color: colors.muted },
+  ricochet: { label: 'Рикошет', short: 'РИК', color: colors.info },
+  stupor: { label: 'Занос', short: 'ЗАН', color: colors.warning },
+  rocket: { label: 'Ракета', short: 'РКТ', color: colors.danger },
+  anomaly: { label: 'Аномалия', short: 'АНМ', color: colors.primary },
+};
+
+/** Цвета для визуального различения бегунов разных игроков на общей доске */
+export const PLAYER_COLORS = [colors.danger, colors.info, colors.success, colors.warning];
+
+/** Раскладка левой панели информации об игроке относительно ширины экрана */
+export const LAYOUT = {
+  LEFT_PANEL_MIN_W: 300,
+  LEFT_PANEL_MAX_W: 430,
+  LEFT_PANEL_RATIO: 0.36,
 };
