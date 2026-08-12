@@ -2,7 +2,6 @@
 import React, { useState } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 
-import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Screen from '../components/ui/Screen';
 import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
@@ -174,8 +173,6 @@ export default function AuthScreen() {
 
   return (
       <Screen scroll contentContainerStyle={styles.content}>
-        <ParallaxBackground />
-
         <View style={styles.header}>
           <Text style={styles.title}>Runner Game</Text>
           <Text style={styles.subtitle}>Игра на выживание</Text>

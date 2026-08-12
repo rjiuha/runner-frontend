@@ -121,6 +121,29 @@ export const ASSET_SIZES = {
 };
 
 /**
+ * Изображения сегментов дороги для рендера поля (GameBoardScreen/BoardGrid)
+ */
+export const SEGMENT_IMAGES = {
+  sand: require('../assets/images/sand_base.png'),
+  road: require('../assets/images/road_base.png'),
+  wall: require('../assets/images/wall_base.png'),
+  dirt: require('../assets/images/dirt_base.png'),
+  danger: require('../assets/images/danger_base.png'),
+};
+
+/**
+ * Геометрия игрового поля: сколько блоков дороги существует, сколько
+ * колонок видно/всего в очереди, и скорость непрерывной прокрутки на вебе
+ */
+export const BOARD_LAYOUT = {
+  ROWS: 6,
+  COLS: 8,
+  TOTAL_BLOCKS: 3,
+  TOTAL_COLS: 24,
+  WEB_SCROLL_SPEED: 80,
+};
+
+/**
  * API эндпоинты бэкенда
  */
 const isAndroid = Platform.OS === 'android';

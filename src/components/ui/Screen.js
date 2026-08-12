@@ -2,10 +2,14 @@
 import React from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import ParallaxBackground from './ParallaxBackground';
 import { colors } from '../../theme';
 
 /**
- * Каркас экрана: безопасные зоны + опциональный скролл + уход от клавиатуры.
+ * Каркас экрана: безопасные зоны + общий Parallax-фон + опциональный скролл +
+ * уход от клавиатуры. Фон один на все экраны — рендерится здесь, а не в
+ * каждом экране по отдельности, чтобы не разъезжались version'ы и не было
+ * дублей (как раньше было только на AuthScreen).
  *
  * SafeAreaView берём из react-native-safe-area-context, а не из react-native:
  * встроенный устарел в RN 0.85, работает только на iOS и игнорирует
@@ -35,6 +39,7 @@ export default function Screen({
 
     return (
         <SafeAreaView style={[styles.flex, { backgroundColor: bg }, style]} edges={edges}>
+            <ParallaxBackground />
             <KeyboardAvoidingView
                 style={styles.flex}
                 // На iOS клавиатура наезжает на контент — сдвигаем всё вверх.
