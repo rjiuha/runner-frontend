@@ -1,13 +1,12 @@
 // src/components/game/PlayerInfoPanel.js
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
 import AbilityZones from './AbilityZones';
 import RunnerCard from './RunnerCard';
 import RunnerToken from './RunnerToken';
-import Button from '../ui/Button';
-import { PLAYER_ABILITIES, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
+import { PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
@@ -17,37 +16,56 @@ import { colors, font, radius, spacing } from '../../theme';
  * живёт здесь: зоны измеряют себя через measureInWindow и репортят сюда,
  * а DiceDie шлёт сюда координаты жеста в оконных же координатах.
  *
- * Наружу панель только сообщает о результате (onAssignDice/onUnassignDice/
- * onSelectRunner/onEndTurn) — какое состояние из этого следует, решает
- * GameBoardScreen.
+ * "Что назначено" панель НЕ хранит сама — читает прямо из live-данных
+ * (runner.dice/player.ability/player.diceN), которые GameBoardScreen строит
+ * из game (см. Фазу 2 в CLAUDE.md). Наружу панель только сообщает НАМЕРЕНИЕ
+ * (onDropOnAbility/onDropOnRunner/onRunnerCardPress/onPressAbilityZone) —
+ * вызывать бэк или нет решает GameBoardScreen.
  */
 export default function PlayerInfoPanel({
     players,
     activePlayerId,
     onSelectPlayer,
-    selectedRunnerId,
-    onSelectRunner,
-    diceAssignments,
-    onAssignDice,
-    onUnassignDice,
-    moveAssignments,
-    onAssignMove,
-    onUnassignMove,
-    onEndTurn,
+    myPlayerId,
+    canAct,
+    myStep,
+    pendingAbility,
+    onDropOnAbility,
+    onPressAbilityZone,
+    onDropOnRunner,
+    onRunnerCardPress,
     width,
     switcherHeight,
 }) {
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? players[0];
-    const assignments = diceAssignments[activePlayer.id] ?? {};
-    const playerMoves = moveAssignments[activePlayer.id] ?? {};
-    const assignedIndices = useMemo(
-        () => new Set(Object.values(assignments).filter((v) => v != null)),
-        [assignments],
-    );
-    const assignedMoveIndices = useMemo(() => new Set(Object.values(playerMoves).flat()), [playerMoves]);
+    const isMyPanel = canAct && activePlayer.id === myPlayerId;
+    // Что можно тащить прямо сейчас: SELECT — на карточку бегуна, ABILITY — на зону усиления.
+    const dragMode = isMyPanel
+        ? myStep === PLAYER_STEP.SELECT
+            ? 'select'
+            : myStep === PLAYER_STEP.ABILITY
+                ? 'ability'
+                : null
+        : null;
+
+    // Кубик, зарезервированный под pending heal/reaper, ещё не consumed бэком
+    // (реальный /ability уйдёт только по второму тапу) — визуально прячем его
+    // из трея пораньше, чтобы не тащили дважды. Актуально только для СВОЕЙ
+    // панели — pendingAbility относится к myPlayer, не к тому, чью панель
+    // сейчас листают через переключатель.
     const trayDice = activePlayer.dice.map((v, i) =>
-        assignedIndices.has(i) || assignedMoveIndices.has(i) ? null : v,
+        isMyPanel && pendingAbility?.diceIndex === i ? null : v,
     );
+
+    const abilityAssignments = useMemo(() => {
+        const map = {};
+        for (const key of Object.keys(PLAYER_ABILITIES)) {
+            if (isMyPanel && pendingAbility?.ability === key) map[key] = pendingAbility.diceIndex;
+            else if (activePlayer.ability === key) map[key] = 'used';
+            else map[key] = null;
+        }
+        return map;
+    }, [isMyPanel, pendingAbility, activePlayer.ability]);
 
     const zoneLayoutsRef = useRef({});
     const [hover, setHover] = useState({ key: null, valid: false });
@@ -69,42 +87,51 @@ export default function PlayerInfoPanel({
     // Зоны кубика хода на карточках бегунов ("move:<runnerId>") мерятся и
     // хит-тестятся тем же реестром, что и зоны усилений — правил на номинал
     // кубика у них нет (любой кубик годится любому бегуну), поэтому наведение
-    // всегда "valid".
+    // всегда "valid", но только пока разрешён drag-режим 'select'.
     const handleDragMove = useCallback(
         (_index, x, y, value) => {
+            if (!dragMode) return;
             const key = findZoneAt(x, y);
             if (!key) {
                 setHover((h) => (h.key === null ? h : { key: null, valid: false }));
                 return;
             }
             if (key.startsWith('move:')) {
-                setHover((h) => (h.key === key && h.valid ? h : { key, valid: true }));
+                const valid = dragMode === 'select';
+                setHover((h) => (h.key === key && h.valid === valid ? h : { key, valid }));
+                return;
+            }
+            if (dragMode !== 'ability') {
+                setHover((h) => (h.key === key && h.valid === false ? h : { key, valid: false }));
                 return;
             }
             const ability = PLAYER_ABILITIES[key];
             const valid = value >= ability.min && value <= ability.max;
             setHover((h) => (h.key === key && h.valid === valid ? h : { key, valid }));
         },
-        [findZoneAt],
+        [findZoneAt, dragMode],
     );
 
     const handleDrop = useCallback(
         (index, x, y, value) => {
             setHover({ key: null, valid: false });
+            if (!dragMode) return;
             const key = findZoneAt(x, y);
             if (!key) return;
 
             if (key.startsWith('move:')) {
+                if (dragMode !== 'select') return;
                 const runnerId = Number(key.slice('move:'.length));
-                onAssignMove(activePlayer.id, runnerId, index);
+                onDropOnRunner(activePlayer.id, runnerId, index);
                 return;
             }
 
+            if (dragMode !== 'ability') return;
             const ability = PLAYER_ABILITIES[key];
             if (value < ability.min || value > ability.max) return; // не по правилам — дроп просто не принимается
-            onAssignDice(activePlayer.id, key, index);
+            onDropOnAbility(activePlayer.id, key, index);
         },
-        [findZoneAt, onAssignDice, onAssignMove, activePlayer.id],
+        [findZoneAt, dragMode, onDropOnRunner, onDropOnAbility, activePlayer.id],
     );
 
     const trackedRunners = useMemo(
@@ -115,10 +142,6 @@ export default function PlayerInfoPanel({
         () => activePlayer.runners.find((r) => r.type === RUNNER_TYPES.REAPER),
         [activePlayer.runners],
     );
-    // Жнеца можно размещать на любую клетку поля, но само это действие
-    // доступно только пока на усилении активирован Жнец (кубик лежит в
-    // зоне "reaper") — иначе выбор бегуна для тап-плейсмента заблокирован.
-    const reaperActive = assignments.reaper != null;
 
     return (
         <View style={[styles.panel, { width }]}>
@@ -139,64 +162,56 @@ export default function PlayerInfoPanel({
                     <Text style={styles.name}>{activePlayer.name}</Text>
 
                     <Text style={styles.sectionTitle}>Кубики перемещения</Text>
-                    <DiceTray dice={trayDice} onDragMove={handleDragMove} onDrop={handleDrop} />
+                    <DiceTray
+                        dice={trayDice}
+                        draggable={dragMode != null}
+                        onDragMove={handleDragMove}
+                        onDrop={handleDrop}
+                    />
 
                     <Text style={styles.sectionTitle}>Усиления — перетащи кубик на зону</Text>
                     <AbilityZones
-                        assignments={assignments}
+                        assignments={abilityAssignments}
                         hoverKey={hover.key}
                         hoverValid={hover.valid}
                         onMeasured={handleMeasured}
-                        onPressZone={(key) => onUnassignDice(activePlayer.id, key)}
+                        onPressZone={onPressAbilityZone}
                     />
 
-                    <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна (лишний кубик = накат)</Text>
+                    <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна</Text>
                     {trackedRunners.map((runner) => {
-                        const moveIndices = playerMoves[runner.id] ?? [];
-                        const moveDiceValues = moveIndices.map((diceIndex) => ({
-                            diceIndex,
-                            value: activePlayer.dice[diceIndex],
-                        }));
                         const zoneKey = `move:${runner.id}`;
+                        const dice = runner.dice ?? runner.rollDice ?? null;
                         return (
                             <RunnerCard
                                 key={runner.id}
                                 runner={runner}
                                 color={activePlayer.color}
-                                selected={runner.id === selectedRunnerId}
-                                onPress={() => onSelectRunner(runner.id === selectedRunnerId ? null : runner.id)}
-                                moveDiceValues={moveDiceValues}
+                                active={runner.id === activePlayer.activeRunnerId}
+                                healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
+                                onPress={() => onRunnerCardPress(runner)}
+                                moveDiceValue={dice}
                                 moveHoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
                                 onMoveDiceMeasured={handleMeasured}
-                                onRemoveMoveDice={(diceIndex) => onUnassignMove(activePlayer.id, runner.id, diceIndex)}
                             />
                         );
                     })}
 
                     {reaper && (
-                        <TouchableOpacity
-                            style={[styles.reaperRow, !reaperActive && styles.reaperRowDisabled]}
-                            activeOpacity={reaperActive ? 0.8 : 1}
-                            disabled={!reaperActive}
-                            onPress={() => onSelectRunner(reaper.id === selectedRunnerId ? null : reaper.id)}
-                        >
+                        <View style={styles.reaperRow}>
                             <RunnerToken
                                 type={RUNNER_TYPES.REAPER}
                                 color={activePlayer.color}
                                 size={30}
-                                selected={reaper.id === selectedRunnerId}
+                                selected={reaper.id === activePlayer.activeRunnerId}
                             />
                             <Text style={styles.reaperText}>
-                                {reaperActive
-                                    ? `Жнец ${reaper.segment != null ? '— на поле, нажми клетку для переноса' : '— нажми любую клетку поля'}`
-                                    : 'Жнец — сначала перетащи кубик на усиление «Жнец»'}
+                                {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
                             </Text>
-                        </TouchableOpacity>
+                        </View>
                     )}
                 </ScrollView>
             </View>
-
-            <Button title="Завершить ход" onPress={onEndTurn} style={styles.endTurn} />
         </View>
     );
 }
@@ -230,7 +245,5 @@ const styles = StyleSheet.create({
         marginBottom: spacing.xs,
     },
     reaperRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.sm },
-    reaperRowDisabled: { opacity: 0.45 },
     reaperText: { color: colors.textOnDark, fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
-    endTurn: { marginTop: spacing.sm },
 });
