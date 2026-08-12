@@ -1,34 +1,65 @@
 // src/screens/GameBoardScreen.js
-import React, { useCallback, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 
 import ArrowButton from '../components/game/ArrowButton';
 import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
+import GameWaitingRoom from '../components/game/GameWaitingRoom';
 import ParallaxBackground from '../components/ui/ParallaxBackground';
+import Button from '../components/ui/Button';
+import { useAuth } from '../hooks/useAuth';
+import { useMercure } from '../hooks/useMercure';
 import { useLockLandscape } from '../hooks/useLockLandscape';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments } from '../lib/board';
 import { notify } from '../lib/notify';
-import { BOARD_LAYOUT, PLAYER_ABILITY_ORDER, PLAYER_COLORS, RUNNER_TYPES } from '../constants/GameConstants';
-import { MOCK_GAME } from '../constants/mockGameData';
-import { colors } from '../theme';
+import { runnerGameApi } from '../api/runnerGame';
+import { runnerGameReducer } from '../store/runnerGameReducer';
+import {
+    BOARD_LAYOUT, GAME_STATUS, PLAYER_ABILITY_ORDER, PLAYER_COLORS,
+} from '../constants/GameConstants';
+import { colors, spacing, font, radius } from '../theme';
+
+const STATUS_LABEL = {
+    connecting: 'Подключение…',
+    syncing: 'Синхронизация…',
+    live: 'В сети',
+    error: 'Нет связи, переподключаемся…',
+};
+
+// Через сколько показать кнопку ручного рефетча, если игрок-цель зависшей
+// коллизии (game.extraTurnPlayer) долго не отвечает — бэк это сам не разруливает.
+const COLLISION_STUCK_TIMEOUT = 18000;
 
 /**
- * Экран игровой сессии. Пока данные — мок в форме реального ответа
- * GET /api/runner_game (см. constants/mockGameData.js): когда появится
- * подключение к лобби/бэку/Mercure, `game` заменится на пропс/стейт из
- * запроса, а форма, которую читают компоненты ниже, не изменится.
- *
- * Игровые правила (кто ходит, что можно тащить куда, столкновения и т.п.)
- * сюда намеренно не заведены — только раскладка и локальные UI-заглушки
- * (перетаскивание кубика на усиление, тап-плейсмент бегуна, "завершить ход").
+ * Экран игровой сессии. Фаза 1 (bootstrap): снапшот GET /api/runner_game +
+ * подписка на runner_game_{id} через Mercure (см. useMercure — тот же
+ * протокол буфер→снапшот→live, что и в LobbyScreen), доска отражает реальные
+ * данные. Реальные вызовы select/move/collision/shoot/ability и гейтинг
+ * действий по шагу хода — Фаза 2, пока это локальный UI-стейт поверх живых
+ * данных (см. CLAUDE.md).
  */
-export default function GameBoardScreen() {
+export default function GameBoardScreen({ route }) {
     useLockLandscape();
+    const { user } = useAuth();
+    const gameId = route?.params?.gameId ?? null;
+
+    const fetchSnapshot = useCallback(async () => {
+        const g = await runnerGameApi.get();
+        return { state: g, version: g.version };
+    }, []);
+
+    const { state: game, status, resync } = useMercure({
+        topic: gameId ? `runner_game_${gameId}` : null,
+        fetchSnapshot,
+        reduce: runnerGameReducer,
+        // step_*/orchestrator-события без version — пригодятся для анимации в Фазе 3
+        onTransient: () => {},
+    });
 
     const {
         leftPanelW,
@@ -52,10 +83,10 @@ export default function GameBoardScreen() {
         webScrollSpeed: BOARD_LAYOUT.WEB_SCROLL_SPEED,
     });
 
-    const game = MOCK_GAME;
+    const runners = game?.runners ?? [];
+    const gamePlayers = game?.gamePlayers ?? [];
 
-    const [runners, setRunners] = useState(game.runners);
-    const [activePlayerId, setActivePlayerId] = useState(game.gamePlayers[0].id);
+    const [activePlayerId, setActivePlayerId] = useState(null);
     const [selectedRunnerId, setSelectedRunnerId] = useState(null);
     // { [playerId]: { boost: diceIndex|null, heal:..., reaper:..., ghost:... } }
     const [diceAssignments, setDiceAssignments] = useState({});
@@ -63,23 +94,30 @@ export default function GameBoardScreen() {
     // остальные (если на бегуна брошен ещё кубик) = накат.
     const [moveAssignments, setMoveAssignments] = useState({});
 
+    // По умолчанию — свой игрок, как только придут данные. Один раз (пока не выбран вручную).
+    useEffect(() => {
+        if (activePlayerId != null || gamePlayers.length === 0) return;
+        const me = gamePlayers.find((p) => p.user?.id === user?.id);
+        setActivePlayerId(me?.id ?? gamePlayers[0].id);
+    }, [gamePlayers, user, activePlayerId]);
+
     const players = useMemo(
         () =>
-            game.gamePlayers.map((p, i) => ({
+            gamePlayers.map((p, i) => ({
                 id: p.id,
                 name: p.user?.username ?? `Игрок ${p.id}`,
                 color: PLAYER_COLORS[i % PLAYER_COLORS.length],
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 runners: runners.filter((r) => r.playerId === p.id),
             })),
-        [game.gamePlayers, runners],
+        [gamePlayers, runners],
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
 
     const gridData = useMemo(
-        () => flattenTrackSegments([game.trackBegin, game.trackMiddle, game.trackEnd], rows, cols),
-        [game.trackBegin, game.trackMiddle, game.trackEnd, rows, cols],
+        () => flattenTrackSegments([game?.trackBegin, game?.trackMiddle, game?.trackEnd], rows, cols),
+        [game?.trackBegin, game?.trackMiddle, game?.trackEnd, rows, cols],
     );
 
     const shotSound = useAudioPlayer(require('../assets/sounds/lazer.mp3'));
@@ -93,39 +131,13 @@ export default function GameBoardScreen() {
             const runner = runners.find((r) => r.id === selectedRunnerId);
             if (!runner) return;
 
-            // Уже размещённого на поле бегуна (кроме Жнеца — ему по правилам
-            // можно куда угодно, см. gate на активное усиление в
-            // PlayerInfoPanel) можно двигать только на одну клетку: вперёд по
-            // трассе (col+1, та же дорожка) или на соседнюю дорожку (та же
-            // колонка, row±1). Выход за верхнюю/нижнюю дорожку невозможен уже
-            // потому, что за пределами 0..rows-1 клеток на доске просто нет —
-            // тапнуть там нечего. Первое размещение из резерва (segment == null)
-            // без ограничений, как и раньше.
-            if (runner.segment != null && runner.type !== RUNNER_TYPES.REAPER) {
-                const currentGlobalCol = runner.segment * cols + runner.positionX;
-                const currentRow = runner.positionY;
-
-                const isForward = cell.col === currentGlobalCol + 1 && cell.row === currentRow;
-                const isLaneChange = cell.col === currentGlobalCol && Math.abs(cell.row - currentRow) === 1;
-
-                if (!isForward && !isLaneChange) return; // недопустимый ход — тап просто игнорируется
-            }
-
-            setRunners((prev) =>
-                prev.map((r) =>
-                    r.id === selectedRunnerId
-                        ? {
-                              ...r,
-                              segment: cell.blockIndex,
-                              positionX: cell.col - cell.blockIndex * cols,
-                              positionY: cell.row,
-                          }
-                        : r,
-                ),
-            );
+            // Реальный ход (POST /runner_game/move, по клетке за вызов) — Фаза 2.
+            // Пока просто снимаем выбор, ничего не пишем поверх live-позиций,
+            // чтобы не расходиться с тем, что реально пришлёт сервер.
+            notify('Перемещение', 'Пока не подключено к серверу — это Фаза 2');
             setSelectedRunnerId(null);
         },
-        [shotSound, selectedRunnerId, runners, cols],
+        [shotSound, selectedRunnerId, runners],
     );
 
     const handleAssignDice = useCallback((playerId, abilityKey, diceIndex) => {
@@ -168,9 +180,50 @@ export default function GameBoardScreen() {
         notify('Ход завершён', 'Демо-режим: пока это не отправляется на бэкенд');
     }, []);
 
+    // Зависшая коллизия: бэк не резолвит сам, если игрок-цель не ответит на
+    // /collision — вся игра стоит. Через COLLISION_STUCK_TIMEOUT даём ручной
+    // рефетч снапшота вместо бесконечного ожидания вслепую.
+    const [showStuckRefresh, setShowStuckRefresh] = useState(false);
+    useEffect(() => {
+        setShowStuckRefresh(false);
+        if (game?.extraTurnPlayer == null) return undefined;
+        const t = setTimeout(() => setShowStuckRefresh(true), COLLISION_STUCK_TIMEOUT);
+        return () => clearTimeout(t);
+    }, [game?.extraTurnPlayer]);
+
+    if (!game) {
+        return (
+            <View style={styles.wrapper}>
+                <ParallaxBackground />
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                    <Text style={styles.statusText}>{STATUS_LABEL[status] ?? ''}</Text>
+                </View>
+            </View>
+        );
+    }
+
+    if (game.status === GAME_STATUS.WAITING) {
+        return (
+            <View style={styles.wrapper}>
+                <ParallaxBackground />
+                <GameWaitingRoom gamePlayers={gamePlayers} />
+            </View>
+        );
+    }
+
     return (
         <View style={styles.wrapper}>
             <ParallaxBackground />
+
+            {game.extraTurnPlayer != null && (
+                <View style={styles.collisionBanner}>
+                    <Text style={styles.collisionText}>Ожидаем реакцию игрока на столкновение…</Text>
+                    {showStuckRefresh && (
+                        <Button title="Обновить состояние" variant="info" onPress={resync} style={styles.collisionBtn} />
+                    )}
+                </View>
+            )}
 
             <PlayerInfoPanel
                 players={players}
@@ -228,4 +281,14 @@ const styles = StyleSheet.create({
     // ничего не было видно, кроме белого.
     wrapper: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
     roadZone: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+    statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
+    collisionBanner: {
+        position: 'absolute', top: spacing.md, alignSelf: 'center', zIndex: 20, elevation: 20,
+        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
+        backgroundColor: colors.bgLight, borderRadius: radius.pill,
+        paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
+    },
+    collisionText: { color: colors.textOnDark, fontSize: font.tiny },
+    collisionBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md },
 });

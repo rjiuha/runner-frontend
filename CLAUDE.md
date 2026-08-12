@@ -17,19 +17,21 @@ React Native (Expo 56, RN 0.85, React 19) клиент игры Runner — му�
 
 ```
 src/
-  api/         клиент + эндпоинт-модули (client.js — токены/refresh/retry, ApiError, normalize.js, lobby.js)
+  api/         клиент + эндпоинт-модули (client.js — токены/refresh/retry, ApiError, normalize.js,
+               lobby.js, runnerGame.js)
   components/
     ui/        общие виджеты (Screen, Button, Input, ParallaxBackground)
     menu/      главное меню
-    game/      всё про игровую доску (см. ниже)
+    game/      всё про игровую доску (см. ниже), включая GameWaitingRoom (пред-игровой ready-up)
   config/      env.js — API_URL/MERCURE_URL, зависят от Platform.OS (эмулятор Android = 10.0.2.2)
-  constants/   GameConstants.js (зеркалит бэковые enum'ы), mockGameData.js (заглушка ответа бэка)
+  constants/   GameConstants.js (зеркалит бэковые enum'ы), mockGameData.js (заглушка ответа бэка,
+               использовалась до подключения GameBoardScreen к реальному API)
   context/     AuthContext (обёртка над api/auth + токены)
   hooks/       useAuth (реэкспорт AuthContext), useMercure, useBoardLayout/useBoardScroll/useScrollAnimation/useLockLandscape
   lib/         мелкие утилиты без React (board.js, jwt.js, notify.js, storage.js, eventSource.js)
   navigation/  RootNavigator (auth-gate), routes.js
   screens/     AuthScreen, MainMenuScreen, LobbySearchScreen, LobbyScreen, GameBoardScreen
-  store/       lobbyReducer.js — чистые редьюсеры для Mercure-событий
+  store/       lobbyReducer.js, runnerGameReducer.js — чистые редьюсеры для Mercure-событий
   theme/       единственный источник colors/spacing/font/radius/shadow
 ```
 
@@ -50,7 +52,9 @@ src/
 
 `Lobby::toArray()` на бэке **не отдаёт поле `version`** — `normalizeLobby` подставляет 0. На финальный баг
 это не влияет (редьюсеры гасят дубли по id), но при реконнекте возможна логически лишняя обработка уже
-учтённых событий. Не чинил — не приоритетно, но учитывай при отладке рассинхрона лобби.
+учтённых событий. Не чинил — не приоритетно, но учитывай при отладке рассинхрона лобби. У `RunnerGame`
+такого бага **больше нет** — пользователь сам добавил `version` в `RunnerGame::toArray()` на бэке
+(`Entity/RunnerGame.php:420`), перепроверено чтением файла.
 
 **Screen.js** — общий каркас всех обычных экранов: SafeAreaView + `ParallaxBackground` (единый на все
 экраны, рендерится тут один раз, а не в каждом экране) + опциональный scroll/KeyboardAvoidingView. Экран
@@ -58,30 +62,52 @@ src/
 раскладкой сам (альбомная ориентация, без safe-area отступов), но тоже вставляет `<ParallaxBackground />`
 вручную для единообразия фона.
 
-**GameBoardScreen** — сейчас **полностью на моках** (`constants/mockGameData.js`, форма 1-в-1 повторяет
-`GET /api/runner_game`). Раскладка: слева `PlayerInfoPanel` (переключатель игроков, кубики,
-drag-and-drop на зоны усилений через `react-native-gesture-handler`+`reanimated`, карточки бегунов),
-справа `BoardGrid` (сетка 6×8×3 сегмента, скролл через `useBoardScroll`: PanResponder на мобильных,
-`useScrollAnimation` на вебе). Геометрия — `useBoardLayout`, считает так, чтобы один фрагмент 8 колонок
-помещался в правую зону без обрезки. `lib/board.js` разворачивает `trackBegin/Middle/End` в плоский список
-ячеек и резолвит типы клеток (`danger_2/danger_3` → `danger`, `anomaly` → `danger`, нет данных → `road`).
+**GameBoardScreen** — с Фазы 1 (см. запись 2026-08-12, седьмой заход, ниже) подключён к реальному
+`GET /api/runner_game` + Mercure-топику `runner_game_{id}` через `useMercure`/`runnerGameReducer`, тем же
+протоколом «буфер → снапшот → live», что и `LobbyScreen`. Раскладка: слева `PlayerInfoPanel`
+(переключатель игроков, кубики, drag-and-drop на зоны усилений через
+`react-native-gesture-handler`+`reanimated`, карточки бегунов), справа `BoardGrid` (сетка 6×8×3 сегмента,
+скролл через `useBoardScroll`: PanResponder на мобильных, `useScrollAnimation` на вебе). Геометрия —
+`useBoardLayout`, считает так, чтобы один фрагмент 8 колонок помещался в правую зону без обрезки.
+`lib/board.js` разворачивает `trackBegin/Middle/End` в плоский список ячеек и резолвит типы клеток
+(`danger_2/danger_3` → `danger`, `anomaly` → `danger`, нет данных → `road`). Игровые действия
+(select/move/collision/shoot/ability) **всё ещё не вызывают бэк** — тап/драг на доске только выбирают
+раннера/двигают локальный UI-стейт с `notify()`-заглушкой; это Фаза 2 (см. TODO).
+
+**Партия имеет собственный ready-up гейт, отдельный от лобби**: после `game_created` (лобби) игра
+рождается со статусом `waiting`, и каждый игрок обязан вызвать `POST /runner_game/start`, прежде чем
+статус станет `active` (событие `game_active`). `GameBoardScreen` рисует `GameWaitingRoom` при
+`status === GAME_STATUS.WAITING` и сам переключается на доску, когда статус меняется — доп. навигации не
+нужно, компонент просто по-другому рендерит тот же live-стейт.
+
+**Коллизия сигналится НЕ через `player.step`** (в бэковом enum `PlayerStep` нет кейса COLLISION) — а через
+`game.extraTurnPlayer`/поле `extraTurnPlayer` события `game_turn_changed`. Пока оно не `null` — бэк
+блокирует вообще все игровые действия всем игрокам, и никакого таймаута на бэке нет: если игрок-цель не
+ответит на `/collision`, партия зависает навсегда. Фронт (Фаза 1) это не резолвит, только показывает
+баннер и через 18 сек даёт кнопку ручного `resync()` — см. `GameBoardScreen.COLLISION_STUCK_TIMEOUT`.
 
 `GestureHandlerRootView` обязателен в `App.js` (уже добавлен) — без него драг кубиков молча не работает на
 Android.
 
 ## Известные пробелы / TODO (актуально на момент записи)
 
-- **GameBoardScreen не подключён к реальным данным.** Ни `GET /api/runner_game`, ни подписки на
-  `runner_game_{id}` через `useMercure`, ни вызовов `/select /move /collision /shoot /ability` — только
-  локальный UI-стейт поверх мока. Когда будем подключать: паттерн копировать с `LobbyScreen` +
-  `store/lobbyReducer.js` (нужен аналогичный `gameReducer.js`).
+- **GameBoardScreen: реальные игровые действия ещё не вызывают бэк (Фаза 2).** Bootstrap (снапшот +
+  Mercure-подписка + ready-up + reconnect) готов (Фаза 1, см. «Заметки» ниже), но
+  select/move/collision/shoot/ability — по-прежнему только локальный UI-стейт с `notify()`-заглушками.
+  Важно при реализации: `POST /runner_game/move` — это один вызов на ОДНУ клетку (сервер не строит
+  маршрут сам), т.е. бросок кубика 1-6 — серия REST-вызовов; гейтинг доступности действий — по
+  `player.step` (`PLAYER_STEP` в GameConstants.js), кроме коллизии — та по `game.extraTurnPlayer`.
 - **`Runner.damageTokens` — выдуманное поле.** У бэка `Runner::toArray()` отдаёт только `status`
   (healthy/damaged/broken/destroyed), **без** типа конкретного жетона повреждения. UI по ТЗ должен
   показывать тип — либо просить бэк добавить поле, либо копить типы на фронте из потока событий
   (`danger`/`damage`/`ricochet`/`rocket`/`stupor`/`anomaly`).
-- **MainMenuScreen** содержит временную кнопку «🧪 Тест игровой доски» (секция «Для разработки») —
-  напрямую открывает `GameBoardScreen` на моках, в обход лобби. Убрать, когда экран подключится к реальному
-  API — иначе будет мёртвый вход в UI с фейковыми данными.
+- **`RunnerPlayer::toArray()` не отдаёт `activeRunner`.** Это поле есть только в событиях (`player_step`,
+  `step_selection`, `ability_*`) — `runnerGameReducer` его туда кладёт по мере поступления событий, но
+  сразу после reconnect (до первого такого события) поле будет `undefined`. Осознанный пробел, не баг.
+- На бэке подтверждённый (не мой) баг: `ReaperService::validateCell()` сравнивает `Cell::getType()`
+  (`string`) с `RoadType::WALL`/`RoadType::ANOMALY` через `===` — это всегда `false` в PHP (enum-кейс не
+  равен строке), т.е. сервер реально не запрещает ставить Жнеца на стену/аномалию. Фронт должен сам
+  проверять проходимость клетки при реализации ability=reaper (Фаза 2) — не полагаться на бэк.
 - `config/env.js`: `LAN_IP` — плейсхолдер, для теста на физическом устройстве надо подставлять реальный IP
   вручную (закомментированная строка в `devHost()`).
 - Ассеты: изображения теперь разложены по подпапкам `assets/images/{road,dice,runner}` — если добавляешь
@@ -227,3 +253,45 @@ Android.
     плагин ворклетов подтверждённо подключается. Фикс токенов проверен тем же прогоном на синтаксис —
     чисто (при первой правке была опечатка — незакрытый JSX-тег, — поймана этой же проверкой и
     исправлена сразу).
+
+- 2026-08-12 (седьмой заход): Фаза 1 подключения GameBoardScreen к реальному бэку (bootstrap — переход
+  лобби→игра, пассивная синхронизация live-стейта, reconnect). Полный план — в чате/плане сессии, суть:
+  - Матчасть перепроверена ЧТЕНИЕМ ИСХОДНИКОВ бэка (не только README, там кое-где неполно/неточно):
+    `POST /runner_game/move` — один вызов на одну клетку (`StepMoveService.php`), сервер не строит
+    маршрут сам; коллизия сигналится `game.extraTurnPlayer`, не `player.step` (в `PlayerStep` enum нет
+    кейса COLLISION); `GameActiveEvent` шлёт `status` через `->name` (`"ACTIVE"`), а не `->value` как
+    everywhere-else — редьюсер это обходит константой, не доверяя `e.status`. Полный список
+    Mercure-событий и их полей — см. `runnerGameReducer.js`, он покрывает все версионные события.
+  - Новое: `api/runnerGame.js` (get/start/select/move/collision/shoot/ability — последние 5 пока не
+    вызываются с экрана, это Фаза 2), `normalizeRunnerGame` в `api/normalize.js`, `GAME_STATUS`/
+    `PLAYER_STATUS`/`PLAYER_STEP` в `GameConstants.js`, `store/runnerGameReducer.js` (абсолютное
+    слияние по версионным событиям, без очереди/анимации — это Фаза 3), `components/game/GameWaitingRoom.js`
+    (ready-up экран между `game_created` и `game_active`).
+  - `GameBoardScreen` теперь принимает `route.params.gameId`, подписывается через `useMercure` (тот же
+    протокол, что `LobbyScreen`), рендерит `GameWaitingRoom` / доску / спиннер по `game.status`. Мок
+    (`MOCK_GAME`) больше не используется на этом экране. `handleCellPress` пока не двигает раннера по
+    live-данным (это создало бы конфликт с реальными позициями с бэка) — только `notify()`-заглушка,
+    сохранён предыдущий adjacency-код закомментирован не был, просто убран (в Фазе 2 его логика
+    переедет в реальный вызов `/move`).
+  - `MainMenuScreen`: на фокусе экрана сначала проверяется `runnerGameApi.get()` (активная партия
+    приоритетнее лобби) — если есть `waiting`/`active` игра, сразу `navigation.reset` на `RUNNER_GAME`
+    с `gameId`. Первый резолв блокирует рендер меню (`checkingSession`, спиннер как на
+    `RootNavigator`-сплэше), повторные фокусы — нет (как и у лобби-баннера). Кнопка «🧪 Тест игровой
+    доски» удалена (вела в никуда без `gameId`/живых данных).
+  - Зависшая коллизия (бэк не резолвит сама, таймаута нет) — на фронте просто баннер + через 18 сек
+    кнопка ручного `resync()` (полный REST-рефетч + переподписка), без авто-решения за игрока.
+  - Фон на мобильном (не только на GameBoardScreen — вообще везде, регрессия относительно шестого
+    захода, где хотя бы auth-экран работал): код уже правильный (`babel.config.js` с
+    `babel-preset-expo` на месте, `.jpg`-ассет существует, единственная ссылка на него актуальна) —
+    диагностировано, но НЕ ПОЧИНЕНО кодом, потому что чинить нечего: `babel.config.js` и переименование
+    `.png`→`.jpg` попали в прошлый коммит (`821a9fc`) БЕЗ последующего `expo start -c`/пересборки, и
+    Metro/embedded-бандл на устройстве почти наверняка держит старый закэшированный бандл, где ещё нет
+    нового babel-конфига и/или ссылка на удалённый `.png`. Нужно на стороне пользователя: `expo start -c`
+    (полная очистка кэша Metro), и если это НЕ Expo Go, а dev-client/standalone-сборка — потребуется
+    ещё и `expo run:android` (или аналог), т.к. embedded JS-бандл в самой сборке тоже мог закэшироваться.
+  - Верификация: `@babel/core` с `babel-preset-expo` (`caller: {platform:'android'}`) по всем новым и
+    изменённым файлам — чисто; отдельно перепроверены имена экспортов/путей импортов grep'ом (`useAuth`,
+    `runnerGameReducer`, `normalizeRunnerGame`, `runnerGameApi`, `GAME_STATUS`/`PLAYER_STATUS`/
+    `PLAYER_STEP`, дефолтный экспорт `GameWaitingRoom`) — все совпадают. Живого прогона на бэке/
+    устройстве не было (нет доступа из сессии) — нужен ручной тест по сценарию из плана (лобби → оба
+    готовы → `GameWaitingRoom` → оба жмут «Готов» → доска с реальными позициями).

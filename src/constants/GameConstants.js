@@ -268,6 +268,35 @@ export const DAMAGE_TOKENS = {
 /** Цвета для визуального различения бегунов разных игроков на общей доске */
 export const PLAYER_COLORS = [colors.danger, colors.info, colors.success, colors.warning];
 
+/** Статус партии — зеркалит GameStatus (бэк, Service/Game/Enum/GameStatus.php) */
+export const GAME_STATUS = {
+  WAITING: 'waiting',
+  ACTIVE: 'active',
+  FINISH: 'finish',
+};
+
+/** Статус игрока в партии — зеркалит PlayerStatus (бэк, Service/Game/Enum/PlayerStatus.php) */
+export const PLAYER_STATUS = {
+  WAITING: 'waiting',
+  ACTIVE: 'active',
+  OUT: 'out',
+  WINNER: 'winner',
+};
+
+/**
+ * Шаг хода игрока — зеркалит int-backed enum PlayerStep (бэк). Присылается
+ * числом (0-4) как в player_step-событии, так и в RunnerPlayer::toArray().
+ * COLLISION в этот enum не входит — она сигналится через game.extraTurnPlayer,
+ * не через player.step (см. CLAUDE.md).
+ */
+export const PLAYER_STEP = {
+  BEGIN: 0,
+  SELECT: 1,
+  ABILITY: 2,
+  MOVE: 3,
+  SHOOT: 4,
+};
+
 /** Раскладка левой панели информации об игроке относительно ширины экрана */
 export const LAYOUT = {
   LEFT_PANEL_MIN_W: 300,
