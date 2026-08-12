@@ -15,11 +15,15 @@ import { colors, font, radius, spacing } from '../../theme';
  * см. GameBoardScreen). `active` — это бегун, которого игрок выбрал в этом
  * ходу (player.activeRunner с бэка), `healTarget` — сейчас ждём тап по
  * карточке как цель для команды "Лечение" (pendingAbility в GameBoardScreen).
+ * `pending` — на карточку брошен кубик (обычный выбор или накат), но
+ * POST /select ещё не отправлен: тап по карточке отменяет, кнопка
+ * "Подтвердить" в баннере хода — коммитит (см. pendingSelect в GameBoardScreen).
  */
 export default function RunnerCard({
     runner,
     color,
     active,
+    pending,
     healTarget,
     onPress,
     moveDiceValue = null,
@@ -32,7 +36,12 @@ export default function RunnerCard({
 
     return (
         <TouchableOpacity
-            style={[styles.card, active && styles.cardSelected, healTarget && styles.cardHealTarget]}
+            style={[
+                styles.card,
+                active && styles.cardSelected,
+                healTarget && styles.cardHealTarget,
+                pending && styles.cardPending,
+            ]}
             onPress={onPress}
             activeOpacity={0.8}
         >
@@ -44,7 +53,9 @@ export default function RunnerCard({
                     <Text style={[styles.status, { color: statusColor(runner.status) }]}>
                         {RUNNER_STATUS_LABEL[runner.status] ?? runner.status}
                     </Text>
-                    <Text style={styles.placement}>{placed ? 'на поле' : 'в резерве'}</Text>
+                    <Text style={styles.placement}>
+                        {pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
+                    </Text>
                 </View>
             </View>
 
@@ -92,6 +103,7 @@ const styles = StyleSheet.create({
     },
     cardSelected: { borderColor: colors.primary },
     cardHealTarget: { borderColor: colors.success },
+    cardPending: { borderColor: colors.warning, borderStyle: 'dashed' },
     topRow: { flexDirection: 'row', alignItems: 'center' },
     bottomRow: {
         flexDirection: 'row',

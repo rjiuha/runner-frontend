@@ -56,7 +56,12 @@ function rawCellType(game, segment, positionX, positionY) {
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
-function stepInstruction(step, activeRunner, pendingAbility) {
+function stepInstruction(step, activeRunner, pendingAbility, pendingSelect) {
+    if (pendingSelect) {
+        return pendingSelect.type === 'ROLL'
+            ? 'Накат выбран — подтверди или тапни бегуна ещё раз, чтобы отменить'
+            : 'Бегун выбран — подтверди или тапни бегуна ещё раз, чтобы отменить';
+    }
     switch (step) {
         case PLAYER_STEP.SELECT:
             return 'Перетащи кубик перемещения на карточку бегуна, чтобы выбрать его для хода';
@@ -83,10 +88,12 @@ function stepInstruction(step, activeRunner, pendingAbility) {
  * поля обновляются событиями (runnerGameReducer, Фаза 1), и локальному
  * дублирующему стейту просто нечего было бы хранить.
  *
- * Единственный "переходный" локальный стейт — pendingAbility: heal/reaper
- * требуют второй тап (по карточке бегуна / по клетке доски) ПОСЛЕ дропа
- * кубика на зону, потому что бэк ждёт runnerId/positionX/positionY/segment
- * одним вызовом /ability, а не двумя отдельными шагами.
+ * Переходные локальные стейты: pendingAbility (heal/reaper требуют второй тап —
+ * по карточке бегуна / по клетке доски — ПОСЛЕ дропа кубика на зону, бэк ждёт
+ * runnerId/positionX/positionY/segment одним вызовом /ability) и pendingSelect
+ * (SELECT, включая накат/type=ROLL, требует явного подтверждения — дропнутый
+ * не туда кубик иначе было бы не вернуть, реальный /select уходит только по
+ * кнопке "Подтвердить"/повторному тапу по той же карточке — см. handleConfirmSelect).
  */
 export default function GameBoardScreen({ route }) {
     useLockLandscape();
@@ -154,6 +161,8 @@ export default function GameBoardScreen({ route }) {
     const [activePlayerId, setActivePlayerId] = useState(null);
     // { ability: 'heal'|'reaper', diceIndex } — ждём второй тап (карточка/клетка), см. шапку файла
     const [pendingAbility, setPendingAbility] = useState(null);
+    // { runnerId, diceIndex, type: 'DICE'|'ROLL' } — SELECT ждёт подтверждения, см. шапку файла
+    const [pendingSelect, setPendingSelect] = useState(null);
     const [busy, setBusy] = useState(false);
 
     // По умолчанию — свой игрок, как только придут данные. Один раз (пока не выбран вручную).
@@ -168,6 +177,31 @@ export default function GameBoardScreen({ route }) {
     const myStep = myPlayer?.step;
     const myCollision = !!myPlayer && game?.extraTurnPlayer != null
         && String(game.extraTurnPlayer) === String(myPlayer.id);
+
+    // Можно ли сейчас выбрать этого бегуна дропом кубика — и обычным способом
+    // (dice==null), и накатом (dice===0, уже полностью проехал в этом раунде).
+    // Накат разрешён, только если среди СВОИХ бегунов не осталось неперемещённых
+    // исправных (правило "нельзя выбрать накат, если есть исправный бегун,
+    // которого вы не перемещали") и не больше 2 раз за раунд на бегуна —
+    // см. StepSelectionValidator::rollValidate на бэке (перепроверено живым
+    // прогоном, см. CLAUDE.md).
+    const canSelectRunner = useCallback(
+        (runnerId) => {
+            if (!myTurn || myStep !== PLAYER_STEP.SELECT) return false;
+            const runner = runners.find((r) => r.id === runnerId);
+            if (!runner || DEAD_STATUSES.includes(runner.status)) return false;
+            if (runner.dice == null) return true;
+
+            if (runner.dice !== 0) return false; // ещё не доехал — не накат-кандидат
+            if (runner.rollDice != null || (runner.rollMoves ?? 0) >= 2) return false;
+            const hasUnmoved = runners.some(
+                (r) => r.playerId === myPlayer?.id && r.id !== runnerId
+                    && r.type !== RUNNER_TYPES.REAPER && !DEAD_STATUSES.includes(r.status) && r.dice == null,
+            );
+            return !hasUnmoved;
+        },
+        [myTurn, myStep, runners, myPlayer?.id],
+    );
 
     const activeRunner = useMemo(
         () => (myPlayer?.activeRunner != null ? runners.find((r) => r.id === myPlayer.activeRunner) : null),
@@ -315,16 +349,25 @@ export default function GameBoardScreen({ route }) {
         [shotSound, tapMode, highlightedCells, activeRunner, cols, pendingAbility, runAction],
     );
 
-    // Дроп кубика на карточку бегуна — шаг SELECT.
+    // Дроп кубика на карточку бегуна — шаг SELECT. Реальный /select уходит не
+    // сразу, а только после подтверждения (см. handleConfirmSelect) — раньше
+    // коммитилось мгновенно на дроп, и промахнувшийся кубик было не вернуть.
     const handleDropOnRunner = useCallback(
         (playerId, runnerId, diceIndex) => {
-            if (!myTurn || myStep !== PLAYER_STEP.SELECT || playerId !== myPlayer?.id) return;
+            if (playerId !== myPlayer?.id || !canSelectRunner(runnerId)) return;
             const runner = runners.find((r) => r.id === runnerId);
-            if (!runner || runner.dice != null || DEAD_STATUSES.includes(runner.status)) return;
-            runAction(() => runnerGameApi.select(runnerId, diceIndex + 1, 'DICE'));
+            setPendingSelect({ runnerId, diceIndex, type: runner.dice == null ? 'DICE' : 'ROLL' });
         },
-        [myTurn, myStep, myPlayer?.id, runners, runAction],
+        [myPlayer?.id, canSelectRunner, runners],
     );
+
+    const handleConfirmSelect = useCallback(() => {
+        if (!pendingSelect) return;
+        const { runnerId, diceIndex, type } = pendingSelect;
+        runAction(() => runnerGameApi.select(runnerId, diceIndex + 1, type).then(() => setPendingSelect(null)));
+    }, [pendingSelect, runAction]);
+
+    const handleCancelSelect = useCallback(() => setPendingSelect(null), []);
 
     // Дроп кубика на зону усиления — шаг ABILITY. boost/ghost зовут API сразу
     // (бэк сам берёт activeRunner), heal/reaper ждут второй тап — см. handleCellPress
@@ -349,11 +392,15 @@ export default function GameBoardScreen({ route }) {
         [pendingAbility],
     );
 
-    // Тап по карточке бегуна: единственное значимое действие сейчас — выбор
-    // цели для pending heal. Вне этого тап по карточке ничего не делает —
-    // сам выбор бегуна для перемещения происходит дропом кубика (SELECT).
+    // Тап по карточке бегуна: если на ней уже висит pendingSelect — повторный
+    // тап отменяет (та же карточка = "передумал"). Иначе, во время pending
+    // heal — это выбор цели лечения. Больше тап по карточке ничего не делает.
     const handleRunnerCardPress = useCallback(
         (runner) => {
+            if (pendingSelect?.runnerId === runner.id) {
+                setPendingSelect(null);
+                return;
+            }
             if (pendingAbility?.ability !== 'heal') return;
             if (runner.playerId !== myPlayer?.id) return; // лечить можно только своих бегунов
             // Лечение чинит НЕИСПРАВНОГО (broken) бегуна — это как раз его смысл (см. правила
@@ -367,7 +414,7 @@ export default function GameBoardScreen({ route }) {
                     .then(() => setPendingAbility(null)),
             );
         },
-        [pendingAbility, runAction],
+        [pendingSelect, pendingAbility, myPlayer?.id, runAction],
     );
 
     const handleShootSkip = useCallback(() => {
@@ -433,8 +480,16 @@ export default function GameBoardScreen({ route }) {
                 {myTurn ? (
                     <>
                         <Text style={styles.turnTitleMine}>Твой ход</Text>
-                        <Text style={styles.turnHint}>{stepInstruction(myStep, activeRunner, pendingAbility)}</Text>
-                        {(showShootSkip || showAbilitySkip) && (
+                        <Text style={styles.turnHint}>
+                            {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect)}
+                        </Text>
+                        {pendingSelect && !busy && (
+                            <View style={styles.turnBtnRow}>
+                                <Button title="Подтвердить" variant="success" onPress={handleConfirmSelect} style={styles.turnSkipBtn} />
+                                <Button title="Отмена" variant="muted" onPress={handleCancelSelect} style={styles.turnSkipBtn} />
+                            </View>
+                        )}
+                        {!pendingSelect && (showShootSkip || showAbilitySkip) && (
                             <Button
                                 title={showShootSkip ? 'Пропустить выстрел' : 'Пропустить усиление'}
                                 variant="muted"
@@ -475,6 +530,8 @@ export default function GameBoardScreen({ route }) {
                 canAct={myTurn && !busy}
                 myStep={myStep}
                 pendingAbility={pendingAbility}
+                pendingSelect={pendingSelect}
+                canSelectRunner={canSelectRunner}
                 onDropOnAbility={handleDropOnAbility}
                 onPressAbilityZone={handlePressAbilityZone}
                 onDropOnRunner={handleDropOnRunner}
@@ -546,4 +603,5 @@ const styles = StyleSheet.create({
     turnTitleMine: { color: colors.success, fontSize: font.small, fontWeight: 'bold' },
     turnHint: { color: colors.textOnDark, fontSize: font.tiny, marginTop: 2 },
     turnSkipBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md, marginTop: spacing.xs },
+    turnBtnRow: { flexDirection: 'row', gap: spacing.xs },
 });

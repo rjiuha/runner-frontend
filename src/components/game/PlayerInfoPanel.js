@@ -30,6 +30,8 @@ export default function PlayerInfoPanel({
     canAct,
     myStep,
     pendingAbility,
+    pendingSelect,
+    canSelectRunner,
     onDropOnAbility,
     onPressAbilityZone,
     onDropOnRunner,
@@ -48,13 +50,13 @@ export default function PlayerInfoPanel({
                 : null
         : null;
 
-    // Кубик, зарезервированный под pending heal/reaper, ещё не consumed бэком
-    // (реальный /ability уйдёт только по второму тапу) — визуально прячем его
-    // из трея пораньше, чтобы не тащили дважды. Актуально только для СВОЕЙ
-    // панели — pendingAbility относится к myPlayer, не к тому, чью панель
-    // сейчас листают через переключатель.
+    // Кубик, зарезервированный под pending heal/reaper/select, ещё не consumed
+    // бэком (реальный вызов уйдёт только после подтверждения/второго тапа) —
+    // визуально прячем его из трея пораньше, чтобы не тащили дважды. Актуально
+    // только для СВОЕЙ панели — pending-стейты относятся к myPlayer, не к тому,
+    // чью панель сейчас листают через переключатель.
     const trayDice = activePlayer.dice.map((v, i) =>
-        isMyPanel && pendingAbility?.diceIndex === i ? null : v,
+        isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i) ? null : v,
     );
 
     const abilityAssignments = useMemo(() => {
@@ -97,7 +99,8 @@ export default function PlayerInfoPanel({
                 return;
             }
             if (key.startsWith('move:')) {
-                const valid = dragMode === 'select';
+                const runnerId = Number(key.slice('move:'.length));
+                const valid = dragMode === 'select' && canSelectRunner(runnerId);
                 setHover((h) => (h.key === key && h.valid === valid ? h : { key, valid }));
                 return;
             }
@@ -109,7 +112,7 @@ export default function PlayerInfoPanel({
             const valid = value >= ability.min && value <= ability.max;
             setHover((h) => (h.key === key && h.valid === valid ? h : { key, valid }));
         },
-        [findZoneAt, dragMode],
+        [findZoneAt, dragMode, canSelectRunner],
     );
 
     const handleDrop = useCallback(
@@ -181,13 +184,19 @@ export default function PlayerInfoPanel({
                     <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна</Text>
                     {trackedRunners.map((runner) => {
                         const zoneKey = `move:${runner.id}`;
-                        const dice = runner.dice ?? runner.rollDice ?? null;
+                        const isPending = isMyPanel && pendingSelect?.runnerId === runner.id;
+                        // Пока выбор не подтверждён, кубик ещё не consumed бэком (runner.dice
+                        // не менялся) — берём значение из трея игрока по индексу pendingSelect.
+                        const dice = isPending
+                            ? activePlayer.dice[pendingSelect.diceIndex]
+                            : runner.dice ?? runner.rollDice ?? null;
                         return (
                             <RunnerCard
                                 key={runner.id}
                                 runner={runner}
                                 color={activePlayer.color}
                                 active={runner.id === activePlayer.activeRunnerId}
+                                pending={isPending}
                                 healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
                                 onPress={() => onRunnerCardPress(runner)}
                                 moveDiceValue={dice}
