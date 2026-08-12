@@ -8,6 +8,7 @@ import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
 import GameWaitingRoom from '../components/game/GameWaitingRoom';
+import EventLogPanel from '../components/game/EventLogPanel';
 import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
 import { useAuth } from '../hooks/useAuth';
@@ -17,6 +18,7 @@ import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
+import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
@@ -50,6 +52,29 @@ function rawCellType(game, segment, positionX, positionY) {
     return game?.[SEGMENT_KEYS[segment]]?.grid?.[positionX]?.[positionY] ?? null;
 }
 
+// Человеко-понятная подсказка "что делать", раз на экране нет туториала —
+// первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
+// нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
+// доске для перемещения/размещения.
+function stepInstruction(step, activeRunner, pendingAbility) {
+    switch (step) {
+        case PLAYER_STEP.SELECT:
+            return 'Перетащи кубик перемещения на карточку бегуна, чтобы выбрать его для хода';
+        case PLAYER_STEP.ABILITY:
+            if (pendingAbility?.ability === 'heal') return 'Тапни карточку своего повреждённого бегуна';
+            if (pendingAbility?.ability === 'reaper') return 'Тапни подсвеченную клетку, чтобы поставить Жнеца';
+            return 'Перетащи кубик на усиление или нажми «Пропустить усиление»';
+        case PLAYER_STEP.MOVE:
+            return activeRunner?.segment == null
+                ? 'Тапни подсвеченную клетку в заднем ряду — это выход на трассу'
+                : 'Тапни подсвеченную клетку, чтобы переместиться';
+        case PLAYER_STEP.SHOOT:
+            return 'Тапни подсвеченную цель или нажми «Пропустить выстрел»';
+        default:
+            return null;
+    }
+}
+
 /**
  * Экран игровой сессии. Фаза 2: реальная стейт-машина хода — select/ability/
  * move/shoot/collision дёргают бэк, а не локальный UI-стейт. Источник правды
@@ -73,12 +98,32 @@ export default function GameBoardScreen({ route }) {
         return { state: g, version: g.version };
     }, []);
 
+    // Отладочный лог всех Mercure-событий партии — см. components/game/EventLogPanel.js.
+    // Капаем на 200 записей, чтобы не расти бесконечно за долгую партию.
+    const [eventLog, setEventLog] = useState([]);
+    const pushLog = useCallback((e) => {
+        const text = describeEvent(e) ?? rawEventFallback(e);
+        const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, time: new Date().toLocaleTimeString(), text };
+        setEventLog((log) => (log.length >= 200 ? [...log.slice(1), entry] : [...log, entry]));
+    }, []);
+
+    // Логируем И версионные события (через reduce — вызывается ровно по разу
+    // на применённое событие, дубли уже отфильтрованы useMercure), И
+    // транзиентные (step_*/orchestrator без version) — теперь они хоть куда-то
+    // попадают, а не просто отбрасываются.
+    const reduceAndLog = useCallback(
+        (state, e) => {
+            pushLog(e);
+            return runnerGameReducer(state, e);
+        },
+        [pushLog],
+    );
+
     const { state: game, status, resync } = useMercure({
         topic: gameId ? `runner_game_${gameId}` : null,
         fetchSnapshot,
-        reduce: runnerGameReducer,
-        // step_*/orchestrator-события без version — пригодятся для анимации в Фазе 3
-        onTransient: () => {},
+        reduce: reduceAndLog,
+        onTransient: pushLog,
     });
 
     const {
@@ -144,6 +189,13 @@ export default function GameBoardScreen({ route }) {
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
+
+    // Чей сейчас ход — на экране раньше не было видно вообще (см. CLAUDE.md,
+    // живой прогон). game.playerOrder хранит RunnerPlayer.id как строку.
+    const currentTurnPlayer = useMemo(
+        () => gamePlayers.find((p) => String(p.id) === String(game?.playerOrder)) ?? null,
+        [gamePlayers, game?.playerOrder],
+    );
 
     const gridData = useMemo(
         () => flattenTrackSegments([game?.trackBegin, game?.trackMiddle, game?.trackEnd], rows, cols),
@@ -362,6 +414,7 @@ export default function GameBoardScreen({ route }) {
             <View style={styles.wrapper}>
                 <ParallaxBackground />
                 <GameWaitingRoom gamePlayers={gamePlayers} />
+                <EventLogPanel entries={eventLog} />
             </View>
         );
     }
@@ -372,6 +425,30 @@ export default function GameBoardScreen({ route }) {
     return (
         <View style={styles.wrapper}>
             <ParallaxBackground />
+
+            {/* Раньше на экране не было видно вообще, чей ход и что делать дальше —
+                см. живой прогон в CLAUDE.md. Один банер: чей ход + подсказка по шагу
+                + кнопка "пропустить", если она сейчас уместна — всё в одном месте. */}
+            <View style={styles.turnBanner}>
+                {myTurn ? (
+                    <>
+                        <Text style={styles.turnTitleMine}>Твой ход</Text>
+                        <Text style={styles.turnHint}>{stepInstruction(myStep, activeRunner, pendingAbility)}</Text>
+                        {(showShootSkip || showAbilitySkip) && (
+                            <Button
+                                title={showShootSkip ? 'Пропустить выстрел' : 'Пропустить усиление'}
+                                variant="muted"
+                                onPress={showShootSkip ? handleShootSkip : handleAbilitySkip}
+                                style={styles.turnSkipBtn}
+                            />
+                        )}
+                    </>
+                ) : (
+                    <Text style={styles.turnTitle}>
+                        Ход игрока: {currentTurnPlayer?.user?.username ?? '—'}
+                    </Text>
+                )}
+            </View>
 
             {game.extraTurnPlayer != null && (
                 <View style={styles.collisionBanner}>
@@ -431,23 +508,7 @@ export default function GameBoardScreen({ route }) {
                 <ArrowButton direction="right" size={arrowBtnSize} handlers={rightButtonProps} />
             </View>
 
-            {showShootSkip && (
-                <Button
-                    title="Пропустить выстрел"
-                    variant="muted"
-                    onPress={handleShootSkip}
-                    style={styles.shootSkip}
-                />
-            )}
-
-            {showAbilitySkip && (
-                <Button
-                    title="Пропустить усиление"
-                    variant="muted"
-                    onPress={handleAbilitySkip}
-                    style={styles.shootSkip}
-                />
-            )}
+            <EventLogPanel entries={eventLog} />
         </View>
     );
 }
@@ -467,15 +528,22 @@ const styles = StyleSheet.create({
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
     collisionBanner: {
-        position: 'absolute', top: spacing.md, alignSelf: 'center', zIndex: 20, elevation: 20,
+        // right (не alignSelf:'center') — абсолютно спозиционированные дети в RN
+        // не центрируются через alignSelf надёжно, нужны явные координаты.
+        position: 'absolute', top: spacing.md, right: spacing.md, zIndex: 20, elevation: 20,
         flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
         backgroundColor: colors.bgLight, borderRadius: radius.pill,
         paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
     },
     collisionText: { color: colors.textOnDark, fontSize: font.tiny },
     collisionBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md },
-    shootSkip: {
-        position: 'absolute', bottom: spacing.md, alignSelf: 'center', zIndex: 20, elevation: 20,
-        minHeight: 40, paddingHorizontal: spacing.lg,
+    turnBanner: {
+        position: 'absolute', top: spacing.md, left: spacing.md, zIndex: 20, elevation: 20,
+        maxWidth: 280, backgroundColor: colors.bgLight, borderRadius: radius.md,
+        paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
     },
+    turnTitle: { color: colors.textOnDarkSecondary, fontSize: font.small, fontWeight: 'bold' },
+    turnTitleMine: { color: colors.success, fontSize: font.small, fontWeight: 'bold' },
+    turnHint: { color: colors.textOnDark, fontSize: font.tiny, marginTop: 2 },
+    turnSkipBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md, marginTop: spacing.xs },
 });
