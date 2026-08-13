@@ -27,4 +27,4 @@ export const MERCURE_URL = DEV
     ? `http://${host}/.well-known/mercure`
     : 'https://hub.example.com/.well-known/mercure';
 
-export const REQUEST_TIMEOUT = 15000;
+export const REQUEST_TIMEOUT = 150000000;
