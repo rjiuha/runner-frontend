@@ -1,5 +1,6 @@
 // src/hooks/useBoardLayout.js
 import { useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { BOARD_LAYOUT, LAYOUT } from '../constants/GameConstants';
 
 /** Отступ, который GameBoardScreen передаёт в RoadArea (spacing). Держим в одном месте,
@@ -22,6 +23,7 @@ export const ROAD_AREA_SPACING = 12;
  */
 export function useBoardLayout() {
     const { width: screenW, height: screenH } = useWindowDimensions();
+    const insets = useSafeAreaInsets();
     const { ROWS, COLS, TOTAL_BLOCKS, TOTAL_COLS } = BOARD_LAYOUT;
     const orientation = screenH >= screenW ? 'portrait' : 'landscape';
 
@@ -38,8 +40,14 @@ export function useBoardLayout() {
         const arrowBtnSize = Math.max(28, Math.floor(screenW * 0.075));
         const switcherH = Math.floor(panelH * 0.15);
 
+        // insets.top — GameBoardScreen без SafeAreaView (см. его шапку), сам
+        // добавляет paddingTop:insets.top на roadZonePortrait, чтобы верхняя
+        // стрелка не рисовалась под статус-баром/вырезом камеры; здесь тот же
+        // отступ нужно вычесть из бюджета, иначе геометрия (roadContainerH)
+        // окажется больше реально доступного места и низ доски вылезет за
+        // пределы зоны.
         const boardBudgetW = Math.max(0, screenW - ROAD_AREA_SPACING * 2);
-        const boardBudgetH = Math.max(0, screenH - panelH - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2);
+        const boardBudgetH = Math.max(0, screenH - panelH - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2 - insets.top);
 
         // Раньше segmentW считался от boardBudgetW (почти вся ширина экрана) ÷ ROWS(6),
         // а segmentH — от boardBudgetH (узкий остаток под доску после панели+стрелок)
@@ -61,13 +69,18 @@ export function useBoardLayout() {
         // можно больше рядов трассы без скролла (было явно запрошено пользователем).
         const roadContainerH = boardBudgetH;
 
-        // Аналог minOffset в альбомной раскладке, только по вертикали и от
-        // РЕАЛЬНОГО containerHeight (roadContainerH может быть не кратен COLS
-        // ячейкам, в отличие от альбомной раскладки, где вьюпорт всегда ровно
-        // один фрагмент) — запас на "кирпичный" сдвиг нечётных дорожек
-        // (см. BoardGrid, портретная ветка).
+        // Аналог minOffset в альбомной раскладке (тот же смысл — "насколько
+        // далеко можно уйти от начала трассы"), но ПОЛОЖИТЕЛЬНЫЙ, не
+        // отрицательный: BoardGrid в портретной раскладке кладёт клетки через
+        // flexDirection:'column-reverse' (globalCol=0 внизу, дальше по треку —
+        // выше), и чтобы поднять контент выше (открыть более дальний участок),
+        // translateY нужно УВЕЛИЧИВАТЬ, а не уменьшать — иначе в альбомной
+        // раскладке. useBoardScroll читает знак minOffset и клэмпит/масштабирует
+        // соответственно, направление свайпа подтверждено с пользователем
+        // (вниз пальцем = дальше по треку). Запас — на "кирпичный" сдвиг
+        // нечётных дорожек, как и в альбомной раскладке.
         const totalContentH = TOTAL_COLS * segmentH + segmentH / 2;
-        const minOffset = -Math.max(0, totalContentH - roadContainerH);
+        const minOffset = Math.max(0, totalContentH - roadContainerH);
 
         return {
             orientation,

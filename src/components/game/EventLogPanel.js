@@ -1,6 +1,7 @@
 // src/components/game/EventLogPanel.js
 import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
@@ -18,6 +19,11 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
     const [open, setOpen] = useState(false);
     const scrollRef = useRef(null);
     const isTop = position === 'top';
+    // GameBoardScreen сознательно без SafeAreaView (см. его шапку) — без
+    // этого top:spacing.md рисовал плашку ПОД статус-баром/чёлкой телефона
+    // (жалоба пользователя — лог наезжал туда же, где часы). insets.top уже
+    // учитывает статус-бар, spacing.sm — дополнительный зазор от его низа.
+    const insets = useSafeAreaInsets();
 
     useEffect(() => {
         if (open) scrollRef.current?.scrollToEnd({ animated: true });
@@ -48,7 +54,13 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
     );
 
     return (
-        <View style={[styles.wrapper, isTop ? styles.wrapperTop : styles.wrapperBottomRight]} pointerEvents="box-none">
+        <View
+            style={[
+                styles.wrapper,
+                isTop ? [styles.wrapperTop, { top: insets.top + spacing.sm }] : styles.wrapperBottomRight,
+            ]}
+            pointerEvents="box-none"
+        >
             {isTop ? (
                 <>
                     {toggle}
@@ -69,9 +81,10 @@ const styles = StyleSheet.create({
         position: 'absolute', bottom: spacing.md, right: spacing.md, zIndex: 25, elevation: 25,
         alignItems: 'flex-end',
     },
-    // top+left — под статус-баром/батарейкой телефона, левый край экрана.
+    // top — задаётся динамически (insets.top+spacing.sm, см. компонент), тут
+    // только то, что не зависит от safe-area.
     wrapperTop: {
-        position: 'absolute', top: spacing.md, left: spacing.md, zIndex: 25, elevation: 25,
+        position: 'absolute', left: spacing.md, zIndex: 25, elevation: 25,
         alignItems: 'flex-start',
     },
     toggle: {

@@ -17,33 +17,36 @@ import { colors } from '../../theme';
  * Портретная раскладка (orientation='portrait'): дорожки — вертикальные
  * полосы, стек по горизонтали (все 6 помещаются по ширине без скролла),
  * скролл по Y. По требованию — движение по трассе должно идти СНИЗУ ВВЕРХ
- * (начало трассы у панели игрока внизу экрана), а не сверху вниз. Городить
- * для этого отдельную систему координат offset'а (0=начало/minOffset=конец —
- * та же семантика, что уже проверена и используется в альбомной раскладке)
- * не стали: контент строится в "естественной" системе (positionX=0 сверху,
- * растёт вниз — прямая зеркальная копия альбомной X-логики), а результат
- * целиком отражается по вертикали одним `transform: scaleY(-1)` на обёртке.
- * Из-за этого отражения все ЛИСТОВЫЕ визуальные элементы внутри (картинка
- * клетки, токен бегуна) получают контр-отражение (тоже `scaleY(-1)`), чтобы
- * сами по себе выглядеть не перевёрнутыми — переворачивается только их
- * ПОЗИЦИЯ, не содержимое.
+ * (начало трассы у панели игрока внизу экрана, дальше по треку — выше).
  *
- * Второй обязательный кусок геометрии — контент (H = TOTAL_COLS*segmentH)
- * значительно выше вьюпорта (containerHeight — весь оставшийся вертикальный
- * бюджет экрана, не обязательно кратный одному фрагменту, см. useBoardLayout).
- * По умолчанию RN прижимает такой контент к ВЕРХУ контейнера, обрезая лишнее
- * снизу — а нужно наоборот (см. `containerBottomAnchored`/justifyContent:
- * 'flex-end' на внешнем `container`), иначе при offset=0 в видимой части
- * оказывается ДАЛЬНИЙ конец трассы, а не начало. Именно сочетание "отражение
- * по Y" + "якорь контента к низу вьюпорта" даёт нужный результат: при offset=0
- * видно начало трассы (globalCol 0 и далее, сколько влезет по высоте вьюпорта)
- * у панели игрока внизу экрана, а по мере скролла (offset уходит в minOffset,
- * та же схема, что и в альбомной раскладке) дальнейшие сегменты трассы
- * въезжают СВЕРХУ. Разобрано на бумаге
- * построчно (система линейных уравнений на container_y от pre_shift_y и
- * offset), но НЕ проверено визуально (нет доступа к устройству/браузеру из
- * сессии) — если направление скролла или что закрывает что выйдет не так,
- * смотреть сюда в первую очередь.
+ * ПЕРВАЯ версия этого файла добивалась "снизу вверх" трансформом
+ * `scaleY(-1)` на всей сетке + контр-отражением каждой картинки/токена —
+ * на реальном Android это дало сломанные стрелки прокрутки и свайп,
+ * открывающий пустую зону (нет доступа к устройству для отладки, но по
+ * описанным симптомам похоже на связку transform+overflow:hidden). Заменено
+ * на `flexDirection: 'column-reverse'` — ЧИСТО layout-свойство, не paint-time
+ * трансформ: цепочка ячеек лежит в массиве в обычном порядке (globalCol
+ * возрастает), 'column-reverse' просто рисует их снизу вверх сама, без
+ * transform и без контр-отражения (картинки/токены остаются в нормальной
+ * ориентации, потому что ничего физически не отражается — просто порядок
+ * укладки другой). Меньше движущихся частей — надёжнее.
+ *
+ * Вьюпорт (containerHeight, весь оставшийся вертикальный бюджет экрана, см.
+ * useBoardLayout) значительно МЕНЬШЕ контента (H = TOTAL_COLS*segmentH, все
+ * 3 фрагмента трассы). `justifyContent: 'flex-end'` на внешнем `container`
+ * (см. `containerBottomAnchored`) прижимает контент к НИЗУ вьюпорта — иначе
+ * RN по умолчанию прижал бы к верху, и при offset=0 в видимой части
+ * оказался бы ДАЛЬНИЙ конец трассы вместо начала.
+ *
+ * Направление offset'а в портретной раскладке — ПОЛОЖИТЕЛЬНОЕ (0=начало,
+ * minOffset>0=дальше по треку), в отличие от альбомной (0=начало,
+ * minOffset<0=дальше) — см. useBoardLayout/useBoardScroll: чем дальше по
+ * треку (globalCol растёт), тем выше нужно поднять контент экрана, а "выше"
+ * при column-reverse — это положительный translateY (сдвигает контент вниз
+ * от его "нулевой" позиции, вытягивая скрытый сверху хвост в видимую зону
+ * снизу... см. useBoardScroll — там разобрано подробнее с конкретными
+ * числами). Направление свайпа подтверждено с пользователем: палец ВНИЗ
+ * открывает трассу ДАЛЬШЕ (тянешь трассу к себе).
  *
  * Токены бегунов в обеих раскладках рисуются ОДНИМ отдельным абсолютным
  * слоем НАД всей сеткой целиком (внутри той же прокручиваемой Animated.View,
@@ -51,6 +54,8 @@ import { colors } from '../../theme';
  * вручную — раньше (на Android, в альбомной раскладке) токены, вложенные в
  * каждую ячейку, иногда рисовались ПОД картинкой сегмента (view-flattening),
  * отдельный слой поверх сетки это обходит независимо от компоновки ячейки.
+ * В портретной раскладке y считается в ТОЙ ЖЕ системе, что и column-reverse
+ * даёт клеткам (см. tokenOverlay ниже) — globalCol=0 внизу, растёт вверх.
  *
  * Тап по клетке всегда сообщается наружу через onCellPress: используется и
  * для звука/фидбека, и для тап-плейсмента выбранного бегуна. Формат cell.id
@@ -81,8 +86,10 @@ export default function BoardGrid({
 
     // Ключ карты — "segment-row-localCol" (см. lib/board#indexRunnersByCell).
     // Переводим его в пиксельные координаты той же формулой, что уже
-    // определяет визуальную позицию ячейки — отдельно для каждой раскладки
-    // (портретная — в "естественной" до-отражения системе, см. шапку файла).
+    // определяет визуальную позицию ячейки. Портретная: globalCol=0 внизу
+    // (TOTAL_COLS-1-globalCol растёт сверху вниз, зеркалит column-reverse у
+    // самих клеток), лейн слева направо, без сдвига по X (сдвиг —
+    // "кирпичный", он вертикальный, см. marginTop у лейн-колонки).
     const tokenOverlay = useMemo(() => {
         const items = [];
         for (const [key, cellRunners] of runnersByCell.entries()) {
@@ -95,7 +102,7 @@ export default function BoardGrid({
                 ? row * segmentW
                 : globalCol * segmentW + (row % 2 !== 0 ? segmentW / 2 : 0);
             const y = isPortrait
-                ? globalCol * segmentH + (row % 2 !== 0 ? segmentH / 2 : 0)
+                ? (BOARD_LAYOUT.TOTAL_COLS - 1 - globalCol) * segmentH + (row % 2 !== 0 ? segmentH / 2 : 0)
                 : row * segmentH;
             items.push({ key, x, y, topRunner: cellRunners[0], count: cellRunners.length });
         }
@@ -111,6 +118,12 @@ export default function BoardGrid({
                         key={`lane-${laneIdx}`}
                         style={[
                             isPortrait ? styles.laneColumn : styles.row,
+                            // Явная height (портрет) — без неё laneRow (flexDirection:'row',
+                            // дефолтный alignItems:'stretch') растягивал/сжимал колонки лейнов
+                            // под общую высоту ряда и "съедал" эффект marginTop у нечётных
+                            // лейнов (кирпичная кладка пропадала целиком — баг с реального
+                            // теста на Android, ровный "плиточный" рисунок вместо кирпичного).
+                            isPortrait && { height: BOARD_LAYOUT.TOTAL_COLS * segmentH },
                             laneIdx % 2 !== 0 &&
                                 (isPortrait ? { marginTop: segmentH / 2 } : { marginLeft: segmentW / 2 }),
                         ]}
@@ -126,15 +139,12 @@ export default function BoardGrid({
                                 >
                                     <Image
                                         source={SEGMENT_IMAGES[cell.type] || SEGMENT_IMAGES.road}
-                                        style={[
-                                            {
-                                                width: segmentW,
-                                                height: segmentH,
-                                                resizeMode: 'stretch',
-                                                opacity: 0.9,
-                                            },
-                                            isPortrait && styles.counterFlip,
-                                        ]}
+                                        style={{
+                                            width: segmentW,
+                                            height: segmentH,
+                                            resizeMode: 'stretch',
+                                            opacity: 0.9,
+                                        }}
                                     />
                                     {highlighted && <View style={styles.highlight} pointerEvents="none" />}
                                 </TouchableOpacity>
@@ -166,11 +176,7 @@ export default function BoardGrid({
                 {tokenOverlay.map(({ key, x, y, topRunner, count }) => (
                     <View
                         key={key}
-                        style={[
-                            styles.tokenLayer,
-                            { left: x, top: y, width: segmentW, height: segmentH },
-                            isPortrait && styles.counterFlip,
-                        ]}
+                        style={[styles.tokenLayer, { left: x, top: y, width: segmentW, height: segmentH }]}
                     >
                         <RunnerToken
                             type={topRunner.type}
@@ -193,34 +199,20 @@ export default function BoardGrid({
         <View
             style={[
                 styles.container,
-                // Контент (H = TOTAL_COLS*segmentH) ЗНАЧИТЕЛЬНО выше вьюпорта
-                // (containerHeight = COLS*segmentH, один фрагмент) — без явного
-                // якоря он по умолчанию прижимается к ВЕРХУ контейнера (лишняя
-                // высота обрезается снизу overflow:hidden), а нужно наоборот:
-                // якорь к НИЗУ (лишняя высота обрезается сверху), чтобы при
-                // offset=0 в видимой области сразу оказался globalCol=0..7
-                // (начало трассы, у панели игрока внизу экрана), а не дальний
-                // конец. См. подробный разбор в шапке файла.
                 isPortrait && styles.containerBottomAnchored,
                 { width: containerWidth, height: containerHeight },
             ]}
             {...containerHandlers}
         >
-            {isPortrait ? (
-                // Один Animated.View с ОБОИМИ трансформами (не вложенные View
-                // mirror+translate по отдельности, как было раньше) — порядок в
-                // массиве важен: translateY первым (сдвиг в "естественной",
-                // до-отражения системе координат), scaleY вторым (отражает уже
-                // сдвинутый результат целиком). Меньше вложенности — меньше
-                // шансов на артефакты overflow:hidden+transform на Android.
-                <Animated.View
-                    style={[styles.laneRow, { transform: [{ translateY: offset }, { scaleY: -1 }] }]}
-                >
-                    {content}
-                </Animated.View>
-            ) : (
-                <Animated.View style={{ transform: [{ translateX: offset }] }}>{content}</Animated.View>
-            )}
+            <Animated.View
+                style={
+                    isPortrait
+                        ? [styles.laneRow, { transform: [{ translateY: offset }] }]
+                        : { transform: [{ translateX: offset }] }
+                }
+            >
+                {content}
+            </Animated.View>
         </View>
     );
 }
@@ -230,17 +222,19 @@ const styles = StyleSheet.create({
     containerBottomAnchored: { justifyContent: 'flex-end' },
     row: { flexDirection: 'row', alignItems: 'center' },
     // Дорожки расположены слева направо (портретная раскладка), каждая — свой
-    // вертикальный стек ячеек по возрастанию globalCol (см. шапку файла).
-    laneRow: { flexDirection: 'row' },
-    laneColumn: { flexDirection: 'column' },
-    // Контр-отражение листовых визуальных элементов (картинка клетки, токен
-    // бегуна) — родительский Animated.View целиком отражён по Y (см. JSX,
-    // transform: translateY+scaleY) для "снизу вверх"; это возвращает САМО
-    // содержимое (не позицию) в нормальную ориентацию.
-    counterFlip: { transform: [{ scaleY: -1 }] },
+    // вертикальный стек ячеек. column-reverse: клетки в массиве идут по
+    // возрастанию globalCol, но рисуются СНИЗУ ВВЕРХ (globalCol=0 внизу) —
+    // см. шапку файла, почему это не transform, а просто другой порядок
+    // укладки flexbox.
+    // alignItems:'flex-start' — не дефолтный 'stretch': с ним все лейн-колонки
+    // растягивались/сжимались под общую высоту ряда (см. комментарий у
+    // laneColumn выше про исчезнувшую кирпичную кладку), явная height у
+    // колонок это чинит только если сам ряд не пытается их дополнительно
+    // растянуть.
+    laneRow: { flexDirection: 'row', alignItems: 'flex-start' },
+    laneColumn: { flexDirection: 'column-reverse' },
     // Легальная клетка для тапа в текущем шаге (MOVE/SHOOT/reaper-размещение/
     // первый выход на трассу) — см. highlightedCells, считает GameBoardScreen.
-    // Симметричная рамка — контр-отражение ей не нужно.
     highlight: {
         ...StyleSheet.absoluteFillObject,
         borderWidth: 3,

@@ -11,10 +11,16 @@ import { useScrollAnimation } from './useScrollAnimation';
  *
  * `axis` ('x' | 'y') — вдоль какой оси экрана идёт скролл: 'x' в альбомной
  * раскладке (доска скроллится по горизонтали), 'y' в портретной (по
- * вертикали). Сама числовая семантика offset'а (0 = начало трассы, minOffset
- * = конец) от оси не зависит — меняется только то, какую компоненту жеста
- * (dx/vx или dy/vy) читает PanResponder. Какой конкретно CSS-transform
- * (translateX/translateY) применить к результату — решает BoardGrid.
+ * вертикали) — читает dy/vy жеста напрямую, БЕЗ инверсии: с BoardGrid'ом на
+ * `column-reverse` (см. его шапку) знак offset'а для портрета положительный
+ * (0=начало, minOffset>0=дальше по треку), и палец вниз естественно даёт
+ * dy>0 → offset растёт → трасса открывается дальше — ровно то поведение,
+ * которое подтвердил пользователь ("тянешь трассу к себе").
+ *
+ * `minOffset` может быть ОТРИЦАТЕЛЬНЫМ (альбомная раскладка, ось X) или
+ * ПОЛОЖИТЕЛЬНЫМ (портретная, ось Y, см. useBoardLayout) — весь клэмпинг и
+ * арифметика блоков ниже считают через `Math.sign(minOffset)`, а не жёстко
+ * зашитый диапазон [minOffset, 0], чтобы не дублировать логику под два знака.
  *
  * Оба набора хуков (веб/мобильные) вызываются безусловно (Platform.OS не
  * меняется в течение жизни приложения, но условный вызов хуков всё равно
@@ -37,12 +43,17 @@ export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis
     minOffsetRef.current = minOffset;
     segmentSizeRef.current = segmentSize;
 
-    // По оси Y — инвертировано (-dy/-vy), по прямому запросу пользователя после
-    // живого теста на Android: палец вверх должен двигать трассу вниз (открывая
-    // дальше по треку), а не вверх. С осью X (альбомная раскладка) не трогаем —
-    // там инверсия не запрашивалась и жест уже привычный.
-    const delta = (gestureState) => (axis === 'y' ? -gestureState.dy : gestureState.dx);
-    const velocity = (gestureState) => (axis === 'y' ? -gestureState.vy : gestureState.vx);
+    const delta = (gestureState) => (axis === 'y' ? gestureState.dy : gestureState.dx);
+    const velocity = (gestureState) => (axis === 'y' ? gestureState.vy : gestureState.vx);
+
+    // Диапазон допустимых значений offset'а — между 0 и minOffset, независимо
+    // от того, какой из них больше (знак minOffset зависит от оси, см. шапку).
+    const clamp = (v) => {
+        const m = minOffsetRef.current;
+        const lo = Math.min(0, m);
+        const hi = Math.max(0, m);
+        return Math.max(lo, Math.min(hi, v));
+    };
 
     const panResponder = useRef(
         PanResponder.create({
@@ -53,9 +64,7 @@ export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis
                 startOffsetRef.current = mobileOffset._value;
             },
             onPanResponderMove: (_evt, gestureState) => {
-                const newOffset = startOffsetRef.current + delta(gestureState);
-                const clamped = Math.max(minOffsetRef.current, Math.min(0, newOffset));
-                mobileOffset.setValue(clamped);
+                mobileOffset.setValue(clamp(startOffsetRef.current + delta(gestureState)));
             },
             // Лёгкая инерция по скорости флика при отпускании — без снэпа к фрагментам,
             // палец по-прежнему двигает трек свободно, просто отпускание не обрывает
@@ -65,9 +74,7 @@ export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis
                 const v = velocity(gestureState);
                 if (Math.abs(v) < 0.15) return;
 
-                const current = mobileOffset._value;
-                const projected = current + v * 180;
-                const target = Math.max(minOffsetRef.current, Math.min(0, projected));
+                const target = clamp(mobileOffset._value + v * 180);
 
                 Animated.timing(mobileOffset, {
                     toValue: target,
@@ -83,9 +90,15 @@ export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis
         (direction) => {
             if (isAnimatingRef.current) return;
 
-            const currentOffset = mobileOffset._value;
+            // dir: +1 если minOffset положительный (портрет/Y), -1 если
+            // отрицательный (альбомная/X, как было изначально) — переводит
+            // текущий offset в "магнитуду продвижения вперёд" (всегда >=0
+            // между 0 и |minOffset|), чтобы дальше считать блоки одной
+            // формулой независимо от знака.
+            const dir = minOffsetRef.current < 0 ? -1 : 1;
+            const currentForward = dir * mobileOffset._value;
             const blockSize = cols * segmentSizeRef.current;
-            const quotient = Math.floor(-currentOffset / blockSize); // 0..totalBlocks-1
+            const quotient = Math.floor(currentForward / blockSize); // 0..totalBlocks-1
 
             const targetBlockIndex =
                 direction === 'back' ? Math.max(0, quotient - 1) : Math.min(totalBlocks - 1, quotient + 1);
@@ -96,7 +109,7 @@ export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis
             // запас на "кирпичный" сдвиг нечётных дорожек (см. useBoardLayout), иначе
             // самая дальняя дорожка в последнем блоке не долистывалась до конца.
             const targetOffset =
-                targetBlockIndex === totalBlocks - 1 ? minOffsetRef.current : -targetBlockIndex * blockSize;
+                targetBlockIndex === totalBlocks - 1 ? minOffsetRef.current : dir * targetBlockIndex * blockSize;
             isAnimatingRef.current = true;
             Animated.timing(mobileOffset, {
                 toValue: targetOffset,
@@ -111,12 +124,14 @@ export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis
     );
 
     if (isWeb) {
+        // useScrollAnimation.startScroll(direction): +1 = к дальнему концу
+        // (minOffset, т.е. forward), -1 = обратно к началу (0, т.е. back) —
+        // знак НЕ зависит от знака самого minOffset (сам хук разбирается).
         return {
             offset: webScroll.xOffset,
             containerHandlers: {},
-            // back = к началу трассы (offset → 0), forward = вперёд по трассе (offset → minOffset).
-            backButtonProps: { onPressIn: () => webScroll.startScroll(1), onPressOut: webScroll.stopScroll },
-            forwardButtonProps: { onPressIn: () => webScroll.startScroll(-1), onPressOut: webScroll.stopScroll },
+            backButtonProps: { onPressIn: () => webScroll.startScroll(-1), onPressOut: webScroll.stopScroll },
+            forwardButtonProps: { onPressIn: () => webScroll.startScroll(1), onPressOut: webScroll.stopScroll },
         };
     }
 

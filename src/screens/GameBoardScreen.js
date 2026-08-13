@@ -2,6 +2,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ArrowButton from '../components/game/ArrowButton';
 import RoadArea from '../components/game/RoadArea';
@@ -97,6 +98,10 @@ function stepInstruction(step, activeRunner, pendingAbility, pendingSelect) {
  */
 export default function GameBoardScreen({ route }) {
     useAdaptiveOrientation();
+    // GameBoardScreen сознательно без SafeAreaView (см. шапку файла) — без
+    // этого top:spacing.md у collisionBanner рисовал плашку под статус-баром
+    // на телефонах, та же болячка, что была у EventLogPanel (см. его комментарий).
+    const insets = useSafeAreaInsets();
     const { user } = useAuth();
     const gameId = route?.params?.gameId ?? null;
 
@@ -521,7 +526,7 @@ export default function GameBoardScreen({ route }) {
             {!isPortrait && <View style={styles.turnBanner}>{turnBannerInner}</View>}
 
             {game.extraTurnPlayer != null && (
-                <View style={styles.collisionBanner}>
+                <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]}>
                     <Text style={styles.collisionText}>
                         {myCollision ? 'Столкновение! Принять?' : 'Ожидаем реакцию игрока на столкновение…'}
                     </Text>
@@ -561,7 +566,20 @@ export default function GameBoardScreen({ route }) {
                 панель игрока снизу с фиксированной высотой (panelH из useBoardLayout) —
                 см. BoardGrid про "снизу вверх" и useBoardLayout про геометрию.
                 Альбомная — как была: панель слева (см. выше), доска с боку. */}
-            <View style={isPortrait ? styles.roadZonePortrait : styles.roadZone}>
+            <View
+                style={[
+                    isPortrait ? styles.roadZonePortrait : styles.roadZone,
+                    // Без этого верхняя стрелка (первый flow-элемент в портретной
+                    // раскладке, экран без SafeAreaView) рисовалась под статус-баром/
+                    // вырезом камеры — не видна и не тапабельна (жалоба пользователя).
+                    isPortrait && { paddingTop: insets.top },
+                ]}
+            >
+                {/* Портрет: у стрелок СВОЯ логика, ОБРАТНАЯ направлению свайпа
+                    (подтверждено пользователем явно) — "вверх" = дальше по треку,
+                    "вниз" = назад к началу. В альбомной раскладке — как было:
+                    left=back, right=forward. Обе — дискретным прыжком на фрагмент
+                    (см. useBoardScroll.snapToBlock), не плавной прокруткой. */}
                 <ArrowButton
                     direction={isPortrait ? 'up' : 'left'}
                     size={arrowBtnSize}
@@ -613,6 +631,7 @@ export default function GameBoardScreen({ route }) {
                     height={panelH}
                     switcherHeight={switcherH}
                     switcherAtBottom
+                    compactColumns
                     headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
                 />
             )}
@@ -644,7 +663,8 @@ const styles = StyleSheet.create({
     collisionBanner: {
         // right (не alignSelf:'center') — абсолютно спозиционированные дети в RN
         // не центрируются через alignSelf надёжно, нужны явные координаты.
-        position: 'absolute', top: spacing.md, right: spacing.md, zIndex: 20, elevation: 20,
+        // top — задаётся динамически (insets.top+spacing.md, см. компонент).
+        position: 'absolute', right: spacing.md, zIndex: 20, elevation: 20,
         flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
         backgroundColor: colors.bgLight, borderRadius: radius.pill,
         paddingVertical: spacing.xs, paddingHorizontal: spacing.md,

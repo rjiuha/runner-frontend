@@ -1,29 +1,24 @@
 // src/components/game/RunnerDiceSlot.js
-import React, { useRef } from 'react';
+import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
- * Зона на карточке бегуна для перетаскивания кубика хода (шаг SELECT).
+ * Визуальный индикатор зоны кубика хода на карточке бегуна (шаг SELECT).
  * Значение приходит с бэка (runner.dice/rollDice) — как только SELECT
  * реально прошёл, кубик "занят" на сервере, снять его тут нельзя (в отличие
- * от зон усилий это не pending-стейт, а уже подтверждённое действие). Сама
- * зона не решает правила (любой кубик подходит любому бегуну), только
- * измеряет себя через measureInWindow для хит-тестинга в PlayerInfoPanel.
+ * от зон усилий это не pending-стейт, а уже подтверждённое действие).
+ *
+ * Чисто презентационный — сама зона дропа для хит-тестинга ("move:<id>") это
+ * теперь ВСЯ карточка бегуна целиком (см. RunnerCard, измеряет и репортит
+ * себя сам), не этот вложенный элемент — по запросу пользователя "сделай
+ * чувствительным всё пространство плитки персонажа к перетаскиванию кубика".
  */
-export default function RunnerDiceSlot({ zoneKey, value, hoverState, onMeasured, style }) {
-    const ref = useRef(null);
-
-    const measure = () => {
-        ref.current?.measureInWindow((x, y, width, height) => {
-            onMeasured(zoneKey, { x, y, width, height });
-        });
-    };
-
+export default function RunnerDiceSlot({ value, hoverState, style }) {
     const highlight = hoverState === 'valid' ? styles.hover : null;
 
     return (
-        <View ref={ref} onLayout={measure} style={[styles.slot, value != null && styles.slotFilled, highlight, style]}>
+        <View style={[styles.slot, value != null && styles.slotFilled, highlight, style]}>
             {value == null ? (
                 <Text style={styles.placeholder}>перетащи сюда кубик хода</Text>
             ) : (
@@ -36,10 +31,6 @@ export default function RunnerDiceSlot({ zoneKey, value, hoverState, onMeasured,
 }
 
 const styles = StyleSheet.create({
-    // minHeight 44 — не 28: маленькая цель было легко промахнуться пальцем на
-    // телефоне (жалоба пользователя "не работает перетаскивание на кубик
-    // хода") — сам хит-тестинг не был сломан (оконные координаты,
-    // measureInWindow), просто зона была мелкой и узкой.
     slot: {
         flexDirection: 'row',
         alignItems: 'center',

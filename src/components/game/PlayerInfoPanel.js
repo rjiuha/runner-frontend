@@ -41,7 +41,20 @@ export default function PlayerInfoPanel({
     switcherHeight,
     switcherAtBottom = false,
     headerContent = null,
+    compactColumns = false,
 }) {
+    // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
+    // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
+    // экранах всё будет влезать", после того как один из бегунов уехал за
+    // низ экрана) — даём ScrollView, но onLayout зон дропа не перевызывается
+    // при простой прокрутке контента, поэтому remeasureTick (растёт на конец
+    // скролла/флика) триггерит принудительный повторный measureInWindow в
+    // каждой карточке (см. RunnerCard) — иначе закешированные оконные
+    // координаты устареют относительно прокрутки и хит-тестинг дропа кубика
+    // снова начнёт промахиваться (та же болезнь, что уже была с общим
+    // ScrollView до перехода на compactColumns).
+    const [remeasureTick, setRemeasureTick] = useState(0);
+    const bumpRemeasure = useCallback(() => setRemeasureTick((t) => t + 1), []);
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? players[0];
     const isMyPanel = canAct && activePlayer.id === myPlayerId;
     // Что можно тащить прямо сейчас: SELECT — на карточку бегуна, ABILITY — на зону усиления.
@@ -159,6 +172,61 @@ export default function PlayerInfoPanel({
         </View>
     );
 
+    const reaperNode = reaper && (
+        <View style={[styles.reaperRow, compactColumns && styles.reaperRowCompact]}>
+            <RunnerToken
+                type={RUNNER_TYPES.REAPER}
+                color={activePlayer.color}
+                size={compactColumns ? 22 : 30}
+                selected={String(reaper.id) === String(activePlayer.activeRunnerId)}
+            />
+            <Text style={styles.reaperText} numberOfLines={1}>
+                {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
+            </Text>
+        </View>
+    );
+
+    const runnerCards = trackedRunners.map((runner) => {
+        const zoneKey = `move:${runner.id}`;
+        const isPending = isMyPanel && pendingSelect?.runnerId === runner.id;
+        // Пока выбор не подтверждён, кубик ещё не consumed бэком (runner.dice
+        // не менялся) — берём значение из трея игрока по индексу pendingSelect.
+        const dice = isPending
+            ? activePlayer.dice[pendingSelect.diceIndex]
+            : runner.dice ?? runner.rollDice ?? null;
+        return (
+            <RunnerCard
+                key={runner.id}
+                runner={runner}
+                color={activePlayer.color}
+                active={String(runner.id) === String(activePlayer.activeRunnerId)}
+                pending={isPending}
+                healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
+                onPress={() => onRunnerCardPress(runner)}
+                moveDiceValue={dice}
+                moveHoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
+                onMoveDiceMeasured={handleMeasured}
+                compact={compactColumns}
+                remeasureTick={remeasureTick}
+            />
+        );
+    });
+
+    const abilitiesNode = (
+        <>
+            <Text style={styles.sectionTitle}>
+                {compactColumns ? 'Усиления' : 'Усиления — перетащи кубик на зону'}
+            </Text>
+            <AbilityZones
+                assignments={abilityAssignments}
+                hoverKey={hover.key}
+                hoverValid={hover.valid}
+                onMeasured={handleMeasured}
+                onPressZone={onPressAbilityZone}
+            />
+        </>
+    );
+
     return (
         <View style={[styles.panel, { width, height }]}>
             <View style={styles.body}>
@@ -184,63 +252,48 @@ export default function PlayerInfoPanel({
                     draggable={dragMode != null}
                     onDragMove={handleDragMove}
                     onDrop={handleDrop}
+                    // Мельче в compactColumns — по прямому запросу пользователя,
+                    // освобождает вертикальное место карточкам бегунов ниже.
+                    size={compactColumns ? 34 : undefined}
                 />
 
-                <ScrollView
-                    style={styles.infoColumn}
-                    contentContainerStyle={styles.scrollContent}
-                    showsVerticalScrollIndicator={false}
-                >
-                    <Text style={styles.sectionTitle}>Усиления — перетащи кубик на зону</Text>
-                    <AbilityZones
-                        assignments={abilityAssignments}
-                        hoverKey={hover.key}
-                        hoverValid={hover.valid}
-                        onMeasured={handleMeasured}
-                        onPressZone={onPressAbilityZone}
-                    />
-
-                    {/* Жнец — перед карточками обычных бегунов (по запросу
-                        пользователя, раньше был в самом низу списка). */}
-                    {reaper && (
-                        <View style={styles.reaperRow}>
-                            <RunnerToken
-                                type={RUNNER_TYPES.REAPER}
-                                color={activePlayer.color}
-                                size={30}
-                                selected={String(reaper.id) === String(activePlayer.activeRunnerId)}
-                            />
-                            <Text style={styles.reaperText}>
-                                {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
-                            </Text>
-                        </View>
-                    )}
-
-                    <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна</Text>
-                    {trackedRunners.map((runner) => {
-                        const zoneKey = `move:${runner.id}`;
-                        const isPending = isMyPanel && pendingSelect?.runnerId === runner.id;
-                        // Пока выбор не подтверждён, кубик ещё не consumed бэком (runner.dice
-                        // не менялся) — берём значение из трея игрока по индексу pendingSelect.
-                        const dice = isPending
-                            ? activePlayer.dice[pendingSelect.diceIndex]
-                            : runner.dice ?? runner.rollDice ?? null;
-                        return (
-                            <RunnerCard
-                                key={runner.id}
-                                runner={runner}
-                                color={activePlayer.color}
-                                active={String(runner.id) === String(activePlayer.activeRunnerId)}
-                                pending={isPending}
-                                healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
-                                onPress={() => onRunnerCardPress(runner)}
-                                moveDiceValue={dice}
-                                moveHoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
-                                onMoveDiceMeasured={handleMeasured}
-                            />
-                        );
-                    })}
-                </ScrollView>
+                {/* compactColumns (портретная раскладка) — бегуны+жнец слева, усиления
+                    справа. Карточки ужаты (compact), чтобы влезло как можно больше,
+                    но гарантии на ЛЮБОМ экране нет — левая колонка поэтому со
+                    своим ScrollView (по прямому запросу пользователя после того,
+                    как один из бегунов уехал за нижний край экрана). Зона дропа
+                    кубика хода — теперь ВСЯ карточка целиком (см. RunnerCard,
+                    сама меряет и репортит себя), а не маленький вложенный
+                    элемент — раньше именно его маленький размер плюс устаревающее
+                    при скролле measureInWindow ловили промах дропа "куда ни
+                    кинь". remeasureTick (см. bumpRemeasure) перемеряет карточки
+                    после каждого скролла/флика этой колонки. */}
+                {compactColumns ? (
+                    <View style={styles.columns}>
+                        <ScrollView
+                            style={styles.leftColumn}
+                            contentContainerStyle={styles.leftColumnContent}
+                            showsVerticalScrollIndicator={false}
+                            onScrollEndDrag={bumpRemeasure}
+                            onMomentumScrollEnd={bumpRemeasure}
+                        >
+                            {reaperNode}
+                            {runnerCards}
+                        </ScrollView>
+                        <View style={styles.rightColumn}>{abilitiesNode}</View>
+                    </View>
+                ) : (
+                    <ScrollView
+                        style={styles.infoColumn}
+                        contentContainerStyle={styles.scrollContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {abilitiesNode}
+                        {reaperNode}
+                        <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна</Text>
+                        {runnerCards}
+                    </ScrollView>
+                )}
 
                 {switcherAtBottom && switcher}
             </View>
@@ -276,5 +329,15 @@ const styles = StyleSheet.create({
         marginBottom: spacing.xs,
     },
     reaperRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.sm },
+    reaperRowCompact: { marginTop: 2, marginBottom: 4 },
     reaperText: { color: colors.textOnDark, fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
+    // compactColumns (портретная раскладка) — бегуны+жнец слева (больше
+    // контента на карточку — flex:3), усиления справа (flex:2). leftColumn —
+    // ScrollView (см. комментарий у места использования про remeasureTick),
+    // rightColumn — обычный View (усиления, судя по фидбеку, влезают и без
+    // скролла; если тоже не влезут на каком-то экране — тот же паттерн).
+    columns: { flex: 1, flexDirection: 'row', marginTop: spacing.xs },
+    leftColumn: { flex: 3, marginRight: spacing.sm },
+    leftColumnContent: { paddingBottom: spacing.sm },
+    rightColumn: { flex: 2 },
 });
