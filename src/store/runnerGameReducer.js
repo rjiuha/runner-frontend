@@ -103,6 +103,35 @@ export function runnerGameReducer(game, e) {
                 activeRunner: e.player.activeRunner,
             });
 
+        // Единственное событие, которое возвращает НАЗНАЧЕННЫЙ бегуну кубик
+        // сразу после успешного /select — без этого случая runner.dice не
+        // обновлялся до следующего runner_save (при первом MOVE), и подтверждённый
+        // выбор визуально выглядел как "кубик откатился обратно" (см. CLAUDE.md).
+        // ⚠ поля игрока тут БЕЗ подчёркивания (dice1, не dice_1 как в остальных
+        // player_*-событиях) — сверено построчно с StepSelectionEvent.php.
+        case 'step_selection': {
+            const withPlayer = patchPlayer(game, e.player.id, {
+                step: e.player.step,
+                activeRunner: e.player.activeRunner,
+                dice1: e.player.dice1,
+                dice2: e.player.dice2,
+                dice3: e.player.dice3,
+                dice4: e.player.dice4,
+            });
+            return patchRunner(withPlayer, e.runner);
+        }
+
+        // Публикуется в начале хода/раунда — по факту дублирует game_turn_changed
+        // для game-полей, но приходит РАНЬШЕ него в некоторых переходах (новый
+        // раунд), так что применяем и это событие, а не полагаемся только на
+        // game_turn_changed.
+        case 'step_begin':
+            return patchPlayer(
+                { ...game, step: e.step, playerOrder: e.playerOrder, trackGain: e.trackGain },
+                e.player.id,
+                { step: e.player.step },
+            );
+
         case 'player_roll_move_dice':
             return patchPlayer(game, e.player.id, {
                 dice1: e.player.dice_1,

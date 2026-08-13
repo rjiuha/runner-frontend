@@ -37,6 +37,8 @@ export function describeEvent(e) {
             return `Игрок ${e.player?.id}: новые кубики [${e.player?.dice_1},${e.player?.dice_2},${e.player?.dice_3},${e.player?.dice_4}]`;
         case 'player_reset':
             return `Игрок ${e.player?.id}: сброс на новый раунд (усиление ${e.player?.ability ?? '—'})`;
+        case 'step_begin':
+            return `Ход/раунд начат: игрок ${e.playerOrder}, шаг игры ${e.step}, кубик дороги ${e.trackGain ?? '—'}`;
         case 'step_selection':
             return `Игрок ${e.player?.id} выбрал бегуна ${e.runner?.id}, кубик ${e.runner?.dice ?? e.runner?.rollDice}`;
         case 'step_move':
