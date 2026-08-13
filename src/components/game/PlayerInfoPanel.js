@@ -37,7 +37,10 @@ export default function PlayerInfoPanel({
     onDropOnRunner,
     onRunnerCardPress,
     width,
+    height,
     switcherHeight,
+    switcherAtBottom = false,
+    headerContent = null,
 }) {
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? players[0];
     const isMyPanel = canAct && activePlayer.id === myPlayerId;
@@ -146,32 +149,48 @@ export default function PlayerInfoPanel({
         [activePlayer.runners],
     );
 
+    const switcher = (
+        <View style={[styles.switcherBox, { height: switcherHeight }]}>
+            <PlayerSwitcher
+                players={players.map((p) => ({ id: p.id, name: p.name, color: p.color }))}
+                activeId={activePlayer.id}
+                onSelect={onSelectPlayer}
+            />
+        </View>
+    );
+
     return (
-        <View style={[styles.panel, { width }]}>
+        <View style={[styles.panel, { width, height }]}>
             <View style={styles.body}>
-                <View style={[styles.switcherBox, { height: switcherHeight }]}>
-                    <PlayerSwitcher
-                        players={players.map((p) => ({ id: p.id, name: p.name, color: p.color }))}
-                        activeId={activePlayer.id}
-                        onSelect={onSelectPlayer}
-                    />
-                </View>
+                {!switcherAtBottom && switcher}
+
+                {/* headerContent — место баннера хода в портретной раскладке
+                    (GameBoardScreen передаёт его сюда вместо отдельного
+                    плавающего баннера над доской — см. GameBoardScreen). Раньше
+                    тут был крупный Text с именем игрока — убран по запросу:
+                    имя уже видно в кнопках переключателя, дублировать незачем. */}
+                {headerContent}
+
+                {/* Кубики закреплены НАД скроллом (не внутри ScrollView) — на Android
+                    низких экранов список бегунов не помещается целиком, и зона
+                    "кубик хода" у нижних карточек оказывается доступна только после
+                    скролла. Если кубики скроллятся вместе со списком, до цели их
+                    просто нечем дотащить (сам кубик уходит с экрана раньше цели).
+                    Закреплённый трей остаётся на виду — сначала скроллишь список
+                    обычным тапом до нужной карточки, потом тащишь кубик сверху. */}
+                <Text style={styles.sectionTitle}>Кубики перемещения</Text>
+                <DiceTray
+                    dice={trayDice}
+                    draggable={dragMode != null}
+                    onDragMove={handleDragMove}
+                    onDrop={handleDrop}
+                />
 
                 <ScrollView
                     style={styles.infoColumn}
                     contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={false}
                 >
-                    <Text style={styles.name}>{activePlayer.name}</Text>
-
-                    <Text style={styles.sectionTitle}>Кубики перемещения</Text>
-                    <DiceTray
-                        dice={trayDice}
-                        draggable={dragMode != null}
-                        onDragMove={handleDragMove}
-                        onDrop={handleDrop}
-                    />
-
                     <Text style={styles.sectionTitle}>Усиления — перетащи кубик на зону</Text>
                     <AbilityZones
                         assignments={abilityAssignments}
@@ -180,6 +199,22 @@ export default function PlayerInfoPanel({
                         onMeasured={handleMeasured}
                         onPressZone={onPressAbilityZone}
                     />
+
+                    {/* Жнец — перед карточками обычных бегунов (по запросу
+                        пользователя, раньше был в самом низу списка). */}
+                    {reaper && (
+                        <View style={styles.reaperRow}>
+                            <RunnerToken
+                                type={RUNNER_TYPES.REAPER}
+                                color={activePlayer.color}
+                                size={30}
+                                selected={String(reaper.id) === String(activePlayer.activeRunnerId)}
+                            />
+                            <Text style={styles.reaperText}>
+                                {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
+                            </Text>
+                        </View>
+                    )}
 
                     <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна</Text>
                     {trackedRunners.map((runner) => {
@@ -195,7 +230,7 @@ export default function PlayerInfoPanel({
                                 key={runner.id}
                                 runner={runner}
                                 color={activePlayer.color}
-                                active={runner.id === activePlayer.activeRunnerId}
+                                active={String(runner.id) === String(activePlayer.activeRunnerId)}
                                 pending={isPending}
                                 healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
                                 onPress={() => onRunnerCardPress(runner)}
@@ -205,21 +240,9 @@ export default function PlayerInfoPanel({
                             />
                         );
                     })}
-
-                    {reaper && (
-                        <View style={styles.reaperRow}>
-                            <RunnerToken
-                                type={RUNNER_TYPES.REAPER}
-                                color={activePlayer.color}
-                                size={30}
-                                selected={reaper.id === activePlayer.activeRunnerId}
-                            />
-                            <Text style={styles.reaperText}>
-                                {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
-                            </Text>
-                        </View>
-                    )}
                 </ScrollView>
+
+                {switcherAtBottom && switcher}
             </View>
         </View>
     );
@@ -244,7 +267,6 @@ const styles = StyleSheet.create({
     switcherBox: { justifyContent: 'center' },
     infoColumn: { flex: 1, marginTop: spacing.xs },
     scrollContent: { paddingBottom: spacing.md },
-    name: { color: colors.textOnDark, fontSize: font.h3, fontWeight: 'bold', marginTop: spacing.sm },
     sectionTitle: {
         color: colors.textOnDarkSecondary,
         fontSize: font.tiny,

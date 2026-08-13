@@ -59,27 +59,31 @@ export default function RunnerCard({
                 </View>
             </View>
 
-            <View style={styles.bottomRow}>
-                <RunnerDiceSlot
-                    zoneKey={`move:${runner.id}`}
-                    value={moveDiceValue}
-                    hoverState={moveHoverState}
-                    onMeasured={onMoveDiceMeasured}
-                />
+            {/* Кубик хода — над кружочками повреждений и на всю ширину карточки
+                (не в один ряд с ними): по жалобе пользователя маленькая узкая
+                зона было легко промахнуться пальцем на телефоне — драг сам
+                по себе не был сломан (хит-тестинг на оконных координатах, не
+                зависит от расположения), просто цель была мелкой. */}
+            <RunnerDiceSlot
+                zoneKey={`move:${runner.id}`}
+                value={moveDiceValue}
+                hoverState={moveHoverState}
+                onMeasured={onMoveDiceMeasured}
+                style={styles.diceSlotFull}
+            />
 
-                <View style={styles.slots}>
-                    {slots.map((token, i) => {
-                        const meta = token ? DAMAGE_TOKENS[token.type] : null;
-                        return (
-                            <View
-                                key={i}
-                                style={[styles.slot, meta && { backgroundColor: meta.color, borderColor: meta.color }]}
-                            >
-                                {meta && <Text style={styles.slotText}>{meta.short}</Text>}
-                            </View>
-                        );
-                    })}
-                </View>
+            <View style={styles.slots}>
+                {slots.map((token, i) => {
+                    const meta = token ? DAMAGE_TOKENS[token.type] : null;
+                    return (
+                        <View
+                            key={i}
+                            style={[styles.slot, meta && { backgroundColor: meta.color, borderColor: meta.color }]}
+                        >
+                            {meta && <Text style={styles.slotText}>{meta.short}</Text>}
+                        </View>
+                    );
+                })}
             </View>
         </TouchableOpacity>
     );
@@ -105,17 +109,12 @@ const styles = StyleSheet.create({
     cardHealTarget: { borderColor: colors.success },
     cardPending: { borderColor: colors.warning, borderStyle: 'dashed' },
     topRow: { flexDirection: 'row', alignItems: 'center' },
-    bottomRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        marginTop: spacing.xs,
-    },
+    diceSlotFull: { marginTop: spacing.xs, alignSelf: 'stretch' },
     info: { flex: 1, marginLeft: spacing.sm },
     name: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     status: { fontSize: font.tiny, marginTop: 2, fontWeight: '600' },
     placement: { fontSize: 10, color: colors.textOnDarkSecondary, marginTop: 1 },
-    slots: { flexDirection: 'row' },
+    slots: { flexDirection: 'row', marginTop: spacing.xs },
     slot: {
         width: 26,
         height: 26,

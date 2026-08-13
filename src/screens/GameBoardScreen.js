@@ -13,7 +13,7 @@ import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
-import { useLockLandscape } from '../hooks/useLockLandscape';
+import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments } from '../lib/board';
@@ -96,7 +96,7 @@ function stepInstruction(step, activeRunner, pendingAbility, pendingSelect) {
  * кнопке "Подтвердить"/повторному тапу по той же карточке — см. handleConfirmSelect).
  */
 export default function GameBoardScreen({ route }) {
-    useLockLandscape();
+    useAdaptiveOrientation();
     const { user } = useAuth();
     const gameId = route?.params?.gameId ?? null;
 
@@ -134,7 +134,9 @@ export default function GameBoardScreen({ route }) {
     });
 
     const {
+        orientation,
         leftPanelW,
+        panelH,
         arrowBtnSize,
         switcherH,
         roadContainerW,
@@ -146,10 +148,12 @@ export default function GameBoardScreen({ route }) {
         cols,
         totalBlocks,
     } = useBoardLayout();
+    const isPortrait = orientation === 'portrait';
 
-    const { xOffset, containerHandlers, leftButtonProps, rightButtonProps } = useBoardScroll({
+    const { offset, containerHandlers, backButtonProps, forwardButtonProps } = useBoardScroll({
         minOffset,
-        segmentW,
+        segmentSize: isPortrait ? segmentH : segmentW,
+        axis: isPortrait ? 'y' : 'x',
         cols,
         totalBlocks,
         webScrollSpeed: BOARD_LAYOUT.WEB_SCROLL_SPEED,
@@ -203,8 +207,16 @@ export default function GameBoardScreen({ route }) {
         [myTurn, myStep, runners, myPlayer?.id],
     );
 
+    // String(): RunnerPlayer::$activeRunner на бэке типизирован как ?string,
+    // а Runner::$id — ?int (см. Entity/RunnerPlayer.php:33 и Entity/Runner.php:19),
+    // JSON отдаёт "42" против 42 — строгое === никогда не совпадало, из-за чего
+    // activeRunner был всегда null и подсветка MOVE/SHOOT не работала вообще
+    // (текст подсказки не зависит от activeRunner, поэтому казался рабочим).
     const activeRunner = useMemo(
-        () => (myPlayer?.activeRunner != null ? runners.find((r) => r.id === myPlayer.activeRunner) : null),
+        () =>
+            myPlayer?.activeRunner != null
+                ? runners.find((r) => String(r.id) === String(myPlayer.activeRunner))
+                : null,
         [runners, myPlayer?.activeRunner],
     );
 
@@ -469,41 +481,44 @@ export default function GameBoardScreen({ route }) {
     const showShootSkip = myTurn && myStep === PLAYER_STEP.SHOOT && !busy;
     const showAbilitySkip = myTurn && myStep === PLAYER_STEP.ABILITY && !busy && !pendingAbility;
 
+    // Раньше на экране не было видно вообще, чей ход и что делать дальше — см.
+    // живой прогон в CLAUDE.md. Один банер: чей ход + подсказка по шагу + кнопка
+    // "пропустить", если она сейчас уместна — всё в одном месте. В альбомной
+    // раскладке — плавающий банер над доской (styles.turnBanner, как раньше). В
+    // портретной — по запросу пользователя переехал ВНУТРЬ панели игрока, туда,
+    // где раньше было крупное имя игрока (см. PlayerInfoPanel.headerContent) —
+    // отдельный плавающий банер над узкой доской либо перекрывал её, либо
+    // занимал место, которое теперь отдано доске/панели.
+    const turnBannerInner = myTurn ? (
+        <>
+            <Text style={styles.turnTitleMine}>Твой ход</Text>
+            <Text style={styles.turnHint}>
+                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect)}
+            </Text>
+            {pendingSelect && !busy && (
+                <View style={styles.turnBtnRow}>
+                    <Button title="Подтвердить" variant="success" onPress={handleConfirmSelect} style={styles.turnSkipBtn} />
+                    <Button title="Отмена" variant="muted" onPress={handleCancelSelect} style={styles.turnSkipBtn} />
+                </View>
+            )}
+            {!pendingSelect && (showShootSkip || showAbilitySkip) && (
+                <Button
+                    title={showShootSkip ? 'Пропустить выстрел' : 'Пропустить усиление'}
+                    variant="muted"
+                    onPress={showShootSkip ? handleShootSkip : handleAbilitySkip}
+                    style={styles.turnSkipBtn}
+                />
+            )}
+        </>
+    ) : (
+        <Text style={styles.turnTitle}>Ход игрока: {currentTurnPlayer?.user?.username ?? '—'}</Text>
+    );
+
     return (
-        <View style={styles.wrapper}>
+        <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
             <ParallaxBackground />
 
-            {/* Раньше на экране не было видно вообще, чей ход и что делать дальше —
-                см. живой прогон в CLAUDE.md. Один банер: чей ход + подсказка по шагу
-                + кнопка "пропустить", если она сейчас уместна — всё в одном месте. */}
-            <View style={styles.turnBanner}>
-                {myTurn ? (
-                    <>
-                        <Text style={styles.turnTitleMine}>Твой ход</Text>
-                        <Text style={styles.turnHint}>
-                            {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect)}
-                        </Text>
-                        {pendingSelect && !busy && (
-                            <View style={styles.turnBtnRow}>
-                                <Button title="Подтвердить" variant="success" onPress={handleConfirmSelect} style={styles.turnSkipBtn} />
-                                <Button title="Отмена" variant="muted" onPress={handleCancelSelect} style={styles.turnSkipBtn} />
-                            </View>
-                        )}
-                        {!pendingSelect && (showShootSkip || showAbilitySkip) && (
-                            <Button
-                                title={showShootSkip ? 'Пропустить выстрел' : 'Пропустить усиление'}
-                                variant="muted"
-                                onPress={showShootSkip ? handleShootSkip : handleAbilitySkip}
-                                style={styles.turnSkipBtn}
-                            />
-                        )}
-                    </>
-                ) : (
-                    <Text style={styles.turnTitle}>
-                        Ход игрока: {currentTurnPlayer?.user?.username ?? '—'}
-                    </Text>
-                )}
-            </View>
+            {!isPortrait && <View style={styles.turnBanner}>{turnBannerInner}</View>}
 
             {game.extraTurnPlayer != null && (
                 <View style={styles.collisionBanner}>
@@ -522,26 +537,36 @@ export default function GameBoardScreen({ route }) {
                 </View>
             )}
 
-            <PlayerInfoPanel
-                players={players}
-                activePlayerId={activePlayerId}
-                onSelectPlayer={setActivePlayerId}
-                myPlayerId={myPlayer?.id ?? null}
-                canAct={myTurn && !busy}
-                myStep={myStep}
-                pendingAbility={pendingAbility}
-                pendingSelect={pendingSelect}
-                canSelectRunner={canSelectRunner}
-                onDropOnAbility={handleDropOnAbility}
-                onPressAbilityZone={handlePressAbilityZone}
-                onDropOnRunner={handleDropOnRunner}
-                onRunnerCardPress={handleRunnerCardPress}
-                width={leftPanelW}
-                switcherHeight={switcherH}
-            />
+            {!isPortrait && (
+                <PlayerInfoPanel
+                    players={players}
+                    activePlayerId={activePlayerId}
+                    onSelectPlayer={setActivePlayerId}
+                    myPlayerId={myPlayer?.id ?? null}
+                    canAct={myTurn && !busy}
+                    myStep={myStep}
+                    pendingAbility={pendingAbility}
+                    pendingSelect={pendingSelect}
+                    canSelectRunner={canSelectRunner}
+                    onDropOnAbility={handleDropOnAbility}
+                    onPressAbilityZone={handlePressAbilityZone}
+                    onDropOnRunner={handleDropOnRunner}
+                    onRunnerCardPress={handleRunnerCardPress}
+                    width={leftPanelW}
+                    switcherHeight={switcherH}
+                />
+            )}
 
-            <View style={styles.roadZone}>
-                <ArrowButton direction="left" size={arrowBtnSize} handlers={leftButtonProps} />
+            {/* Портретная раскладка: доска сверху (скролл по Y, стрелки вверх/вниз),
+                панель игрока снизу с фиксированной высотой (panelH из useBoardLayout) —
+                см. BoardGrid про "снизу вверх" и useBoardLayout про геометрию.
+                Альбомная — как была: панель слева (см. выше), доска с боку. */}
+            <View style={isPortrait ? styles.roadZonePortrait : styles.roadZone}>
+                <ArrowButton
+                    direction={isPortrait ? 'up' : 'left'}
+                    size={arrowBtnSize}
+                    handlers={isPortrait ? forwardButtonProps : backButtonProps}
+                />
 
                 <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
                     <BoardGrid
@@ -550,7 +575,8 @@ export default function GameBoardScreen({ route }) {
                         cols={cols}
                         segmentW={segmentW}
                         segmentH={segmentH}
-                        xOffset={xOffset}
+                        offset={offset}
+                        orientation={orientation}
                         containerHandlers={containerHandlers}
                         containerWidth={roadContainerW}
                         containerHeight={roadContainerH}
@@ -562,10 +588,36 @@ export default function GameBoardScreen({ route }) {
                     />
                 </RoadArea>
 
-                <ArrowButton direction="right" size={arrowBtnSize} handlers={rightButtonProps} />
+                <ArrowButton
+                    direction={isPortrait ? 'down' : 'right'}
+                    size={arrowBtnSize}
+                    handlers={isPortrait ? backButtonProps : forwardButtonProps}
+                />
             </View>
 
-            <EventLogPanel entries={eventLog} />
+            {isPortrait && (
+                <PlayerInfoPanel
+                    players={players}
+                    activePlayerId={activePlayerId}
+                    onSelectPlayer={setActivePlayerId}
+                    myPlayerId={myPlayer?.id ?? null}
+                    canAct={myTurn && !busy}
+                    myStep={myStep}
+                    pendingAbility={pendingAbility}
+                    pendingSelect={pendingSelect}
+                    canSelectRunner={canSelectRunner}
+                    onDropOnAbility={handleDropOnAbility}
+                    onPressAbilityZone={handlePressAbilityZone}
+                    onDropOnRunner={handleDropOnRunner}
+                    onRunnerCardPress={handleRunnerCardPress}
+                    height={panelH}
+                    switcherHeight={switcherH}
+                    switcherAtBottom
+                    headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
+                />
+            )}
+
+            <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
         </View>
     );
 }
@@ -574,14 +626,19 @@ const styles = StyleSheet.create({
     // backgroundColor — та же тёмная тема, что Screen.js подставляет под
     // ParallaxBackground на всех остальных экранах (SafeAreaView с
     // {backgroundColor: bg}). У GameBoardScreen своего Screen-каркаса нет
-    // (полноэкранный альбомный экран, фон вставляет вручную), и без этого
-    // фолбэка, если Animated.Image парallax-фона не успевает/не может
-    // отрисоваться (тяжёлый экран, много одновременных картинок, смена
-    // ориентации на Android через useLockLandscape), из-под него на Android
+    // (полноэкранный экран, фон вставляет вручную), и без этого фолбэка,
+    // если Animated.Image парallax-фона не успевает/не может отрисоваться
+    // (тяжёлый экран, много одновременных картинок, смена ориентации на
+    // Android через useAdaptiveOrientation), из-под него на Android
     // просвечивает белый фон Activity по умолчанию — раньше сквозь пустоту
     // ничего не было видно, кроме белого.
+    // flexDirection:'row' — альбомная раскладка (панель слева, доска справа).
+    // Портретная (wrapperPortrait) переключает на column — доска сверху,
+    // панель снизу (см. useBoardLayout.orientation).
     wrapper: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
+    wrapperPortrait: { flexDirection: 'column' },
     roadZone: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+    roadZonePortrait: { flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
     collisionBanner: {
@@ -604,4 +661,13 @@ const styles = StyleSheet.create({
     turnHint: { color: colors.textOnDark, fontSize: font.tiny, marginTop: 2 },
     turnSkipBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md, marginTop: spacing.xs },
     turnBtnRow: { flexDirection: 'row', gap: spacing.xs },
+    // Тот же баннер хода, что в альбомной раскладке плавает над доской
+    // (styles.turnBanner), но встроенный в обычный поток панели (портретная
+    // раскладка) — там, где раньше было крупное имя игрока. Без
+    // position:'absolute' — это обычный блок в PlayerInfoPanel.headerContent.
+    panelTurnBanner: {
+        backgroundColor: colors.bgLight, borderRadius: radius.md,
+        paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+        marginTop: spacing.xs,
+    },
 });

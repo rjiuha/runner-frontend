@@ -7,19 +7,85 @@ import { BOARD_LAYOUT, LAYOUT } from '../constants/GameConstants';
 export const ROAD_AREA_SPACING = 12;
 
 /**
- * Раскладка экрана сессии: левая панель игрока + правая зона дороги.
- * Ничего не хранит — пересчитывает геометрию из текущих размеров окна при
- * каждом рендере (важно для ресайза/поворота на вебе и альбомной ориентации
- * на мобильных).
+ * Раскладка экрана сессии — панель игрока + зона дороги. Считает геометрию
+ * из текущих размеров окна при каждом рендере (важно для ресайза/поворота на
+ * вебе и смены ориентации на мобильных) и адаптивно переключается между
+ * альбомной раскладкой (панель слева, доска скроллится по горизонтали) и
+ * портретной (панель снизу, доска скроллится по вертикали) — по фактическому
+ * соотношению сторон окна, а не по платформе: на любом устройстве уже, чем
+ * выше, включается портретная раскладка.
  *
- * Сначала считаем segmentW/H от бюджета зоны, и УЖЕ ИЗ НИХ выводим точные
- * containerWidth/Height (segmentW*cols, segmentH*rows) — так фрагмент 6×8
- * помещается в зону дороги без обрезки и без щели в один пиксель, а не
- * борется с padding RoadArea за лишнее место.
+ * ROWS (6 дорожек) — всегда ось, которая должна поместиться ЦЕЛИКОМ без
+ * скролла (высота — в альбомной, ширина — в портретной). COLS (8 ячеек одного
+ * фрагмента трассы) — всегда ось скролла, под неё вьюпорт считается так,
+ * чтобы один фрагмент помещался без обрезки (симметрично в обеих раскладках).
  */
 export function useBoardLayout() {
     const { width: screenW, height: screenH } = useWindowDimensions();
     const { ROWS, COLS, TOTAL_BLOCKS, TOTAL_COLS } = BOARD_LAYOUT;
+    const orientation = screenH >= screenW ? 'portrait' : 'landscape';
+
+    if (orientation === 'portrait') {
+        const panelH = Math.round(
+            Math.min(LAYOUT.PANEL_MAX_H, Math.max(LAYOUT.PANEL_MIN_H, screenH * LAYOUT.PANEL_HEIGHT_RATIO)),
+        );
+        // Вдвое меньше прежнего (0.15) — по запросу пользователя, освободившееся
+        // место идёт панели игрока (panelH выше), не доске: boardBudgetH ниже
+        // считается ПОСЛЕ вычета panelH, так что чем панель больше — тем меньше
+        // достаётся доске, а меньшие стрелки просто не отъедают лишнего сверху
+        // того, что уже забрала панель. Пол в 28 — чтобы кнопка не стала
+        // слишком мелкой для пальца.
+        const arrowBtnSize = Math.max(28, Math.floor(screenW * 0.075));
+        const switcherH = Math.floor(panelH * 0.15);
+
+        const boardBudgetW = Math.max(0, screenW - ROAD_AREA_SPACING * 2);
+        const boardBudgetH = Math.max(0, screenH - panelH - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2);
+
+        // Раньше segmentW считался от boardBudgetW (почти вся ширина экрана) ÷ ROWS(6),
+        // а segmentH — от boardBudgetH (узкий остаток под доску после панели+стрелок)
+        // ÷ COLS(8): широкий бюджет делённый на маленький делитель против узкого
+        // бюджета делённого на большой — систематически давало segmentW ЗНАЧИТЕЛЬНО
+        // больше segmentH, то есть широкие "альбомные" клетки в портретной раскладке
+        // (баг "ширина и высота перепутаны", поймано на скриншоте с реального Android).
+        // Теперь ОДИН размер — от ширины (единственная ось, которая ничем не делится
+        // с другим UI, значит она и задаёт квадратную клетку), containerHeight/minOffset
+        // просто подстраиваются под то, сколько места реально осталось по вертикали —
+        // не наоборот.
+        const segmentSize = Math.floor(boardBudgetW / ROWS);
+        const segmentW = segmentSize;
+        const segmentH = segmentSize;
+
+        const roadContainerW = segmentW * ROWS;
+        // Не ограничиваем одним фрагментом (в отличие от альбомной раскладки) —
+        // берём весь оставшийся вертикальный бюджет целиком, чтобы уместить как
+        // можно больше рядов трассы без скролла (было явно запрошено пользователем).
+        const roadContainerH = boardBudgetH;
+
+        // Аналог minOffset в альбомной раскладке, только по вертикали и от
+        // РЕАЛЬНОГО containerHeight (roadContainerH может быть не кратен COLS
+        // ячейкам, в отличие от альбомной раскладки, где вьюпорт всегда ровно
+        // один фрагмент) — запас на "кирпичный" сдвиг нечётных дорожек
+        // (см. BoardGrid, портретная ветка).
+        const totalContentH = TOTAL_COLS * segmentH + segmentH / 2;
+        const minOffset = -Math.max(0, totalContentH - roadContainerH);
+
+        return {
+            orientation,
+            screenW,
+            screenH,
+            panelH,
+            arrowBtnSize,
+            switcherH,
+            roadContainerW,
+            roadContainerH,
+            segmentW,
+            segmentH,
+            minOffset,
+            rows: ROWS,
+            cols: COLS,
+            totalBlocks: TOTAL_BLOCKS,
+        };
+    }
 
     const leftPanelW = Math.round(
         Math.min(LAYOUT.LEFT_PANEL_MAX_W, Math.max(LAYOUT.LEFT_PANEL_MIN_W, screenW * LAYOUT.LEFT_PANEL_RATIO)),
@@ -50,6 +116,7 @@ export function useBoardLayout() {
     const minOffset = -((TOTAL_COLS - COLS) * segmentW + segmentW / 2);
 
     return {
+        orientation,
         screenW,
         screenH,
         leftPanelW,

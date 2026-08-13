@@ -4,56 +4,72 @@ import { Animated, Easing, PanResponder, Platform } from 'react-native';
 import { useScrollAnimation } from './useScrollAnimation';
 
 /**
- * Единый интерфейс горизонтальной прокрутки поля:
+ * Единый интерфейс прокрутки поля вдоль оси скролла:
  * - веб — зажатие стрелки крутит с постоянной скоростью (useScrollAnimation);
  * - мобильные — палец тащит трек (PanResponder), а стрелки листают блоками
  *   по COLS ячеек (snapToBlock).
  *
- * Оба набора хуков вызываются безусловно (Platform.OS не меняется в течение
- * жизни приложения, но условный вызов хуков всё равно нарушает Rules of Hooks
- * и был багом в прежней версии) — ветвится только то, что возвращается наружу.
+ * `axis` ('x' | 'y') — вдоль какой оси экрана идёт скролл: 'x' в альбомной
+ * раскладке (доска скроллится по горизонтали), 'y' в портретной (по
+ * вертикали). Сама числовая семантика offset'а (0 = начало трассы, minOffset
+ * = конец) от оси не зависит — меняется только то, какую компоненту жеста
+ * (dx/vx или dy/vy) читает PanResponder. Какой конкретно CSS-transform
+ * (translateX/translateY) применить к результату — решает BoardGrid.
+ *
+ * Оба набора хуков (веб/мобильные) вызываются безусловно (Platform.OS не
+ * меняется в течение жизни приложения, но условный вызов хуков всё равно
+ * нарушает Rules of Hooks и был багом в прежней версии) — ветвится только то,
+ * что возвращается наружу.
  */
-export function useBoardScroll({ minOffset, segmentW, cols, totalBlocks, webScrollSpeed = 20 }) {
+export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis = 'x', webScrollSpeed = 20 }) {
     const isWeb = Platform.OS === 'web';
 
     const webScroll = useScrollAnimation(minOffset, { scrollSpeed: webScrollSpeed });
 
-    const mobileXOffset = useRef(new Animated.Value(0)).current;
+    const mobileOffset = useRef(new Animated.Value(0)).current;
     const minOffsetRef = useRef(minOffset);
-    const segmentWRef = useRef(segmentW);
-    const startXOffsetRef = useRef(0);
+    const segmentSizeRef = useRef(segmentSize);
+    const startOffsetRef = useRef(0);
     const isAnimatingRef = useRef(false);
 
     // Обновляем на каждый рендер, чтобы обработчики жестов видели актуальные
     // границы/размеры без пересоздания PanResponder.
     minOffsetRef.current = minOffset;
-    segmentWRef.current = segmentW;
+    segmentSizeRef.current = segmentSize;
+
+    // По оси Y — инвертировано (-dy/-vy), по прямому запросу пользователя после
+    // живого теста на Android: палец вверх должен двигать трассу вниз (открывая
+    // дальше по треку), а не вверх. С осью X (альбомная раскладка) не трогаем —
+    // там инверсия не запрашивалась и жест уже привычный.
+    const delta = (gestureState) => (axis === 'y' ? -gestureState.dy : gestureState.dx);
+    const velocity = (gestureState) => (axis === 'y' ? -gestureState.vy : gestureState.vx);
 
     const panResponder = useRef(
         PanResponder.create({
             onStartShouldSetPanResponder: () => false,
             onMoveShouldSetPanResponder: (_evt, gestureState) =>
-                !isAnimatingRef.current && Math.abs(gestureState.dx) > 5,
+                !isAnimatingRef.current && Math.abs(delta(gestureState)) > 5,
             onPanResponderGrant: () => {
-                startXOffsetRef.current = mobileXOffset._value;
+                startOffsetRef.current = mobileOffset._value;
             },
             onPanResponderMove: (_evt, gestureState) => {
-                const newOffset = startXOffsetRef.current + gestureState.dx;
+                const newOffset = startOffsetRef.current + delta(gestureState);
                 const clamped = Math.max(minOffsetRef.current, Math.min(0, newOffset));
-                mobileXOffset.setValue(clamped);
+                mobileOffset.setValue(clamped);
             },
             // Лёгкая инерция по скорости флика при отпускании — без снэпа к фрагментам,
             // палец по-прежнему двигает трек свободно, просто отпускание не обрывает
             // движение резко. Это грубая оценка "наката" по времени, а не физическая
             // симуляция, но на ощупь ближе к обычному тачскролу.
             onPanResponderRelease: (_evt, gestureState) => {
-                if (Math.abs(gestureState.vx) < 0.15) return;
+                const v = velocity(gestureState);
+                if (Math.abs(v) < 0.15) return;
 
-                const current = mobileXOffset._value;
-                const projected = current + gestureState.vx * 180;
+                const current = mobileOffset._value;
+                const projected = current + v * 180;
                 const target = Math.max(minOffsetRef.current, Math.min(0, projected));
 
-                Animated.timing(mobileXOffset, {
+                Animated.timing(mobileOffset, {
                     toValue: target,
                     duration: 280,
                     easing: Easing.out(Easing.quad),
@@ -67,22 +83,22 @@ export function useBoardScroll({ minOffset, segmentW, cols, totalBlocks, webScro
         (direction) => {
             if (isAnimatingRef.current) return;
 
-            const currentOffset = mobileXOffset._value;
-            const blockWidth = cols * segmentWRef.current;
-            const quotient = Math.floor(-currentOffset / blockWidth); // 0..totalBlocks-1
+            const currentOffset = mobileOffset._value;
+            const blockSize = cols * segmentSizeRef.current;
+            const quotient = Math.floor(-currentOffset / blockSize); // 0..totalBlocks-1
 
             const targetBlockIndex =
-                direction === 'left' ? Math.max(0, quotient - 1) : Math.min(totalBlocks - 1, quotient + 1);
+                direction === 'back' ? Math.max(0, quotient - 1) : Math.min(totalBlocks - 1, quotient + 1);
 
             if (targetBlockIndex === quotient) return; // на границе — двигаться некуда
 
-            // Последний блок — не чистое кратное blockWidth: minOffset уже включает
-            // запас на "кирпичный" сдвиг нечётных рядов (см. useBoardLayout), иначе
-            // самая правая колонка нечётных дорожек в последнем блоке не долистывалась.
+            // Последний блок — не чистое кратное blockSize: minOffset уже включает
+            // запас на "кирпичный" сдвиг нечётных дорожек (см. useBoardLayout), иначе
+            // самая дальняя дорожка в последнем блоке не долистывалась до конца.
             const targetOffset =
-                targetBlockIndex === totalBlocks - 1 ? minOffsetRef.current : -targetBlockIndex * blockWidth;
+                targetBlockIndex === totalBlocks - 1 ? minOffsetRef.current : -targetBlockIndex * blockSize;
             isAnimatingRef.current = true;
-            Animated.timing(mobileXOffset, {
+            Animated.timing(mobileOffset, {
                 toValue: targetOffset,
                 duration: 300,
                 easing: Easing.out(Easing.quad),
@@ -91,22 +107,23 @@ export function useBoardScroll({ minOffset, segmentW, cols, totalBlocks, webScro
                 isAnimatingRef.current = false;
             });
         },
-        [cols, totalBlocks, mobileXOffset],
+        [cols, totalBlocks, mobileOffset],
     );
 
     if (isWeb) {
         return {
-            xOffset: webScroll.xOffset,
+            offset: webScroll.xOffset,
             containerHandlers: {},
-            leftButtonProps: { onPressIn: () => webScroll.startScroll(1), onPressOut: webScroll.stopScroll },
-            rightButtonProps: { onPressIn: () => webScroll.startScroll(-1), onPressOut: webScroll.stopScroll },
+            // back = к началу трассы (offset → 0), forward = вперёд по трассе (offset → minOffset).
+            backButtonProps: { onPressIn: () => webScroll.startScroll(1), onPressOut: webScroll.stopScroll },
+            forwardButtonProps: { onPressIn: () => webScroll.startScroll(-1), onPressOut: webScroll.stopScroll },
         };
     }
 
     return {
-        xOffset: mobileXOffset,
+        offset: mobileOffset,
         containerHandlers: panResponder.panHandlers,
-        leftButtonProps: { onPress: () => snapToBlock('left') },
-        rightButtonProps: { onPress: () => snapToBlock('right') },
+        backButtonProps: { onPress: () => snapToBlock('back') },
+        forwardButtonProps: { onPress: () => snapToBlock('forward') },
     };
 }

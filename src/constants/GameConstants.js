@@ -297,9 +297,16 @@ export const PLAYER_STEP = {
   SHOOT: 4,
 };
 
-/** Раскладка левой панели информации об игроке относительно ширины экрана */
+/**
+ * Раскладка панели информации об игроке. LEFT_PANEL_* — альбомная ориентация
+ * (панель сбоку, ширина от ширины экрана), PANEL_*_H — портретная (панель
+ * снизу, высота от высоты экрана) — см. useBoardLayout.
+ */
 export const LAYOUT = {
   LEFT_PANEL_MIN_W: 300,
   LEFT_PANEL_MAX_W: 430,
   LEFT_PANEL_RATIO: 0.36,
+  PANEL_MIN_H: 260,
+  PANEL_MAX_H: 480,
+  PANEL_HEIGHT_RATIO: 0.52,
 };
