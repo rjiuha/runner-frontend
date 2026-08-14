@@ -1,10 +1,9 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo } from 'react';
 import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { BOARD_LAYOUT, SEGMENT_IMAGES } from '../../constants/GameConstants';
+import { BOARD_LAYOUT, HIGHLIGHT_IMAGE, SEGMENT_IMAGES } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
-import { colors } from '../../theme';
 
 /**
  * Прокручиваемая сетка сегментов дороги.
@@ -137,6 +136,20 @@ export default function BoardGrid({
                                     style={{ width: segmentW, height: segmentH }}
                                     activeOpacity={0.75}
                                 >
+                                    {/* Подложка легальной клетки — под обычной картинкой типа
+                                        (та полупрозрачна, opacity:0.9, так что подложка
+                                        просвечивает). Раньше — рамка+цветная заливка поверх,
+                                        теперь — ассет allowed_move.png под низом. */}
+                                    {highlighted && (
+                                        <Image
+                                            source={HIGHLIGHT_IMAGE}
+                                            style={[
+                                                StyleSheet.absoluteFillObject,
+                                                { resizeMode: 'stretch' },
+                                            ]}
+                                            pointerEvents="none"
+                                        />
+                                    )}
                                     <Image
                                         source={SEGMENT_IMAGES[cell.type] || SEGMENT_IMAGES.road}
                                         style={{
@@ -146,7 +159,6 @@ export default function BoardGrid({
                                             opacity: 0.9,
                                         }}
                                     />
-                                    {highlighted && <View style={styles.highlight} pointerEvents="none" />}
                                 </TouchableOpacity>
                             );
                         })}
@@ -233,14 +245,6 @@ const styles = StyleSheet.create({
     // растянуть.
     laneRow: { flexDirection: 'row', alignItems: 'flex-start' },
     laneColumn: { flexDirection: 'column-reverse' },
-    // Легальная клетка для тапа в текущем шаге (MOVE/SHOOT/reaper-размещение/
-    // первый выход на трассу) — см. highlightedCells, считает GameBoardScreen.
-    highlight: {
-        ...StyleSheet.absoluteFillObject,
-        borderWidth: 3,
-        borderColor: colors.success,
-        backgroundColor: `${colors.success}33`,
-    },
     // Один слой на всю сетку, растянутый по размеру Animated.View (сумма
     // строк/колонок) — см. комментарий в JSX про то, почему токены больше не
     // вложены в ячейки.
