@@ -6,21 +6,36 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 
 import { DICE_FACE_IMAGES } from '../../constants/GameConstants';
 import { colors } from '../../theme';
 
+// Веб vs native — разные стратегии позиционирования во время драга, см.
+// комментарий у DiceDie ниже.
+const IS_WEB = Platform.OS === 'web';
+
 /**
- * Один кубик перемещения — перетаскивается на зону усиления (AbilityZones).
- * Во время драга кубик визуально "прилипает" ЦЕНТРОМ ровно к текущей точке
- * курсора/пальца (e.absoluteX/Y), а не сохраняет смещение точки хвата —
- * специально, чтобы то, что видно, и то, что хит-тестится (та же
- * e.absoluteX/Y, см. onDragMove/onDrop), было ГАРАНТИРОВАННО одной и той же
- * точкой по построению, без отдельного вычисления смещения. Раньше кубик
- * двигался через e.translationX/Y от точки хвата — если схватить его не
- * строго по центру, видимая позиция расходилась с хит-тестом (жалоба
- * пользователя "подсветка зоны срабатывает не там, где кубик"). Смещение
- * для transform считаем как (текущий absoluteX/Y − origin в состоянии
- * покоя, измеренный через measureInWindow), а НЕ через e.translationX/Y —
- * последний оказался ненадёжен при быстром программном вводе (проверено
- * живым прогоном: translationX/Y застревало в 0, хотя absoluteX/Y исправно
- * отражал реальную позицию).
+ * Один кубик перемещения — перетаскивается на зону усиления (AbilityZones)
+ * или карточку бегуна (RunnerCard).
+ *
+ * **Веб**: кубик визуально "прилипает" ЦЕНТРОМ ровно к текущей точке курсора
+ * (`e.absoluteX/Y`), хит-тест (`onDragMove`/`onDrop`) шлёт ТУ ЖЕ точку — то,
+ * что видно, и то, что хит-тестится, совпадают по построению. Проверено
+ * живым прогоном через автоматизацию с реальными trusted pointer-событиями.
+ * Смещение для transform — (`absoluteX/Y` минус `origin`, координаты кубика
+ * в покое из `measureInWindow`).
+ *
+ * **Native (Android/iOS)**: используем `origin + e.translationX/Y` — ЧИСТАЯ
+ * ДЕЛЬТА с начала жеста (не завязана на оконные координаты вообще), в
+ * отличие от `e.absoluteX/Y`. Причина расхождения с вебом: живой прогон на
+ * реальном Android-устройстве показал, что кубик при драге визуально
+ * оказывается смещён от пальца, а хит-тест карточек бегунов срабатывает
+ * только в узкой полосе, не по всей видимой карточке — похоже на системный
+ * сдвиг между `measureInWindow` (оконные координаты) и `e.absoluteX/Y` от
+ * gesture-handler на Android (вероятный кандидат — edge-to-edge/статус-бар,
+ * не подтверждено физическим устройством из сессии). `e.translationX/Y` —
+ * дельта заведомо ИММУННА к такому сдвигу (он одинаково входит и вычитается
+ * из обеих точек, между которыми считается разница), а на native (в отличие
+ * от web-реализации gesture-handler) её вычисляет нативный код — там не было
+ * найдено проблемы "translation застревает в 0", это была именно
+ * веб-специфика синтетического автоматизированного ввода (см. историю в
+ * CLAUDE.md, двадцатый заход).
  *
  * При неудачном дропе (мимо зоны или зона не принимает текущее значение)
  * пружиной возвращается на место — сам факт "не долетел" уже понятная
@@ -40,9 +55,12 @@ export default function DiceDie({ value, draggable = true, onDragMove, onDrop, s
     const dieRef = useRef(null);
 
     const measure = useCallback(() => {
-        dieRef.current?.measureInWindow((x, y, width, height) => {
-            originX.value = x + width / 2;
-            originY.value = y + height / 2;
+        // requestAnimationFrame — см. тот же приём и объяснение в RunnerCard.js.
+        requestAnimationFrame(() => {
+            dieRef.current?.measureInWindow((x, y, width, height) => {
+                originX.value = x + width / 2;
+                originY.value = y + height / 2;
+            });
         });
     }, [originX, originY]);
 
@@ -52,12 +70,23 @@ export default function DiceDie({ value, draggable = true, onDragMove, onDrop, s
             dragging.value = true;
         })
         .onUpdate((e) => {
-            translateX.value = e.absoluteX - originX.value;
-            translateY.value = e.absoluteY - originY.value;
-            if (onDragMove) runOnJS(onDragMove)(e.absoluteX, e.absoluteY, value);
+            if (IS_WEB) {
+                translateX.value = e.absoluteX - originX.value;
+                translateY.value = e.absoluteY - originY.value;
+                if (onDragMove) runOnJS(onDragMove)(e.absoluteX, e.absoluteY, value);
+            } else {
+                translateX.value = e.translationX;
+                translateY.value = e.translationY;
+                if (onDragMove) runOnJS(onDragMove)(originX.value + e.translationX, originY.value + e.translationY, value);
+            }
         })
         .onEnd((e) => {
-            if (onDrop) runOnJS(onDrop)(e.absoluteX, e.absoluteY, value);
+            if (!onDrop) return;
+            if (IS_WEB) {
+                runOnJS(onDrop)(e.absoluteX, e.absoluteY, value);
+            } else {
+                runOnJS(onDrop)(originX.value + e.translationX, originY.value + e.translationY, value);
+            }
         })
         .onFinalize(() => {
             dragging.value = false;

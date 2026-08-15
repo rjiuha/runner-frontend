@@ -38,7 +38,12 @@ export function useBoardLayout() {
         // того, что уже забрала панель. Пол в 28 — чтобы кнопка не стала
         // слишком мелкой для пальца.
         const arrowBtnSize = Math.max(28, Math.floor(screenW * 0.075));
-        const switcherH = Math.floor(panelH * 0.15);
+        // Было 0.15 — по запросу пользователя ужать переключатель игроков ещё
+        // сильнее, отдать освободившееся место списку карточек бегунов (тот же
+        // приём, что уже применялся к arrowBtnSize/panelH в четырнадцатом-
+        // пятнадцатом заходах). Пол в 36 — переключателю (кружок+подпись+
+        // полоска) физически нужно немного места, ниже уже обрежет текст.
+        const switcherH = Math.max(36, Math.floor(panelH * 0.09));
 
         // insets.top — GameBoardScreen без SafeAreaView (см. его шапку), сам
         // добавляет paddingTop:insets.top на roadZonePortrait, чтобы верхняя

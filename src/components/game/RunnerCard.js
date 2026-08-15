@@ -43,6 +43,12 @@ import { colors, font, radius, spacing } from '../../theme';
  * из них реально можно заполнить сейчас, решает canSelectRunner в
  * GameBoardScreen, не то, в какой квадрат навели кубик (зона дропа одна —
  * вся карточка).
+ *
+ * Планировка (по прямому запросу пользователя, чтобы карточка была уже):
+ * иконка+имя/статус слева, под именем — кружки повреждений; квадраты
+ * "Ход"/"Накат" — отдельная колонка справа, друг под другом (Ход сверху,
+ * Накат под ним), а не отдельная строка на всю ширину карточки, как было
+ * раньше.
  */
 export default function RunnerCard({
     runner,
@@ -65,8 +71,16 @@ export default function RunnerCard({
     const cardRef = useRef(null);
 
     const measure = useCallback(() => {
-        cardRef.current?.measureInWindow((x, y, width, height) => {
-            onMoveDiceMeasured?.(zoneKey, { x, y, width, height });
+        // requestAnimationFrame — measureInWindow вызванный СРАЗУ в onLayout на
+        // Android иногда возвращает координаты ДО того, как реальный layout-
+        // проход (особенно после смены шрифта/картинок/родительского флекса)
+        // до конца устаканился, из-за чего зарегистрированный прямоугольник
+        // зоны слегка расходится с тем, что видно на экране. Один кадр задержки
+        // достаточно, чтобы измерение попало уже на стабильный layout.
+        requestAnimationFrame(() => {
+            cardRef.current?.measureInWindow((x, y, width, height) => {
+                onMoveDiceMeasured?.(zoneKey, { x, y, width, height });
+            });
         });
     }, [zoneKey, onMoveDiceMeasured]);
 
@@ -110,41 +124,41 @@ export default function RunnerCard({
             onPress={onPress}
             activeOpacity={0.8}
         >
-            <View style={styles.topRow}>
-                <RunnerToken type={runner.type} color={color} size={compact ? 24 : 36} selected={active} />
+            <View style={styles.cardRow}>
+                <View style={styles.leftArea}>
+                    <View style={styles.headRow}>
+                        <RunnerToken type={runner.type} color={color} size={compact ? 24 : 36} selected={active} />
 
-                <View style={styles.info}>
-                    <Text style={[styles.name, compact && styles.nameCompact]} numberOfLines={1}>
-                        {display?.label ?? runner.type}
-                    </Text>
-                    <Text style={[styles.status, { color: statusColor(runner.status) }]}>
-                        {RUNNER_STATUS_LABEL[runner.status] ?? runner.status}
-                    </Text>
-                    {/* В компактном режиме (портретная раскладка, всё должно поместиться
-                        без прокрутки) эта строка — лишняя трата вертикального места,
-                        статус выше уже даёт достаточно контекста. */}
-                    {!compact && (
-                        <Text style={styles.placement}>
-                            {pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
-                        </Text>
-                    )}
+                        <View style={styles.info}>
+                            <Text style={[styles.name, compact && styles.nameCompact]} numberOfLines={1}>
+                                {display?.label ?? runner.type}
+                            </Text>
+                            <Text style={[styles.status, { color: statusColor(runner.status) }]}>
+                                {RUNNER_STATUS_LABEL[runner.status] ?? runner.status}
+                            </Text>
+                            {/* В компактном режиме (портретная раскладка, всё должно поместиться
+                                без прокрутки) эта строка — лишняя трата вертикального места,
+                                статус выше уже даёт достаточно контекста. */}
+                            {!compact && (
+                                <Text style={styles.placement}>
+                                    {pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
+                                </Text>
+                            )}
+                        </View>
+                    </View>
+
+                    {/* Кружки повреждений — под именем/статусом (по прямому запросу
+                        пользователя — освобождает правый верхний угол под квадрат "Ход"). */}
+                    {damageSlots}
                 </View>
 
-                {/* compact — метки повреждений справа на плитке (в одном ряду с
-                    иконкой/именем), а не отдельной строкой снизу: сокращает
-                    высоту карточки (по прямому запросу пользователя). В
-                    альбомной раскладке — без изменений, своя строка ниже. */}
-                {compact && damageSlots}
+                {/* Квадраты "Ход"/"Накат" — своя колонка справа, друг под другом
+                    (см. шапку файла), а не отдельная строка на всю ширину карточки. */}
+                <View style={styles.diceCol}>
+                    <RunnerDiceSlot label="Ход" value={moveDiceValue} size={compact ? 30 : 40} />
+                    <RunnerDiceSlot label="Накат" value={rollDiceValue} size={compact ? 30 : 40} />
+                </View>
             </View>
-
-            {/* Два квадрата — "Ход" и "Накат", чисто отображение (см. шапку
-                файла и RunnerDiceSlot) — зона дропа не они, а вся карточка. */}
-            <View style={[styles.diceRow, compact && styles.diceRowCompact]}>
-                <RunnerDiceSlot label="Ход" value={moveDiceValue} size={compact ? 32 : 40} />
-                <RunnerDiceSlot label="Накат" value={rollDiceValue} size={compact ? 32 : 40} />
-            </View>
-
-            {!compact && damageSlots}
         </TouchableOpacity>
     );
 }
@@ -177,16 +191,20 @@ const styles = StyleSheet.create({
     // пользователя) — меньше отступы, мельче иконка/шрифты/зоны, чем в
     // альбомной раскладке (там места достаточно, компактность не нужна).
     cardCompact: { padding: spacing.xs, marginBottom: 4 },
-    topRow: { flexDirection: 'row', alignItems: 'center' },
-    diceRow: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.xs, gap: spacing.md },
-    diceRowCompact: { marginTop: 3, gap: spacing.sm },
+    // cardRow — вся карточка в две колонки: leftArea (иконка+имя+повреждения,
+    // тянется на весь остаток) и diceCol (Ход/Накат, фиксированная узкая
+    // колонка справа).
+    cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
+    leftArea: { flex: 1, marginRight: spacing.xs },
+    headRow: { flexDirection: 'row', alignItems: 'center' },
+    diceCol: { alignItems: 'center', gap: spacing.xs },
     info: { flex: 1, marginLeft: spacing.sm },
     name: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     nameCompact: { fontSize: font.tiny },
     status: { fontSize: font.tiny, marginTop: 2, fontWeight: '600' },
     placement: { fontSize: 10, color: colors.textOnDarkSecondary, marginTop: 1 },
     slots: { flexDirection: 'row', marginTop: spacing.xs },
-    slotsCompact: { marginTop: 0, marginLeft: spacing.xs },
+    slotsCompact: { marginTop: 3, marginLeft: 0 },
     slot: {
         width: 26,
         height: 26,

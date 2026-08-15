@@ -24,8 +24,11 @@ export default function AbilityZone({ abilityKey, assignedDice, hoverState, onMe
     const ability = PLAYER_ABILITIES[abilityKey];
 
     const measure = useCallback(() => {
-        ref.current?.measureInWindow((x, y, width, height) => {
-            onMeasured(abilityKey, { x, y, width, height });
+        // requestAnimationFrame — см. тот же приём и объяснение в RunnerCard.js.
+        requestAnimationFrame(() => {
+            ref.current?.measureInWindow((x, y, width, height) => {
+                onMeasured(abilityKey, { x, y, width, height });
+            });
         });
     }, [abilityKey, onMeasured]);
 

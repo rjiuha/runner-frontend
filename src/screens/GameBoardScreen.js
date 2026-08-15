@@ -24,7 +24,7 @@ import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import {
-    BOARD_LAYOUT, GAME_STATUS, PLAYER_COLORS, PLAYER_STEP, RUNNER_STATUS, RUNNER_TYPES,
+    BOARD_LAYOUT, GAME_STATUS, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
 
@@ -57,11 +57,15 @@ function rawCellType(game, segment, positionX, positionY) {
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
-function stepInstruction(step, activeRunner, pendingAbility, pendingSelect) {
+function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName) {
     if (pendingSelect) {
+        // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
+        // ("Бегун выбран"), и на карточках с одинаковой иконкой/цветом (или просто
+        // издалека) не всегда было очевидно, кого именно выбрали.
+        const label = pendingRunnerName ? `«${pendingRunnerName}»` : 'Бегун';
         return pendingSelect.type === 'ROLL'
-            ? 'Накат выбран — подтверди или тапни бегуна ещё раз, чтобы отменить'
-            : 'Бегун выбран — подтверди или тапни бегуна ещё раз, чтобы отменить';
+            ? `Накат для ${label} выбран — подтверди или тапни бегуна ещё раз, чтобы отменить`
+            : `${label} выбран — подтверди или тапни бегуна ещё раз, чтобы отменить`;
     }
     switch (step) {
         case PLAYER_STEP.SELECT:
@@ -224,6 +228,15 @@ export default function GameBoardScreen({ route }) {
                 : null,
         [runners, myPlayer?.activeRunner],
     );
+
+    // Имя бегуна для текста подтверждения выбора (stepInstruction ниже) — по
+    // прямому запросу пользователя, раньше текст был безличным.
+    const pendingRunnerName = useMemo(() => {
+        if (!pendingSelect) return null;
+        const runner = runners.find((r) => r.id === pendingSelect.runnerId);
+        if (!runner) return null;
+        return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
+    }, [runners, pendingSelect]);
 
     const players = useMemo(
         () =>
@@ -498,7 +511,7 @@ export default function GameBoardScreen({ route }) {
         <>
             <Text style={styles.turnTitleMine}>Твой ход</Text>
             <Text style={styles.turnHint}>
-                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect)}
+                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName)}
             </Text>
             {pendingSelect && !busy && (
                 <View style={styles.turnBtnRow}>
