@@ -144,6 +144,17 @@ export default function MainMenuScreen({ navigation }) {
           <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
         </View>
 
+        {/* __DEV__ — см. DevPlaygroundScreen: проверка визуальных изменений
+            экрана партии мок-данными, без бэка и без реальной игры. */}
+        {__DEV__ && (
+            <MenuCard
+                title="🧪 Полигон (dev)"
+                description="Экран партии на моках, без бэка"
+                color={colors.warning}
+                onPress={() => navigation.navigate(ROUTES.DEV_PLAYGROUND)}
+            />
+        )}
+
         <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
 
         <CreateLobbyModal

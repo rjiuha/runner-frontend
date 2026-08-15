@@ -10,4 +10,5 @@ export const ROUTES = {
     LOBBY_SEARCH: 'LobbySearch', // GET /api/lobbies
     LOBBY: 'Lobby',              // GET /api/lobby/{id} + SSE lobby_{id}
     RUNNER_GAME: 'RunnerGame',   // GET /api/runner_game + SSE runner_game_{id}
+    DEV_PLAYGROUND: 'DevPlayground', // __DEV__ only, см. DevPlaygroundScreen
 };

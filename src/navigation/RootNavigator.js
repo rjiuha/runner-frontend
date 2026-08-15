@@ -11,6 +11,7 @@ import MainMenuScreen from '../screens/MainMenuScreen';
 import LobbySearchScreen from '../screens/LobbySearchScreen';
 import LobbyScreen from '../screens/LobbyScreen';
 import GameBoardScreen from '../screens/GameBoardScreen';
+import DevPlaygroundScreen from '../screens/DevPlaygroundScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -80,6 +81,16 @@ export default function RootNavigator() {
                             presentation: 'fullScreenModal',
                         }}
                     />
+
+                    {/* __DEV__ — не регистрируем маршрут в production-сборке, недостижим
+                        через navigation.navigate, даже если кто-то узнает имя роута. */}
+                    {__DEV__ && (
+                        <Stack.Screen
+                            name={ROUTES.DEV_PLAYGROUND}
+                            component={DevPlaygroundScreen}
+                            options={{ headerShown: false, presentation: 'fullScreenModal' }}
+                        />
+                    )}
                 </>
             )}
         </Stack.Navigator>
