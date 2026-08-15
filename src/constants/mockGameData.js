@@ -59,6 +59,7 @@ function player(id, username, opts) {
         fine: 0,
         status: opts.status ?? 'active',
         ability: opts.ability ?? null,
+        color: opts.color,
         dice1: opts.dice[0],
         dice2: opts.dice[1],
         dice3: opts.dice[2],
@@ -103,10 +104,10 @@ export const MOCK_GAME = {
     maxPlayer: 4,
 
     gamePlayers: [
-        player(101, 'Ева', { dice: [3, 6, 1, null], ability: null, step: 1 }),
-        player(102, 'Марк', { dice: [null, 2, 5, 4], ability: 'boost' }),
-        player(103, 'Ирина', { dice: [6, 6, 3, 1], ability: null }),
-        player(104, 'Дамир', { dice: [2, null, null, 5], ability: 'heal' }),
+        player(101, 'Ева', { dice: [3, 6, 1, null], ability: null, step: 1, color: 'red' }),
+        player(102, 'Марк', { dice: [null, 2, 5, 4], ability: 'boost', color: 'blue' }),
+        player(103, 'Ирина', { dice: [6, 6, 3, 1], ability: null, color: 'yellow' }),
+        player(104, 'Дамир', { dice: [2, null, null, 5], ability: 'heal', color: 'green' }),
     ],
 
     runners: [

@@ -1,10 +1,9 @@
 // src/components/game/DiceDie.js
 import React, { useCallback, useRef } from 'react';
-import { Image, Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { DICE_FACE_IMAGES } from '../../constants/GameConstants';
-import { colors } from '../../theme';
+import DiceFace from './DiceFace';
 
 // Веб vs native — разные стратегии позиционирования во время драга, см.
 // комментарий у DiceDie ниже.
@@ -45,8 +44,13 @@ const IS_WEB = Platform.OS === 'web';
  * жест не ловит и рисуется как пустое место, а не тусклая кость.
  * draggable=false — кубик виден (не отдан), но жест выключен: не мой ход
  * или не тот шаг хода (см. dragMode в PlayerInfoPanel).
+ *
+ * Само мерцание/переезд кубика в момент броска (player_roll_move_dice) —
+ * НЕ здесь, а в DiceRollOverlay (крупное окошко поверх экрана, см. этот
+ * компонент) — DiceDie всегда просто рисует текущее значение, ничего не
+ * анимируя само по себе, кроме драга.
  */
-export default function DiceDie({ value, draggable = true, onDragMove, onDrop, size = 44 }) {
+export default function DiceDie({ value, draggable = true, onDragMove, onDrop, size = 44, color }) {
     const originX = useSharedValue(0);
     const originY = useSharedValue(0);
     const translateX = useSharedValue(0);
@@ -110,17 +114,13 @@ export default function DiceDie({ value, draggable = true, onDragMove, onDrop, s
     }));
 
     if (value == null) {
-        return <View style={[styles.emptySlot, { width: size, height: size, borderRadius: size / 2 }]} />;
+        return <DiceFace value={null} color={color} size={size} />;
     }
 
     return (
         <GestureDetector gesture={pan}>
             <Animated.View ref={dieRef} onLayout={measure} style={[styles.die, { width: size, height: size }, animatedStyle]}>
-                <Image
-                    source={DICE_FACE_IMAGES[value]}
-                    style={{ width: size, height: size }}
-                    resizeMode="contain"
-                />
+                <DiceFace value={value} color={color} size={size} />
             </Animated.View>
         </GestureDetector>
     );
@@ -128,10 +128,4 @@ export default function DiceDie({ value, draggable = true, onDragMove, onDrop, s
 
 const styles = StyleSheet.create({
     die: { alignItems: 'center', justifyContent: 'center' },
-    emptySlot: {
-        borderWidth: 2,
-        borderStyle: 'dashed',
-        borderColor: colors.textOnDarkSecondary,
-        opacity: 0.4,
-    },
 });

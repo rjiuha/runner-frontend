@@ -237,16 +237,6 @@ export const RUNNER_STATUS_LABEL = {
   [RUNNER_STATUS.DESTROYED]: 'Уничтожен',
 };
 
-/** Грани кубика перемещения (D6) — ассеты D:\runner-frontend\src\assets\images\dice */
-export const DICE_FACE_IMAGES = {
-  1: require('../assets/images/dice/dice_p2_1.png'),
-  2: require('../assets/images/dice/dice_p2_2.png'),
-  3: require('../assets/images/dice/dice_p2_3.png'),
-  4: require('../assets/images/dice/dice_p2_4.png'),
-  5: require('../assets/images/dice/dice_p2_5.png'),
-  6: require('../assets/images/dice/dice_p2_6.png'),
-};
-
 /**
  * Командные усиления — зеркалят PlayerAbility (бэк, без служебного unghost).
  * min/max — допустимый номинал кубика для активации (см. правила), используется

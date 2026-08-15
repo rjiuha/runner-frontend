@@ -29,6 +29,10 @@ export const colors = {
     inputBg: '#918f8f9f',
     inputBgAlt: '#6261619f',
     inputBorder: '#848383',
+
+    // Плато под DiceRollOverlay (см. компонент) — не завязано на цвет игрока.
+    ritualBezel: '#231f2e',
+    ritualBezelEdge: '#3d3552',
 };
 
 export const spacing = { xs: 4, sm: 8, md: 15, lg: 20, xl: 30, xxl: 40 };

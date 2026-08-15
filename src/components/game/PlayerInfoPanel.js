@@ -1,17 +1,19 @@
 // src/components/game/PlayerInfoPanel.js
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
+import DiceFace from './DiceFace';
 import AbilityZones from './AbilityZones';
 import RunnerCard from './RunnerCard';
 import RunnerToken from './RunnerToken';
-import { DICE_FACE_IMAGES, PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
+import { PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
-// Ghost-превью кубика при драге — только веб (см. dragGhost ниже).
-const DRAG_GHOST_SIZE_NORMAL = 44;
-const DRAG_GHOST_SIZE_COMPACT = 34;
+// Ghost-превью кубика при драге — только веб (см. dragGhost ниже). Те же
+// размеры, что DiceTray рисует в состоянии покоя (см. DEFAULT_SIZE/size=48).
+const DRAG_GHOST_SIZE_NORMAL = 72;
+const DRAG_GHOST_SIZE_COMPACT = 48;
 
 /**
  * Левая панель: переключатель игроков, кубики активного игрока, зоны
@@ -46,6 +48,7 @@ export default function PlayerInfoPanel({
     switcherAtBottom = false,
     headerContent = null,
     compactColumns = false,
+    onDiceTrayMeasured,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -59,6 +62,21 @@ export default function PlayerInfoPanel({
     // ScrollView до перехода на compactColumns).
     const [remeasureTick, setRemeasureTick] = useState(0);
     const bumpRemeasure = useCallback(() => setRemeasureTick((t) => t + 1), []);
+
+    // Позиция трея на экране (оконные координаты) — точка "прилёта" для
+    // DiceRollOverlay (крупное окошко броска летит именно сюда). Трей не
+    // внутри ScrollView ни в одной из раскладок (см. columns/infoColumn
+    // ниже), позиция не меняется при скролле/переключении вкладки игрока —
+    // достаточно померить один раз на onLayout, отдельный remeasureTick не нужен.
+    const diceTrayRef = useRef(null);
+    const measureDiceTray = useCallback(() => {
+        if (!onDiceTrayMeasured) return;
+        requestAnimationFrame(() => {
+            diceTrayRef.current?.measureInWindow((x, y, width, height) => {
+                onDiceTrayMeasured({ x, y, width, height });
+            });
+        });
+    }, [onDiceTrayMeasured]);
 
     // Ghost-превью перетаскиваемого кубика — ТОЛЬКО веб. Жалоба пользователя:
     // в веб-версии сам кубик во время драга рисуется ЗА карточкой бегуна
@@ -278,12 +296,15 @@ export default function PlayerInfoPanel({
                 {!compactColumns && (
                     <>
                         <Text style={styles.sectionTitle}>Кубики перемещения</Text>
-                        <DiceTray
-                            dice={trayDice}
-                            draggable={dragMode != null}
-                            onDragMove={handleDragMove}
-                            onDrop={handleDrop}
-                        />
+                        <View ref={diceTrayRef} onLayout={measureDiceTray}>
+                            <DiceTray
+                                dice={trayDice}
+                                draggable={dragMode != null}
+                                onDragMove={handleDragMove}
+                                onDrop={handleDrop}
+                                color={activePlayer.color}
+                            />
+                        </View>
                     </>
                 )}
 
@@ -315,15 +336,19 @@ export default function PlayerInfoPanel({
                         </ScrollView>
                         <View style={styles.rightColumn}>
                             <Text style={styles.sectionTitle}>Кубики</Text>
-                            <DiceTray
-                                dice={trayDice}
-                                draggable={dragMode != null}
-                                onDragMove={handleDragMove}
-                                onDrop={handleDrop}
-                                // Правая колонка теперь заметно уже — мельче кубики
-                                // и разрешаем им переноситься в 2 ряда (см. DiceTray).
-                                size={28}
-                            />
+                            <View ref={diceTrayRef} onLayout={measureDiceTray}>
+                                <DiceTray
+                                    dice={trayDice}
+                                    draggable={dragMode != null}
+                                    onDragMove={handleDragMove}
+                                    onDrop={handleDrop}
+                                    color={activePlayer.color}
+                                    // Правая колонка теперь заметно уже — мельче кубики
+                                    // и разрешаем им переноситься в 2 ряда (см. DiceTray).
+                                    // Жалоба "не видно" — увеличено (было 36).
+                                    size={48}
+                                />
+                            </View>
                             {abilitiesNode}
                         </View>
                     </View>
@@ -360,20 +385,15 @@ export default function PlayerInfoPanel({
                 где визуально был кубик. position:'fixed' — координаты уже
                 оконные, пересчёт под какого-то родителя не нужен. */}
             {Platform.OS === 'web' && dragGhost != null && (
-                <Image
-                    source={DICE_FACE_IMAGES[dragGhost.value]}
+                <View
                     pointerEvents="none"
-                    resizeMode="contain"
                     style={[
                         styles.dragGhost,
-                        {
-                            width: dragGhostSize,
-                            height: dragGhostSize,
-                            left: dragGhost.x - dragGhostSize / 2,
-                            top: dragGhost.y - dragGhostSize / 2,
-                        },
+                        { left: dragGhost.x - dragGhostSize / 2, top: dragGhost.y - dragGhostSize / 2 },
                     ]}
-                />
+                >
+                    <DiceFace value={dragGhost.value} color={activePlayer.color} size={dragGhostSize} />
+                </View>
             )}
         </View>
     );
