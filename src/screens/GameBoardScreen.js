@@ -24,7 +24,8 @@ import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import {
-    BOARD_LAYOUT, GAME_STATUS, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
+    BOARD_LAYOUT, GAME_STATUS, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY, RUNNER_STATUS,
+    RUNNER_TYPES,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
 
@@ -57,7 +58,7 @@ function rawCellType(game, segment, positionX, positionY) {
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
-function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName) {
+function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain) {
     if (pendingSelect) {
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
         // ("Бегун выбран"), и на карточках с одинаковой иконкой/цветом (или просто
@@ -80,6 +81,8 @@ function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pend
                 : 'Тапни подсвеченную клетку, чтобы переместиться';
         case PLAYER_STEP.SHOOT:
             return 'Тапни подсвеченную цель или нажми «Пропустить выстрел»';
+        case PLAYER_STEP.ROAD_BONUS:
+            return `Бегун не покидал дорогу — использовать бонус кубика дороги (+${trackGain ?? '?'} очков) или пропустить?`;
         default:
             return null;
     }
@@ -243,7 +246,10 @@ export default function GameBoardScreen({ route }) {
             gamePlayers.map((p, i) => ({
                 id: p.id,
                 name: p.user?.username ?? `Игрок ${p.id}`,
-                color: PLAYER_COLORS[i % PLAYER_COLORS.length],
+                // Цвет — с бэка (RunnerPlayer.color, случайно и без повторов
+                // назначается при создании партии). Индекс — фолбэк на случай
+                // партий, созданных до появления этого поля.
+                color: PLAYER_COLOR_HEX[p.color] ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 ability: p.ability,
                 activeRunnerId: p.activeRunner ?? null,
@@ -451,6 +457,13 @@ export default function GameBoardScreen({ route }) {
         runAction(() => runnerGameApi.shoot(false));
     }, [runAction]);
 
+    const handleRoadBonus = useCallback(
+        (accept) => {
+            runAction(() => runnerGameApi.roadBonus(accept));
+        },
+        [runAction],
+    );
+
     const handleAbilitySkip = useCallback(() => {
         setPendingAbility(null);
         runAction(() => runnerGameApi.ability(false));
@@ -498,6 +511,7 @@ export default function GameBoardScreen({ route }) {
 
     const showShootSkip = myTurn && myStep === PLAYER_STEP.SHOOT && !busy;
     const showAbilitySkip = myTurn && myStep === PLAYER_STEP.ABILITY && !busy && !pendingAbility;
+    const showRoadBonusChoice = myTurn && myStep === PLAYER_STEP.ROAD_BONUS && !busy;
 
     // Раньше на экране не было видно вообще, чей ход и что делать дальше — см.
     // живой прогон в CLAUDE.md. Один банер: чей ход + подсказка по шагу + кнопка
@@ -511,7 +525,7 @@ export default function GameBoardScreen({ route }) {
         <>
             <Text style={styles.turnTitleMine}>Твой ход</Text>
             <Text style={styles.turnHint}>
-                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName)}
+                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain)}
             </Text>
             {pendingSelect && !busy && (
                 <View style={styles.turnBtnRow}>
@@ -519,7 +533,18 @@ export default function GameBoardScreen({ route }) {
                     <Button title="Отмена" variant="muted" onPress={handleCancelSelect} style={styles.turnSkipBtn} />
                 </View>
             )}
-            {!pendingSelect && (showShootSkip || showAbilitySkip) && (
+            {!pendingSelect && showRoadBonusChoice && (
+                <View style={styles.turnBtnRow}>
+                    <Button
+                        title={`Бонус +${game.trackGain ?? ''}`}
+                        variant="success"
+                        onPress={() => handleRoadBonus(true)}
+                        style={styles.turnSkipBtn}
+                    />
+                    <Button title="Пропустить" variant="muted" onPress={() => handleRoadBonus(false)} style={styles.turnSkipBtn} />
+                </View>
+            )}
+            {!pendingSelect && !showRoadBonusChoice && (showShootSkip || showAbilitySkip) && (
                 <Button
                     title={showShootSkip ? 'Пропустить выстрел' : 'Пропустить усиление'}
                     variant="muted"

@@ -19,6 +19,12 @@ export const runnerGameApi = {
     move: (firstPosition, direction) =>
         request('/runner_game/move', { method: 'POST', body: { firstPosition, direction } }),
 
+    // Шаг ROAD_BONUS: предлагается, только если бегун ни разу не сходил с дороги
+    // за весь ход (см. PLAYER_STEP.ROAD_BONUS) — accept выдаёт бегуну
+    // game.trackGain доп. очков перемещения и возвращает в шаг MOVE.
+    roadBonus: (accept) =>
+        request('/runner_game/road_bonus', { method: 'POST', body: { accept } }),
+
     collision: (accept) =>
         request('/runner_game/collision', { method: 'POST', body: { accept } }),
 

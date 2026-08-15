@@ -11,7 +11,7 @@
 const DIRECTION_LABEL = { LEFT_UP: '↖', UP: '↑', RIGHT_UP: '↗', LEFT_DOWN: '↙', DOWN: '↓', RIGHT_DOWN: '↘' };
 const dir = (d) => (d == null ? '—' : DIRECTION_LABEL[d] ?? d);
 
-const STEP_LABEL = ['начало', 'выбор', 'усиление', 'движение', 'выстрел'];
+const STEP_LABEL = ['начало', 'выбор', 'усиление', 'движение', 'выстрел', 'бонус дороги'];
 const step = (s) => STEP_LABEL[s] ?? s;
 
 export function describeEvent(e) {
@@ -46,6 +46,8 @@ export function describeEvent(e) {
                 + (e.direction ? dir(e.direction) : `старт, столбец ${e.firstPosition}`);
         case 'step_collision':
             return `Игрок ${e.player}: столкновение — ${e.accept ? 'принял' : 'отклонил'}`;
+        case 'step_road_bonus':
+            return `Игрок ${e.player}: бонус кубика дороги — ${e.accept ? 'принял' : 'отклонил'}`;
         case 'step_shoot':
             return `Игрок ${e.player}: выстрел бегуном ${e.activeRunner} — `
                 + (e.accept ? `в направлении ${dir(e.direction)}` : 'пропущен');

@@ -273,8 +273,21 @@ export const DAMAGE_TOKENS = {
   anomaly: { label: 'Аномалия', short: 'АНМ', color: colors.primary },
 };
 
-/** Цвета для визуального различения бегунов разных игроков на общей доске */
+/** Цвета для визуального различения бегунов разных игроков на общей доске (фолбэк по индексу) */
 export const PLAYER_COLORS = [colors.danger, colors.info, colors.success, colors.warning];
+
+/**
+ * Цвет игрока — зеркалит PlayerColor (бэк, Service/Game/RunnerGame/Enum/PlayerColor.php).
+ * Бэк сам случайно и без повторов раздаёт эти 4 цвета игрокам при создании партии
+ * (RunnerGameFactory::createGame) и отдаёт их строкой в RunnerPlayer.color — как в
+ * GET /api/runner_game, так и во всех событиях, где публикуется игрок целиком.
+ */
+export const PLAYER_COLOR_HEX = {
+  red: colors.danger,
+  blue: colors.info,
+  yellow: colors.warning,
+  green: colors.success,
+};
 
 /** Статус партии — зеркалит GameStatus (бэк, Service/Game/Enum/GameStatus.php) */
 export const GAME_STATUS = {
@@ -293,9 +306,12 @@ export const PLAYER_STATUS = {
 
 /**
  * Шаг хода игрока — зеркалит int-backed enum PlayerStep (бэк). Присылается
- * числом (0-4) как в player_step-событии, так и в RunnerPlayer::toArray().
+ * числом (0-5) как в player_step-событии, так и в RunnerPlayer::toArray().
  * COLLISION в этот enum не входит — она сигналится через game.extraTurnPlayer,
- * не через player.step (см. CLAUDE.md).
+ * не через player.step (см. CLAUDE.md). ROAD_BONUS — новый шаг: игрок ни разу
+ * не покидал дорогу за весь обычный ход, есть ненулевой кубик дороги
+ * (game.trackGain), и нужно явно принять/пропустить бонус (POST
+ * /runner_game/road_bonus) — только тогда игра идёт дальше к SHOOT/ABILITY.
  */
 export const PLAYER_STEP = {
   BEGIN: 0,
@@ -303,6 +319,7 @@ export const PLAYER_STEP = {
   ABILITY: 2,
   MOVE: 3,
   SHOOT: 4,
+  ROAD_BONUS: 5,
 };
 
 /**
