@@ -27,5 +27,15 @@ export default function DiceTray({ dice, draggable = true, onDragMove, onDrop, s
 }
 
 const styles = StyleSheet.create({
-    row: { flexDirection: 'row', justifyContent: 'space-around', paddingVertical: spacing.sm },
+    // flexWrap — правая колонка в compactColumns заметно уже панели целиком
+    // (см. PlayerInfoPanel), 4 кубика в ряд там физически не влезают; перенос
+    // в 2 ряда ничего не портит и в широких раскладках, где перенос никогда
+    // не срабатывает (места хватает на один ряд).
+    row: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        gap: spacing.xs,
+        paddingVertical: spacing.sm,
+    },
 });

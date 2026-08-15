@@ -31,6 +31,18 @@ import { colors, font, radius, spacing } from '../../theme';
  * закешированные оконные координаты зоны устаревают относительно текущей
  * прокрутки и хит-тестинг дропа начинает промахиваться мимо уже видимой
  * карточки.
+ *
+ * Обратная связь "сюда можно бросить кубик" — рамка ВСЕЙ карточки
+ * (`hoverState`), а не маленький квадрат: раньше единственная пунктирная
+ * зона с надписью "перетащи сюда кубик хода" визуально выглядела как
+ * единственная цель, хотя технически ловилась вся карточка — это путало
+ * (по прямому запросу пользователя квадраты стали чисто отображением
+ * значения, см. RunnerDiceSlot). Два квадрата — "Ход" (moveDiceValue,
+ * runner.dice) и "Накат" (rollDiceValue, runner.rollDice, см.
+ * StepSelectionValidator::rollValidate на бэке) — оба всегда видны, какой
+ * из них реально можно заполнить сейчас, решает canSelectRunner в
+ * GameBoardScreen, не то, в какой квадрат навели кубик (зона дропа одна —
+ * вся карточка).
  */
 export default function RunnerCard({
     runner,
@@ -40,7 +52,8 @@ export default function RunnerCard({
     healTarget,
     onPress,
     moveDiceValue = null,
-    moveHoverState,
+    rollDiceValue = null,
+    hoverState,
     onMoveDiceMeasured,
     compact = false,
     remeasureTick = 0,
@@ -91,6 +104,8 @@ export default function RunnerCard({
                 active && styles.cardSelected,
                 healTarget && styles.cardHealTarget,
                 pending && styles.cardPending,
+                hoverState === 'valid' && styles.cardHoverValid,
+                hoverState === 'invalid' && styles.cardHoverInvalid,
             ]}
             onPress={onPress}
             activeOpacity={0.8}
@@ -122,16 +137,12 @@ export default function RunnerCard({
                 {compact && damageSlots}
             </View>
 
-            {/* Кубик хода — над кружочками повреждений (в альбомной раскладке) и
-                на всю ширину карточки: по жалобе пользователя маленькая узкая
-                зона было легко промахнуться пальцем на телефоне. Сейчас зона
-                дропа — вообще вся карточка (см. measure выше), это просто
-                видимый индикатор "куда положить". */}
-            <RunnerDiceSlot
-                value={moveDiceValue}
-                hoverState={moveHoverState}
-                style={[styles.diceSlotFull, compact && styles.diceSlotCompact]}
-            />
+            {/* Два квадрата — "Ход" и "Накат", чисто отображение (см. шапку
+                файла и RunnerDiceSlot) — зона дропа не они, а вся карточка. */}
+            <View style={[styles.diceRow, compact && styles.diceRowCompact]}>
+                <RunnerDiceSlot label="Ход" value={moveDiceValue} size={compact ? 32 : 40} />
+                <RunnerDiceSlot label="Накат" value={rollDiceValue} size={compact ? 32 : 40} />
+            </View>
 
             {!compact && damageSlots}
         </TouchableOpacity>
@@ -157,14 +168,18 @@ const styles = StyleSheet.create({
     cardSelected: { borderColor: colors.primary },
     cardHealTarget: { borderColor: colors.success },
     cardPending: { borderColor: colors.warning, borderStyle: 'dashed' },
+    // Подсветка "сюда можно бросить кубик" (см. hoverState) — рамка ВСЕЙ
+    // карточки, не квадратов внутри (см. шапку файла).
+    cardHoverValid: { borderColor: colors.success, borderStyle: 'solid' },
+    cardHoverInvalid: { borderColor: colors.danger, borderStyle: 'solid' },
     // compact — портретная раскладка, двухколоночная (бегуны слева, усиления
     // справа), карточки должны все поместиться без прокрутки (см. запрос
     // пользователя) — меньше отступы, мельче иконка/шрифты/зоны, чем в
     // альбомной раскладке (там места достаточно, компактность не нужна).
     cardCompact: { padding: spacing.xs, marginBottom: 4 },
     topRow: { flexDirection: 'row', alignItems: 'center' },
-    diceSlotFull: { marginTop: spacing.xs, alignSelf: 'stretch' },
-    diceSlotCompact: { marginTop: 3, minHeight: 34 },
+    diceRow: { flexDirection: 'row', justifyContent: 'center', marginTop: spacing.xs, gap: spacing.md },
+    diceRowCompact: { marginTop: 3, gap: spacing.sm },
     info: { flex: 1, marginLeft: spacing.sm },
     name: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     nameCompact: { fontSize: font.tiny },

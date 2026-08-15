@@ -10,7 +10,8 @@ import { DICE_FACE_IMAGES, PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_T
 import { colors, font, radius, spacing } from '../../theme';
 
 // Ghost-превью кубика при драге — только веб (см. dragGhost ниже).
-const DRAG_GHOST_SIZE = 44;
+const DRAG_GHOST_SIZE_NORMAL = 44;
+const DRAG_GHOST_SIZE_COMPACT = 34;
 
 /**
  * Левая панель: переключатель игроков, кубики активного игрока, зоны
@@ -74,6 +75,9 @@ export default function PlayerInfoPanel({
     // оригинальный DiceDie не трогаем — его временная невидимость под
     // карточкой на вебе теперь не важна, потому что поверх едет этот ghost.
     const [dragGhost, setDragGhost] = useState(null); // { value, x, y } | null, только веб
+    // Тот же size, что и у DiceTray ниже (compactColumns — 34, иначе 44) —
+    // иначе ghost визуально крупнее/мельче реального кубика в трее.
+    const dragGhostSize = compactColumns ? DRAG_GHOST_SIZE_COMPACT : DRAG_GHOST_SIZE_NORMAL;
 
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? players[0];
     const isMyPanel = canAct && activePlayer.id === myPlayerId;
@@ -211,11 +215,13 @@ export default function PlayerInfoPanel({
     const runnerCards = trackedRunners.map((runner) => {
         const zoneKey = `move:${runner.id}`;
         const isPending = isMyPanel && pendingSelect?.runnerId === runner.id;
-        // Пока выбор не подтверждён, кубик ещё не consumed бэком (runner.dice
-        // не менялся) — берём значение из трея игрока по индексу pendingSelect.
-        const dice = isPending
-            ? activePlayer.dice[pendingSelect.diceIndex]
-            : runner.dice ?? runner.rollDice ?? null;
+        // Пока выбор не подтверждён, кубик ещё не consumed бэком (runner.dice/
+        // rollDice не менялись) — берём значение из трея игрока по индексу
+        // pendingSelect, и кладём его в квадрат, соответствующий типу
+        // (обычный ход или накат — см. handleDropOnRunner в GameBoardScreen).
+        const pendingValue = isPending ? activePlayer.dice[pendingSelect.diceIndex] : null;
+        const moveDiceValue = isPending && pendingSelect.type === 'DICE' ? pendingValue : runner.dice ?? null;
+        const rollDiceValue = isPending && pendingSelect.type === 'ROLL' ? pendingValue : runner.rollDice ?? null;
         return (
             <RunnerCard
                 key={runner.id}
@@ -225,8 +231,9 @@ export default function PlayerInfoPanel({
                 pending={isPending}
                 healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
                 onPress={() => onRunnerCardPress(runner)}
-                moveDiceValue={dice}
-                moveHoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
+                moveDiceValue={moveDiceValue}
+                rollDiceValue={rollDiceValue}
+                hoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
                 onMoveDiceMeasured={handleMeasured}
                 compact={compactColumns}
                 remeasureTick={remeasureTick}
@@ -262,27 +269,30 @@ export default function PlayerInfoPanel({
                     имя уже видно в кнопках переключателя, дублировать незачем. */}
                 {headerContent}
 
-                {/* Кубики закреплены НАД скроллом (не внутри ScrollView) — на Android
-                    низких экранов список бегунов не помещается целиком, и зона
-                    "кубик хода" у нижних карточек оказывается доступна только после
-                    скролла. Если кубики скроллятся вместе со списком, до цели их
-                    просто нечем дотащить (сам кубик уходит с экрана раньше цели).
-                    Закреплённый трей остаётся на виду — сначала скроллишь список
-                    обычным тапом до нужной карточки, потом тащишь кубик сверху. */}
-                <Text style={styles.sectionTitle}>Кубики перемещения</Text>
-                <DiceTray
-                    dice={trayDice}
-                    draggable={dragMode != null}
-                    onDragMove={handleDragMove}
-                    onDrop={handleDrop}
-                    // Мельче в compactColumns — по прямому запросу пользователя,
-                    // освобождает вертикальное место карточкам бегунов ниже.
-                    size={compactColumns ? 34 : undefined}
-                />
+                {/* Альбомная раскладка — кубики закреплены НАД скроллом (не внутри
+                    ScrollView), полной ширины панели, как и раньше. В
+                    compactColumns кубики переехали в правую колонку, НАД
+                    усилениями (см. ниже) — по прямому запросу пользователя:
+                    левая колонка (бегуны) должна начинаться сразу под
+                    шапкой, не терять место под общий на всю ширину трей. */}
+                {!compactColumns && (
+                    <>
+                        <Text style={styles.sectionTitle}>Кубики перемещения</Text>
+                        <DiceTray
+                            dice={trayDice}
+                            draggable={dragMode != null}
+                            onDragMove={handleDragMove}
+                            onDrop={handleDrop}
+                        />
+                    </>
+                )}
 
-                {/* compactColumns (портретная раскладка) — бегуны+жнец слева, усиления
-                    справа. Карточки ужаты (compact), чтобы влезло как можно больше,
-                    но гарантии на ЛЮБОМ экране нет — левая колонка поэтому со
+                {/* compactColumns (портретная раскладка) — бегуны+жнец слева (шире,
+                    основное пространство отдано им по прямому запросу
+                    пользователя), кубики+усиления справа (уже, кубики сверху —
+                    "над зоной усилений, но не над зоной плиток бегунов").
+                    Карточки ужаты (compact), чтобы влезло как можно больше, но
+                    гарантии на ЛЮБОМ экране нет — левая колонка поэтому со
                     своим ScrollView (по прямому запросу пользователя после того,
                     как один из бегунов уехал за нижний край экрана). Зона дропа
                     кубика хода — теперь ВСЯ карточка целиком (см. RunnerCard,
@@ -303,7 +313,19 @@ export default function PlayerInfoPanel({
                             {reaperNode}
                             {runnerCards}
                         </ScrollView>
-                        <View style={styles.rightColumn}>{abilitiesNode}</View>
+                        <View style={styles.rightColumn}>
+                            <Text style={styles.sectionTitle}>Кубики</Text>
+                            <DiceTray
+                                dice={trayDice}
+                                draggable={dragMode != null}
+                                onDragMove={handleDragMove}
+                                onDrop={handleDrop}
+                                // Правая колонка теперь заметно уже — мельче кубики
+                                // и разрешаем им переноситься в 2 ряда (см. DiceTray).
+                                size={28}
+                            />
+                            {abilitiesNode}
+                        </View>
                     </View>
                 ) : (
                     // Живой прогон (веб) вскрыл тот же баг устаревающего measureInWindow
@@ -329,8 +351,14 @@ export default function PlayerInfoPanel({
             </View>
 
             {/* Ghost перетаскиваемого кубика — только веб, см. комментарий у
-                dragGhost выше. position:'fixed' — координаты жеста уже оконные
-                (e.absoluteX/Y), пересчёт под какого-то родителя не нужен. */}
+                dragGhost выше. x/y — уже визуальный ЦЕНТР кубика (см. DiceDie —
+                origin от measureInWindow + дельта жеста), поэтому рисуем ghost
+                центрированным РОВНО на этой точке, без искусственного сдвига:
+                раньше был сдвиг вверх на size+14px "чтобы не закрывать
+                курсор" — из-за него видимый ghost и реальная точка хит-теста
+                (та же x/y) расходились, и подсветка зоны срабатывала не там,
+                где визуально был кубик. position:'fixed' — координаты уже
+                оконные, пересчёт под какого-то родителя не нужен. */}
             {Platform.OS === 'web' && dragGhost != null && (
                 <Image
                     source={DICE_FACE_IMAGES[dragGhost.value]}
@@ -338,7 +366,12 @@ export default function PlayerInfoPanel({
                     resizeMode="contain"
                     style={[
                         styles.dragGhost,
-                        { left: dragGhost.x - DRAG_GHOST_SIZE / 2, top: dragGhost.y - DRAG_GHOST_SIZE - 14 },
+                        {
+                            width: dragGhostSize,
+                            height: dragGhostSize,
+                            left: dragGhost.x - dragGhostSize / 2,
+                            top: dragGhost.y - dragGhostSize / 2,
+                        },
                     ]}
                 />
             )}
@@ -356,9 +389,8 @@ const styles = StyleSheet.create({
     // но никогда не применяется (JSX за Platform.OS==='web'), 'absolute' —
     // просто безопасный фолбэк на случай ошибки в этом условии.
     dragGhost: {
+        // width/height заданы инлайн (dragGhostSize зависит от compactColumns).
         position: Platform.OS === 'web' ? 'fixed' : 'absolute',
-        width: DRAG_GHOST_SIZE,
-        height: DRAG_GHOST_SIZE,
         zIndex: 9999,
     },
     // Переключатель игроков остаётся НАД зоной информации (вертикальный стек
@@ -385,13 +417,15 @@ const styles = StyleSheet.create({
     reaperRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.sm },
     reaperRowCompact: { marginTop: 2, marginBottom: 4 },
     reaperText: { color: colors.textOnDark, fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
-    // compactColumns (портретная раскладка) — бегуны+жнец слева (больше
-    // контента на карточку — flex:3), усиления справа (flex:2). leftColumn —
-    // ScrollView (см. комментарий у места использования про remeasureTick),
-    // rightColumn — обычный View (усиления, судя по фидбеку, влезают и без
-    // скролла; если тоже не влезут на каком-то экране — тот же паттерн).
+    // compactColumns (портретная раскладка) — бегуны+жнец слева (основное
+    // пространство — flex:2), кубики+усиления справа, заметно уже (flex:1 —
+    // по прямому запросу пользователя "сделать зону усилений поуже, дать
+    // место плиткам бегунов", было 3:2). leftColumn — ScrollView (см.
+    // комментарий у места использования про remeasureTick), rightColumn —
+    // обычный View (кубики+усиления, судя по фидбеку, влезают и без скролла;
+    // если тоже не влезут на каком-то экране — тот же паттерн).
     columns: { flex: 1, flexDirection: 'row', marginTop: spacing.xs },
-    leftColumn: { flex: 3, marginRight: spacing.sm },
+    leftColumn: { flex: 2, marginRight: spacing.sm },
     leftColumnContent: { paddingBottom: spacing.sm },
-    rightColumn: { flex: 2 },
+    rightColumn: { flex: 1 },
 });

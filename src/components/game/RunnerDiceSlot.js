@@ -1,57 +1,43 @@
 // src/components/game/RunnerDiceSlot.js
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { colors, font, radius, spacing } from '../../theme';
+import { colors, font, radius } from '../../theme';
 
 /**
- * Визуальный индикатор зоны кубика хода на карточке бегуна (шаг SELECT).
- * Значение приходит с бэка (runner.dice/rollDice) — как только SELECT
- * реально прошёл, кубик "занят" на сервере, снять его тут нельзя (в отличие
- * от зон усилий это не pending-стейт, а уже подтверждённое действие).
- *
- * Чисто презентационный — сама зона дропа для хит-тестинга ("move:<id>") это
- * теперь ВСЯ карточка бегуна целиком (см. RunnerCard, измеряет и репортит
- * себя сам), не этот вложенный элемент — по запросу пользователя "сделай
- * чувствительным всё пространство плитки персонажа к перетаскиванию кубика".
+ * Один квадратный индикатор кубика на карточке бегуна — на карточку их два
+ * (см. RunnerCard): "Ход" (runner.dice) и "Накат" (runner.rollDice, см.
+ * StepSelectionValidator::rollValidate на бэке — доступен только когда бегун
+ * уже доехал в этом раунде и остались кубики у игрока). Чисто
+ * презентационный: сама зона дропа для хит-тестинга ("move:<id>") — ВСЯ
+ * карточка целиком (см. RunnerCard, меряет и репортит себя сама), тип
+ * (обычный ход или накат) решает canSelectRunner по состоянию бегуна, а не
+ * то, в какой из двух квадратов навели кубик — оба квадрата всегда просто
+ * отображают текущее значение, ничего сами не ловят.
  */
-export default function RunnerDiceSlot({ value, hoverState, style }) {
-    const highlight = hoverState === 'valid' ? styles.hover : null;
-
+export default function RunnerDiceSlot({ label, value, size = 40 }) {
     return (
-        <View style={[styles.slot, value != null && styles.slotFilled, highlight, style]}>
-            {value == null ? (
-                <Text style={styles.placeholder}>перетащи сюда кубик хода</Text>
-            ) : (
-                <View style={styles.chip}>
-                    <Text style={styles.chipText}>{value}</Text>
-                </View>
-            )}
+        <View style={styles.wrap}>
+            <View style={[styles.square, { width: size, height: size }, value != null && styles.squareFilled]}>
+                <Text style={styles.value}>{value != null ? value : '—'}</Text>
+            </View>
+            <Text style={styles.label} numberOfLines={1}>
+                {label}
+            </Text>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    slot: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        minHeight: 44,
+    wrap: { alignItems: 'center' },
+    square: {
         borderWidth: 1.5,
         borderStyle: 'dashed',
         borderColor: colors.textOnDarkSecondary,
-        borderRadius: radius.md,
-        paddingHorizontal: 4,
-    },
-    slotFilled: { borderStyle: 'solid', borderColor: colors.primary },
-    hover: { borderColor: colors.success, backgroundColor: `${colors.success}33` },
-    placeholder: { color: colors.textOnDarkSecondary, fontSize: font.tiny },
-    chip: {
-        width: 28,
-        height: 28,
-        borderRadius: 14,
-        backgroundColor: colors.primary,
+        borderRadius: radius.sm,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    chipText: { color: '#fff', fontSize: 14, fontWeight: 'bold' },
+    squareFilled: { borderStyle: 'solid', borderColor: colors.primary, backgroundColor: colors.primaryTranslucent },
+    value: { color: colors.textOnDark, fontSize: font.small, fontWeight: 'bold' },
+    label: { color: colors.textOnDarkSecondary, fontSize: 9, marginTop: 2 },
 });
