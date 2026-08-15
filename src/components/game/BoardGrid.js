@@ -62,6 +62,16 @@ import RunnerToken from './RunnerToken';
  * раскладках — меняется только то, как клетки визуально расположены на
  * экране, не координаты, которые видит GameBoardScreen.
  */
+
+// ПЕРВАЯ версия делала подложку allowed_move.png БОЛЬШЕ слота клетки — на
+// практике это давало наплыв на соседние сегменты (клетки в сетке стоят
+// впритык друг к другу, зазора между ними нет). По уточнению пользователя —
+// наоборот: подложка = ровно размер слота, а сама картинка типа клетки
+// (road/sand/...) чуть МЕНЬШЕ слота и отцентрована — тогда "свечение" видно
+// по краям только В ПРЕДЕЛАХ своего слота, не залезая на соседей. Доля,
+// поровну по каждой стороне.
+const SEGMENT_INSET = 0.15;
+
 export default function BoardGrid({
     gridData,
     rows,
@@ -139,22 +149,34 @@ export default function BoardGrid({
                                     {/* Подложка легальной клетки — под обычной картинкой типа
                                         (та полупрозрачна, opacity:0.9, так что подложка
                                         просвечивает). Раньше — рамка+цветная заливка поверх,
-                                        теперь — ассет allowed_move.png под низом. */}
+                                        теперь — ассет allowed_move.png под низом, РОВНО размер
+                                        слота (не больше — иначе залезает на соседние сегменты,
+                                        они стоят впритык без зазора). "Свечение" по краям
+                                        получается за счёт того, что картинка ТИПА клетки ниже
+                                        чуть МЕНЬШЕ слота (см. SEGMENT_INSET), а не за счёт того,
+                                        что подложка больше. */}
                                     {highlighted && (
                                         <Image
                                             source={HIGHLIGHT_IMAGE}
-                                            style={[
-                                                StyleSheet.absoluteFillObject,
-                                                { resizeMode: 'stretch' },
-                                            ]}
+                                            style={{
+                                                position: 'absolute',
+                                                left: 0,
+                                                top: 0,
+                                                width: segmentW,
+                                                height: segmentH,
+                                                resizeMode: 'stretch',
+                                            }}
                                             pointerEvents="none"
                                         />
                                     )}
                                     <Image
                                         source={SEGMENT_IMAGES[cell.type] || SEGMENT_IMAGES.road}
                                         style={{
-                                            width: segmentW,
-                                            height: segmentH,
+                                            position: 'absolute',
+                                            left: segmentW * (SEGMENT_INSET / 2),
+                                            top: segmentH * (SEGMENT_INSET / 2),
+                                            width: segmentW * (1 - SEGMENT_INSET),
+                                            height: segmentH * (1 - SEGMENT_INSET),
                                             resizeMode: 'stretch',
                                             opacity: 0.9,
                                         }}

@@ -1,6 +1,6 @@
 // src/components/game/AbilityZone.js
-import React, { useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import React, { useCallback, useEffect, useRef } from 'react';
+import { StyleSheet, Text, TouchableOpacity } from 'react-native';
 import { PLAYER_ABILITIES } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
@@ -9,16 +9,29 @@ import { colors, font, radius, spacing } from '../../theme';
  * кубик, — только измеряет себя в оконных координатах (measureInWindow) и
  * подсвечивается по hoverState, который считает PlayerInfoPanel.
  * Тап по уже занятой зоне снимает с неё кубик обратно в трей.
+ *
+ * `remeasureTick` — живой прогон вскрыл реальный баг: зона лежит внутри
+ * скроллящегося списка (та же ScrollView, что и карточки бегунов, см.
+ * PlayerInfoPanel), а onLayout НЕ перевызывается при простой прокрутке
+ * контента — после скролла закешированные оконные координаты уезжают
+ * относительно реальной позиции, и подсветка/дроп попадает в СОСЕДНЮЮ зону
+ * (жалоба пользователя: "перетащил на одно усиление, подсвечивается то, что
+ * снизу" — ровно офсет на высоту одной зоны). Тот же паттерн, что уже был
+ * починен для RunnerCard — меняющееся значение триггерит повторный measure.
  */
-export default function AbilityZone({ abilityKey, assignedDice, hoverState, onMeasured, onPress }) {
+export default function AbilityZone({ abilityKey, assignedDice, hoverState, onMeasured, onPress, remeasureTick = 0 }) {
     const ref = useRef(null);
     const ability = PLAYER_ABILITIES[abilityKey];
 
-    const measure = () => {
+    const measure = useCallback(() => {
         ref.current?.measureInWindow((x, y, width, height) => {
             onMeasured(abilityKey, { x, y, width, height });
         });
-    };
+    }, [abilityKey, onMeasured]);
+
+    useEffect(() => {
+        if (remeasureTick) measure();
+    }, [remeasureTick, measure]);
 
     const filled = assignedDice != null;
     const highlight =

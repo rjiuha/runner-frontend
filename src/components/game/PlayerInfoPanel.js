@@ -1,13 +1,16 @@
 // src/components/game/PlayerInfoPanel.js
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
 import AbilityZones from './AbilityZones';
 import RunnerCard from './RunnerCard';
 import RunnerToken from './RunnerToken';
-import { PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
+import { DICE_FACE_IMAGES, PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
+
+// Ghost-превью кубика при драге — только веб (см. dragGhost ниже).
+const DRAG_GHOST_SIZE = 44;
 
 /**
  * Левая панель: переключатель игроков, кубики активного игрока, зоны
@@ -55,6 +58,23 @@ export default function PlayerInfoPanel({
     // ScrollView до перехода на compactColumns).
     const [remeasureTick, setRemeasureTick] = useState(0);
     const bumpRemeasure = useCallback(() => setRemeasureTick((t) => t + 1), []);
+
+    // Ghost-превью перетаскиваемого кубика — ТОЛЬКО веб. Жалоба пользователя:
+    // в веб-версии сам кубик во время драга рисуется ЗА карточкой бегуна
+    // (не поверх), хотя на Android рисуется поверх нормально. DiceDie уже
+    // поднимает zIndex на себе при драге — на native этого достаточно, но на
+    // вебе, судя по всему, карточка (внутри ScrollView) всё равно красится
+    // выше по какой-то причине, связанной со стекингом (не удалось
+    // стопроцентно подтвердить конкретный механизм без визуальной отладки —
+    // нет рабочего браузера в этой сессии). Вместо попыток подобрать
+    // правильный zIndex вслепую — надёжный обходной путь: на вебе поверх
+    // ВСЕГО рисуется независимая копия кубика (`position:'fixed'`, не зависит
+    // ни от какого родительского стекинга) в реальных оконных координатах
+    // жеста (e.absoluteX/Y уже в этих координатах, без пересчёта). Сам
+    // оригинальный DiceDie не трогаем — его временная невидимость под
+    // карточкой на вебе теперь не важна, потому что поверх едет этот ghost.
+    const [dragGhost, setDragGhost] = useState(null); // { value, x, y } | null, только веб
+
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? players[0];
     const isMyPanel = canAct && activePlayer.id === myPlayerId;
     // Что можно тащить прямо сейчас: SELECT — на карточку бегуна, ABILITY — на зону усиления.
@@ -108,6 +128,7 @@ export default function PlayerInfoPanel({
     // всегда "valid", но только пока разрешён drag-режим 'select'.
     const handleDragMove = useCallback(
         (_index, x, y, value) => {
+            if (Platform.OS === 'web') setDragGhost({ value, x, y });
             if (!dragMode) return;
             const key = findZoneAt(x, y);
             if (!key) {
@@ -134,6 +155,7 @@ export default function PlayerInfoPanel({
     const handleDrop = useCallback(
         (index, x, y, value) => {
             setHover({ key: null, valid: false });
+            if (Platform.OS === 'web') setDragGhost(null);
             if (!dragMode) return;
             const key = findZoneAt(x, y);
             if (!key) return;
@@ -223,6 +245,7 @@ export default function PlayerInfoPanel({
                 hoverValid={hover.valid}
                 onMeasured={handleMeasured}
                 onPressZone={onPressAbilityZone}
+                remeasureTick={remeasureTick}
             />
         </>
     );
@@ -283,10 +306,17 @@ export default function PlayerInfoPanel({
                         <View style={styles.rightColumn}>{abilitiesNode}</View>
                     </View>
                 ) : (
+                    // Живой прогон (веб) вскрыл тот же баг устаревающего measureInWindow
+                    // тут — зоны усилений и карточки бегунов делят один ScrollView,
+                    // и после прокрутки хит-тестинг дропа промахивался в СОСЕДНЮЮ зону
+                    // (подсвечивалось усиление, которое физически ниже перетащенного).
+                    // Тот же remeasureTick, что уже чинит это для compactColumns.
                     <ScrollView
                         style={styles.infoColumn}
                         contentContainerStyle={styles.scrollContent}
                         showsVerticalScrollIndicator={false}
+                        onScrollEndDrag={bumpRemeasure}
+                        onMomentumScrollEnd={bumpRemeasure}
                     >
                         {abilitiesNode}
                         {reaperNode}
@@ -297,6 +327,21 @@ export default function PlayerInfoPanel({
 
                 {switcherAtBottom && switcher}
             </View>
+
+            {/* Ghost перетаскиваемого кубика — только веб, см. комментарий у
+                dragGhost выше. position:'fixed' — координаты жеста уже оконные
+                (e.absoluteX/Y), пересчёт под какого-то родителя не нужен. */}
+            {Platform.OS === 'web' && dragGhost != null && (
+                <Image
+                    source={DICE_FACE_IMAGES[dragGhost.value]}
+                    pointerEvents="none"
+                    resizeMode="contain"
+                    style={[
+                        styles.dragGhost,
+                        { left: dragGhost.x - DRAG_GHOST_SIZE / 2, top: dragGhost.y - DRAG_GHOST_SIZE - 14 },
+                    ]}
+                />
+            )}
         </View>
     );
 }
@@ -306,6 +351,15 @@ const styles = StyleSheet.create({
         backgroundColor: '#00000055',
         borderRadius: radius.lg,
         padding: spacing.md,
+    },
+    // 'fixed' — только веб (см. dragGhost); на native этот стиль определяется,
+    // но никогда не применяется (JSX за Platform.OS==='web'), 'absolute' —
+    // просто безопасный фолбэк на случай ошибки в этом условии.
+    dragGhost: {
+        position: Platform.OS === 'web' ? 'fixed' : 'absolute',
+        width: DRAG_GHOST_SIZE,
+        height: DRAG_GHOST_SIZE,
+        zIndex: 9999,
     },
     // Переключатель игроков остаётся НАД зоной информации (вертикальный стек
     // секций, не колонки рядом). Высота switcherBox — ФИКСИРОВАННЫЙ пиксельный

@@ -6,7 +6,7 @@ import { PLAYER_ABILITY_ORDER } from '../../constants/GameConstants';
 import { spacing } from '../../theme';
 
 /** 4 зоны усилений (Буст/Лечение/Жнец/Призрак) в сетке 2×2. */
-export default function AbilityZones({ assignments, hoverKey, hoverValid, onMeasured, onPressZone }) {
+export default function AbilityZones({ assignments, hoverKey, hoverValid, onMeasured, onPressZone, remeasureTick }) {
     return (
         <View style={styles.grid}>
             {PLAYER_ABILITY_ORDER.map((key) => (
@@ -17,6 +17,7 @@ export default function AbilityZones({ assignments, hoverKey, hoverValid, onMeas
                     hoverState={hoverKey === key ? (hoverValid ? 'valid' : 'invalid') : null}
                     onMeasured={onMeasured}
                     onPress={() => onPressZone(key)}
+                    remeasureTick={remeasureTick}
                 />
             ))}
         </View>
