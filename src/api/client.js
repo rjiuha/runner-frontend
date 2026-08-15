@@ -154,7 +154,13 @@ export async function request(path, options = {}) {
         throw new ApiError(
             response.status,
             data?.code ?? data?.error ?? null,
-            data?.message ?? data?.detail ?? `Ошибка ${response.status}`,
+            // data?.error — ключ, который реально используют ВСЕ контроллеры
+            // бэка (RunnerGameController/LobbyController — return $this->json(['error'
+            // => $e->getMessage()], $e->getCode())), а не 'message'/'detail' —
+            // до этой правки реальный текст ошибки (напр. "It's not your turn
+            // now"/"Wrong step for action") никогда не долетал до пользователя,
+            // ApiError.userMessage всегда падал в generic "Ошибка 404".
+            data?.error ?? data?.message ?? data?.detail ?? `Ошибка ${response.status}`,
             data,
         );
     }
