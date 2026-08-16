@@ -50,8 +50,15 @@ const randFace = () => 1 + Math.floor(Math.random() * 6);
  * меняется на каждое новое событие. destRect: { x, y, width, height } в
  * оконных координатах — куда лететь. Если ещё не измерен на момент
  * триггера — окошко просто держит настоящие значения на виду и не улетает.
+ *
+ * onArrive — вызывается РОВНО в момент, когда летящие грани гаснут у цели
+ * (до того как погаснет само плато/затемнение, см. SCENE_OUT_MS ниже) — этим
+ * моментом вызывающий экран должен открыть настоящий DiceTray (см.
+ * DevPlaygroundScreen.rollingPlayerId), чтобы переход выглядел как "большие
+ * кубики стали маленькими", а не как две независимые анимации, у которых
+ * настоящие значения всплывают раньше, чем долетают декоративные.
  */
-export default function DiceRollOverlay({ trigger, destRect, onDone }) {
+export default function DiceRollOverlay({ trigger, destRect, onDone, onArrive }) {
     const { width: winW, height: winH } = useWindowDimensions();
 
     const [visible, setVisible] = useState(false);
@@ -117,11 +124,16 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
                     dx.value = withTiming(destCenterX - startCenterX, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
                     dy.value = withTiming(destCenterY - startCenterY, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
                     scale.value = withTiming(targetScale, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
-                    // Кубики гаснут точно к моменту прилёта; плато — чуть
-                    // позже (SCENE_OUT_MS), после того как результат уже
+                    // Кубики гаснут точно к моменту прилёта — это тот самый
+                    // момент, когда вызывающий экран должен открыть настоящий
+                    // DiceTray (onArrive), иначе он откроется только на
+                    // handleDone, ПОСЛЕ дополнительного угасания плато
+                    // (SCENE_OUT_MS) — заметная пустая пауза в месте назначения.
+                    // Плато гаснет чуть позже, после того как результат уже
                     // передан игроку, а не одновременно с ним.
                     diceOpacity.value = withTiming(0, { duration: FLY_MS }, (finished) => {
                         if (!finished) return;
+                        runOnJS(handleArrive)();
                         sceneOpacity.value = withTiming(0, { duration: SCENE_OUT_MS }, (f2) => {
                             if (f2) runOnJS(handleDone)();
                         });
@@ -130,6 +142,10 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
             );
         };
         timersRef.current.push(setTimeout(runTick, TICK_MS));
+
+        function handleArrive() {
+            onArrive?.();
+        }
 
         function handleDone() {
             setVisible(false);

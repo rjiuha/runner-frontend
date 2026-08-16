@@ -62,6 +62,18 @@ export default function DevPlaygroundScreen() {
     const [rollingAll, setRollingAll] = useState(false);
     const rollNonceRef = useRef(0);
 
+    // id игрока, чей реальный DiceTray сейчас должен быть "—" (пустые слоты)
+    // вместо настоящих значений — пока крупные грани летят к нему (см.
+    // PlayerInfoPanel.rollingPlayerId). Без этого настоящий трей (который
+    // берёт значения прямо из game.player.diceN, обновляется синхронно с
+    // dispatch — см. rollForPlayer) показывал бы итог СРАЗУ в момент броска,
+    // а декоративные летящие грани просто гасли бы поверх уже готового
+    // результата — две независимые анимации вместо одной "долетело и стало
+    // маленьким". Снимается в DiceRollOverlay.onArrive — ровно в момент,
+    // когда летящие грани гаснут у цели, а не позже (на onDone), иначе между
+    // "грани погасли" и "проявился трей" была бы заметная пустая пауза.
+    const [rollingPlayerId, setRollingPlayerId] = useState(null);
+
     const dispatch = useCallback((e) => {
         const text = describeEvent(e) ?? rawEventFallback(e);
         const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, time: new Date().toLocaleTimeString(), text };
@@ -134,8 +146,13 @@ export default function DevPlaygroundScreen() {
                 player: { id: player.id, dice_1: values[0], dice_2: values[1], dice_3: values[2], dice_4: values[3] },
             });
             setRollTrigger({ nonce: rollNonceRef.current, values, color });
+            // Прячем настоящий трей только если оверлей реально долетит и
+            // сам его откроет (onArrive) — если destRect ещё не измерен,
+            // DiceRollOverlay вообще не покажется (см. его внутренний guard),
+            // и прятать трей было бы некому открыть обратно.
+            if (diceTrayRect) setRollingPlayerId(player.id);
         },
-        [players, dispatch],
+        [players, dispatch, diceTrayRect],
     );
 
     // "Все по очереди" — переключает вкладку на каждого игрока и запускает
@@ -201,6 +218,7 @@ export default function DevPlaygroundScreen() {
                     width={leftPanelW}
                     switcherHeight={switcherH}
                     onDiceTrayMeasured={setDiceTrayRect}
+                    rollingPlayerId={rollingPlayerId}
                 />
             )}
 
@@ -263,6 +281,7 @@ export default function DevPlaygroundScreen() {
                     switcherAtBottom
                     compactColumns
                     onDiceTrayMeasured={setDiceTrayRect}
+                    rollingPlayerId={rollingPlayerId}
                 />
             )}
 
@@ -285,6 +304,7 @@ export default function DevPlaygroundScreen() {
             <DiceRollOverlay
                 trigger={rollTrigger}
                 destRect={diceTrayRect}
+                onArrive={() => setRollingPlayerId(null)}
                 onDone={() => setRollTrigger(null)}
             />
         </View>

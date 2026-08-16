@@ -49,6 +49,7 @@ export default function PlayerInfoPanel({
     headerContent = null,
     compactColumns = false,
     onDiceTrayMeasured,
+    rollingPlayerId = null,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -108,13 +109,24 @@ export default function PlayerInfoPanel({
                 : null
         : null;
 
+    // Пока для этого игрока летит DiceRollOverlay (крупные грани ещё не
+    // "долетели" до трея — см. DevPlaygroundScreen.rollingPlayerId/onArrive),
+    // реальный трей показывает пустые слоты вместо готовых значений — иначе
+    // они синхронно всплывают в момент броска, ЗАДОЛГО до того, как
+    // декоративная анимация долетит, и выглядит как две несвязанные вещи
+    // вместо одной "долетело — стало маленьким". String() — та же защита от
+    // string/number расхождения id, что и везде в проекте (см. CLAUDE.md).
+    const isRollingThisPlayer = rollingPlayerId != null && String(rollingPlayerId) === String(activePlayer.id);
+
     // Кубик, зарезервированный под pending heal/reaper/select, ещё не consumed
     // бэком (реальный вызов уйдёт только после подтверждения/второго тапа) —
     // визуально прячем его из трея пораньше, чтобы не тащили дважды. Актуально
     // только для СВОЕЙ панели — pending-стейты относятся к myPlayer, не к тому,
     // чью панель сейчас листают через переключатель.
     const trayDice = activePlayer.dice.map((v, i) =>
-        isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i) ? null : v,
+        isRollingThisPlayer || (isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i))
+            ? null
+            : v,
     );
 
     const abilityAssignments = useMemo(() => {
