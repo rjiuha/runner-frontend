@@ -1,7 +1,7 @@
 // src/components/game/DiceRollOverlay.js
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, View, useWindowDimensions } from 'react-native';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming, Easing } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, Easing } from 'react-native-reanimated';
 import DiceFace from './DiceFace';
 import { colors, spacing } from '../../theme';
 
@@ -38,25 +38,33 @@ const randFace = () => 1 + Math.floor(Math.random() * 6);
  * затемнённом плато 4 крупные грани мерцают, по очереди останавливаются на
  * настоящих значениях (уже известных на момент триггера — мерцание чисто
  * декоративное), держат паузу, чтобы игрок успел прочитать результат, и
- * одним движением (перемещение+сжатие) улетают в трей игрока (destRect —
- * см. PlayerInfoPanel.onDiceTrayMeasured). Плато и затемнение остаются на
- * месте и гаснут ПОСЛЕ того как кубики долетели, сами никуда не летят.
+ * одним движением (перемещение+сжатие) переносятся В трей игрока (destRect —
+ * см. PlayerInfoPanel.onDiceTrayMeasured) — БЕЗ угасания в полёте (это не
+ * fade, а перенос: `diceOpacity` держится на 1 всю дорогу, дело только в
+ * translateX/Y/scale). Плато и затемнение гаснут ПОСЛЕ прилёта, сами никуда
+ * не летят.
  *
  * Реальный DiceTray ничего не хранит отдельно от game.player.diceN — он
- * всегда уже правильный под этим окошком, оно просто визуально накрывает
- * его до момента прилёта.
+ * всегда уже правильный под этим окошком, но вызывающий экран обязан прятать
+ * его сам на время броска (см. onArrive ниже и DevPlaygroundScreen.
+ * rollingPlayerId) — иначе настоящие значения будут видны в трее ДО того,
+ * как крупные грани туда долетят.
  *
  * trigger: { nonce, values: [v1..v4], color } | null — nonce
  * меняется на каждое новое событие. destRect: { x, y, width, height } в
  * оконных координатах — куда лететь. Если ещё не измерен на момент
  * триггера — окошко просто держит настоящие значения на виду и не улетает.
  *
- * onArrive — вызывается РОВНО в момент, когда летящие грани гаснут у цели
- * (до того как погаснет само плато/затемнение, см. SCENE_OUT_MS ниже) — этим
- * моментом вызывающий экран должен открыть настоящий DiceTray (см.
- * DevPlaygroundScreen.rollingPlayerId), чтобы переход выглядел как "большие
- * кубики стали маленькими", а не как две независимые анимации, у которых
- * настоящие значения всплывают раньше, чем долетают декоративные.
+ * onArrive — вызывается РОВНО в момент прилёта (сразу после FLY_MS, ДО того
+ * как погаснет само плато/затемнение) — этим моментом вызывающий экран
+ * должен открыть настоящий DiceTray, чтобы переход выглядел как один
+ * непрерывный перенос, а не две наложенные анимации. Специально НЕ через
+ * `withTiming(...,callback)+runOnJS` (как раньше пробовали для onDone) —
+ * этот механизм ненадёжен по таймингу на Android под нагрузкой (см. разбор
+ * в CLAUDE.md про ParallaxBackground: колбэк воркета может сработать с
+ * задержкой в секунду и больше, если JS-поток занят) — весь тайминг здесь
+ * держится на чистых JS `setTimeout`, как и остальные стадии этого
+ * компонента (тики/пауза), без единого перехода через UI-поток.
  */
 export default function DiceRollOverlay({ trigger, destRect, onDone, onArrive }) {
     const { width: winW, height: winH } = useWindowDimensions();
@@ -114,7 +122,8 @@ export default function DiceRollOverlay({ trigger, destRect, onDone, onArrive })
                 return;
             }
 
-            // Все 4 легли на настоящие значения — держим паузу, потом летим.
+            // Все 4 легли на настоящие значения — держим паузу, потом
+            // переносим (не гасим — см. заголовок файла) в трей.
             timersRef.current.push(
                 setTimeout(() => {
                     const destCenterX = destRect.x + destRect.width / 2;
@@ -124,28 +133,29 @@ export default function DiceRollOverlay({ trigger, destRect, onDone, onArrive })
                     dx.value = withTiming(destCenterX - startCenterX, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
                     dy.value = withTiming(destCenterY - startCenterY, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
                     scale.value = withTiming(targetScale, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
-                    // Кубики гаснут точно к моменту прилёта — это тот самый
-                    // момент, когда вызывающий экран должен открыть настоящий
-                    // DiceTray (onArrive), иначе он откроется только на
-                    // handleDone, ПОСЛЕ дополнительного угасания плато
-                    // (SCENE_OUT_MS) — заметная пустая пауза в месте назначения.
-                    // Плато гаснет чуть позже, после того как результат уже
-                    // передан игроку, а не одновременно с ним.
-                    diceOpacity.value = withTiming(0, { duration: FLY_MS }, (finished) => {
-                        if (!finished) return;
-                        runOnJS(handleArrive)();
-                        sceneOpacity.value = withTiming(0, { duration: SCENE_OUT_MS }, (f2) => {
-                            if (f2) runOnJS(handleDone)();
-                        });
-                    });
+                    // diceOpacity НЕ трогаем здесь — грани остаются полностью
+                    // непрозрачными весь перелёт, это перенос, а не fade.
+
+                    // Момент прилёта — обычный JS-таймер, НЕ withTiming-колбэк
+                    // (см. заголовок файла). Синхронно с вызовом onArrive
+                    // (открывает настоящий трей у вызывающего экрана) гасим
+                    // ГРАНИ мгновенно (без анимации — deliberately не
+                    // withTiming, чтобы не было видимого fade/паузы: в этот
+                    // же кадр на их месте уже открывается настоящий трей той
+                    // же позиции/размера, подмена должна быть незаметна).
+                    // Плато/затемнение — отдельно, гаснут ПОСЛЕ, чуть медленнее.
+                    timersRef.current.push(
+                        setTimeout(() => {
+                            diceOpacity.value = 0;
+                            onArrive?.();
+                            sceneOpacity.value = withTiming(0, { duration: SCENE_OUT_MS });
+                            timersRef.current.push(setTimeout(handleDone, SCENE_OUT_MS));
+                        }, FLY_MS),
+                    );
                 }, SETTLE_HOLD_MS),
             );
         };
         timersRef.current.push(setTimeout(runTick, TICK_MS));
-
-        function handleArrive() {
-            onArrive?.();
-        }
 
         function handleDone() {
             setVisible(false);

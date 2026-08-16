@@ -1,5 +1,5 @@
 // src/screens/DevPlaygroundScreen.js
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -8,7 +8,6 @@ import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
 import EventLogPanel from '../components/game/EventLogPanel';
-import DiceRollOverlay, { DICE_ROLL_SEQUENCE_MS } from '../components/game/DiceRollOverlay';
 import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
@@ -23,6 +22,17 @@ import { BOARD_LAYOUT, PLAYER_COLOR_HEX, PLAYER_COLORS } from '../constants/Game
 import { colors, spacing, font, radius } from '../theme';
 
 const EMPTY_SET = new Set();
+
+// Тайминг мерцания броска кубиков прямо в трее (см. rollForPlayer ниже) —
+// тот же LOCK_ON_TICK-приём, что раньше жил в DiceRollOverlay (кубик i
+// "запирается" на настоящем значении на этом тике, по одному, а не все
+// разом), просто без плавающего окна/переноса/дестRect.
+const ROLL_TICK_MS = 90;
+const LOCK_ON_TICK = [6, 7, 8, 9];
+const TOTAL_TICKS = LOCK_ON_TICK[LOCK_ON_TICK.length - 1];
+// +1 тик на пустые слоты в начале, +1 на финальный кадр перед снятием оверрайда.
+const ROLL_ANIM_MS = ROLL_TICK_MS * (TOTAL_TICKS + 2);
+const randFace = () => 1 + Math.floor(Math.random() * 6);
 
 /**
  * Полигон для проверки визуальных изменений экрана партии БЕЗ бэка и без
@@ -54,25 +64,27 @@ export default function DevPlaygroundScreen() {
 
     const [game, setGame] = useState(() => normalizeRunnerGame(MOCK_GAME));
     const [eventLog, setEventLog] = useState([]);
-
-    // Триггер DiceRollOverlay (крупное окошко броска) + точка прилёта в трей
-    // текущего игрока (см. PlayerInfoPanel.onDiceTrayMeasured).
-    const [rollTrigger, setRollTrigger] = useState(null);
-    const [diceTrayRect, setDiceTrayRect] = useState(null);
     const [rollingAll, setRollingAll] = useState(false);
     const rollNonceRef = useRef(0);
 
-    // id игрока, чей реальный DiceTray сейчас должен быть "—" (пустые слоты)
-    // вместо настоящих значений — пока крупные грани летят к нему (см.
-    // PlayerInfoPanel.rollingPlayerId). Без этого настоящий трей (который
-    // берёт значения прямо из game.player.diceN, обновляется синхронно с
-    // dispatch — см. rollForPlayer) показывал бы итог СРАЗУ в момент броска,
-    // а декоративные летящие грани просто гасли бы поверх уже готового
-    // результата — две независимые анимации вместо одной "долетело и стало
-    // маленьким". Снимается в DiceRollOverlay.onArrive — ровно в момент,
-    // когда летящие грани гаснут у цели, а не позже (на onDone), иначе между
-    // "грани погасли" и "проявился трей" была бы заметная пустая пауза.
-    const [rollingPlayerId, setRollingPlayerId] = useState(null);
+    // Анимация броска — теперь прямо В зоне "Кубики" (см. PlayerInfoPanel/
+    // DiceTray), без отдельного плавающего окна и переноса: раньше
+    // DiceRollOverlay рисовал крупные грани в центре экрана и потом
+    // "перелетал" в трей — по прямому запросу пользователя от этого отказались
+    // (см. чат) в пользу мерцания значений прямо на месте, тем же размером,
+    // что и обычный трей. { playerId, values } | null — values мерцает
+    // случайными гранями, по одной "запирается" на настоящем значении (та же
+    // механика LOCK_ON_TICK, что была в DiceRollOverlay), затем стейт просто
+    // очищается — реальный `game.player.diceN` к этому моменту уже верный
+    // (dispatch отработал в начале rollForPlayer), так что трей продолжает
+    // показывать то же самое без видимого перехода.
+    const [rollingDice, setRollingDice] = useState(null);
+    const rollTimersRef = useRef([]);
+    const clearRollTimers = useCallback(() => {
+        rollTimersRef.current.forEach(clearTimeout);
+        rollTimersRef.current = [];
+    }, []);
+    useEffect(() => clearRollTimers, [clearRollTimers]);
 
     const dispatch = useCallback((e) => {
         const text = describeEvent(e) ?? rawEventFallback(e);
@@ -128,38 +140,55 @@ export default function DevPlaygroundScreen() {
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? null;
 
     // Общий шаг для одной кнопки и для последовательности "все по очереди" —
-    // собирает и диспатчит player_roll_move_dice + взводит DiceRollOverlay
-    // для КОНКРЕТНОГО игрока (не обязательно текущей вкладки).
+    // диспатчит player_roll_move_dice (реальный game.player.diceN обновляется
+    // сразу же) и запускает мерцание прямо в трее ЭТОГО игрока (не обязательно
+    // текущей вкладки — если сейчас смотрят чужую панель, анимация просто не
+    // видна, пока не переключатся, реальные значения при этом уже на месте).
     const rollForPlayer = useCallback(
         (player) => {
-            const color = players.find((p) => p.id === player.id)?.color;
-            const values = [
-                1 + Math.floor(Math.random() * 6),
-                1 + Math.floor(Math.random() * 6),
-                1 + Math.floor(Math.random() * 6),
-                1 + Math.floor(Math.random() * 6),
-            ];
+            const values = [randFace(), randFace(), randFace(), randFace()];
             rollNonceRef.current += 1;
             dispatch({
                 event: 'player_roll_move_dice',
                 version: rollNonceRef.current,
                 player: { id: player.id, dice_1: values[0], dice_2: values[1], dice_3: values[2], dice_4: values[3] },
             });
-            setRollTrigger({ nonce: rollNonceRef.current, values, color });
-            // Прячем настоящий трей только если оверлей реально долетит и
-            // сам его откроет (onArrive) — если destRect ещё не измерен,
-            // DiceRollOverlay вообще не покажется (см. его внутренний guard),
-            // и прятать трей было бы некому открыть обратно.
-            if (diceTrayRect) setRollingPlayerId(player.id);
+
+            clearRollTimers();
+            // Тик 0 — пустые слоты ("кубиков нет"), дальше мерцание, по
+            // одному "запирается" на настоящем значении (LOCK_ON_TICK).
+            setRollingDice({ playerId: player.id, values: [null, null, null, null] });
+
+            let tick = 0;
+            const runTick = () => {
+                tick += 1;
+                setRollingDice((prev) =>
+                    prev && prev.playerId === player.id
+                        ? { playerId: player.id, values: values.map((v, i) => (LOCK_ON_TICK[i] <= tick ? v : randFace())) }
+                        : prev,
+                );
+                if (tick < TOTAL_TICKS) {
+                    rollTimersRef.current.push(setTimeout(runTick, ROLL_TICK_MS));
+                } else {
+                    // Все 4 уже на настоящих значениях — держим кадр видимым
+                    // одно "тик", потом просто снимаем оверрайд: game.player.
+                    // diceN там же самое, перехода не видно.
+                    rollTimersRef.current.push(
+                        setTimeout(() => {
+                            setRollingDice((prev) => (prev && prev.playerId === player.id ? null : prev));
+                        }, ROLL_TICK_MS),
+                    );
+                }
+            };
+            rollTimersRef.current.push(setTimeout(runTick, ROLL_TICK_MS));
         },
-        [players, dispatch, diceTrayRect],
+        [dispatch, clearRollTimers],
     );
 
     // "Все по очереди" — переключает вкладку на каждого игрока и запускает
-    // его бросок, дожидаясь DICE_ROLL_SEQUENCE_MS (полный цикл окошка,
-    // экспортирован из DiceRollOverlay, не подобран на глаз) перед
-    // следующим — имитирует, как будто Mercure-события идут одно за другим,
-    // а не сваливаются все разом.
+    // его бросок, дожидаясь ROLL_ANIM_MS (полная длительность мерцания)
+    // перед следующим — имитирует, как будто Mercure-события идут одно за
+    // другим, а не сваливаются все разом.
     const rollAllInOrder = useCallback(async () => {
         if (rollingAll) return;
         setRollingAll(true);
@@ -167,7 +196,7 @@ export default function DevPlaygroundScreen() {
             setActivePlayerId(player.id);
             rollForPlayer(player);
             // eslint-disable-next-line no-await-in-loop
-            await new Promise((resolve) => setTimeout(resolve, DICE_ROLL_SEQUENCE_MS));
+            await new Promise((resolve) => setTimeout(resolve, ROLL_ANIM_MS));
         }
         setRollingAll(false);
     }, [rollingAll, gamePlayers, rollForPlayer]);
@@ -217,8 +246,7 @@ export default function DevPlaygroundScreen() {
                     onRunnerCardPress={noop}
                     width={leftPanelW}
                     switcherHeight={switcherH}
-                    onDiceTrayMeasured={setDiceTrayRect}
-                    rollingPlayerId={rollingPlayerId}
+                    rollingDice={rollingDice}
                 />
             )}
 
@@ -280,8 +308,7 @@ export default function DevPlaygroundScreen() {
                     switcherHeight={switcherH}
                     switcherAtBottom
                     compactColumns
-                    onDiceTrayMeasured={setDiceTrayRect}
-                    rollingPlayerId={rollingPlayerId}
+                    rollingDice={rollingDice}
                 />
             )}
 
@@ -300,13 +327,6 @@ export default function DevPlaygroundScreen() {
             </View>
 
             <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
-
-            <DiceRollOverlay
-                trigger={rollTrigger}
-                destRect={diceTrayRect}
-                onArrive={() => setRollingPlayerId(null)}
-                onDone={() => setRollTrigger(null)}
-            />
         </View>
     );
 }

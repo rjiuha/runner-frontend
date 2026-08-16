@@ -48,8 +48,7 @@ export default function PlayerInfoPanel({
     switcherAtBottom = false,
     headerContent = null,
     compactColumns = false,
-    onDiceTrayMeasured,
-    rollingPlayerId = null,
+    rollingDice = null,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -63,21 +62,6 @@ export default function PlayerInfoPanel({
     // ScrollView до перехода на compactColumns).
     const [remeasureTick, setRemeasureTick] = useState(0);
     const bumpRemeasure = useCallback(() => setRemeasureTick((t) => t + 1), []);
-
-    // Позиция трея на экране (оконные координаты) — точка "прилёта" для
-    // DiceRollOverlay (крупное окошко броска летит именно сюда). Трей не
-    // внутри ScrollView ни в одной из раскладок (см. columns/infoColumn
-    // ниже), позиция не меняется при скролле/переключении вкладки игрока —
-    // достаточно померить один раз на onLayout, отдельный remeasureTick не нужен.
-    const diceTrayRef = useRef(null);
-    const measureDiceTray = useCallback(() => {
-        if (!onDiceTrayMeasured) return;
-        requestAnimationFrame(() => {
-            diceTrayRef.current?.measureInWindow((x, y, width, height) => {
-                onDiceTrayMeasured({ x, y, width, height });
-            });
-        });
-    }, [onDiceTrayMeasured]);
 
     // Ghost-превью перетаскиваемого кубика — ТОЛЬКО веб. Жалоба пользователя:
     // в веб-версии сам кубик во время драга рисуется ЗА карточкой бегуна
@@ -109,25 +93,23 @@ export default function PlayerInfoPanel({
                 : null
         : null;
 
-    // Пока для этого игрока летит DiceRollOverlay (крупные грани ещё не
-    // "долетели" до трея — см. DevPlaygroundScreen.rollingPlayerId/onArrive),
-    // реальный трей показывает пустые слоты вместо готовых значений — иначе
-    // они синхронно всплывают в момент броска, ЗАДОЛГО до того, как
-    // декоративная анимация долетит, и выглядит как две несвязанные вещи
-    // вместо одной "долетело — стало маленьким". String() — та же защита от
+    // Пока для этого игрока идёт бросок (см. DevPlaygroundScreen.rollingDice),
+    // трей показывает мерцающие грани прямо на месте (см. заголовок
+    // rollForPlayer) вместо реальных значений — сам DiceTray об этом не
+    // знает, панель просто подменяет ему проп. String() — та же защита от
     // string/number расхождения id, что и везде в проекте (см. CLAUDE.md).
-    const isRollingThisPlayer = rollingPlayerId != null && String(rollingPlayerId) === String(activePlayer.id);
+    const isRollingThisPlayer = rollingDice != null && String(rollingDice.playerId) === String(activePlayer.id);
 
     // Кубик, зарезервированный под pending heal/reaper/select, ещё не consumed
     // бэком (реальный вызов уйдёт только после подтверждения/второго тапа) —
     // визуально прячем его из трея пораньше, чтобы не тащили дважды. Актуально
     // только для СВОЕЙ панели — pending-стейты относятся к myPlayer, не к тому,
     // чью панель сейчас листают через переключатель.
-    const trayDice = activePlayer.dice.map((v, i) =>
-        isRollingThisPlayer || (isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i))
-            ? null
-            : v,
-    );
+    const trayDice = isRollingThisPlayer
+        ? rollingDice.values
+        : activePlayer.dice.map((v, i) =>
+              isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i) ? null : v,
+          );
 
     const abilityAssignments = useMemo(() => {
         const map = {};
@@ -308,15 +290,13 @@ export default function PlayerInfoPanel({
                 {!compactColumns && (
                     <>
                         <Text style={styles.sectionTitle}>Кубики перемещения</Text>
-                        <View ref={diceTrayRef} onLayout={measureDiceTray}>
-                            <DiceTray
-                                dice={trayDice}
-                                draggable={dragMode != null}
-                                onDragMove={handleDragMove}
-                                onDrop={handleDrop}
-                                color={activePlayer.color}
-                            />
-                        </View>
+                        <DiceTray
+                            dice={trayDice}
+                            draggable={dragMode != null}
+                            onDragMove={handleDragMove}
+                            onDrop={handleDrop}
+                            color={activePlayer.color}
+                        />
                     </>
                 )}
 
@@ -348,19 +328,17 @@ export default function PlayerInfoPanel({
                         </ScrollView>
                         <View style={styles.rightColumn}>
                             <Text style={styles.sectionTitle}>Кубики</Text>
-                            <View ref={diceTrayRef} onLayout={measureDiceTray}>
-                                <DiceTray
-                                    dice={trayDice}
-                                    draggable={dragMode != null}
-                                    onDragMove={handleDragMove}
-                                    onDrop={handleDrop}
-                                    color={activePlayer.color}
-                                    // Правая колонка теперь заметно уже — мельче кубики
-                                    // и разрешаем им переноситься в 2 ряда (см. DiceTray).
-                                    // Жалоба "не видно" — увеличено (было 36).
-                                    size={48}
-                                />
-                            </View>
+                            <DiceTray
+                                dice={trayDice}
+                                draggable={dragMode != null}
+                                onDragMove={handleDragMove}
+                                onDrop={handleDrop}
+                                color={activePlayer.color}
+                                // Правая колонка теперь заметно уже — мельче кубики
+                                // и разрешаем им переноситься в 2 ряда (см. DiceTray).
+                                // Жалоба "не видно" — увеличено (было 36).
+                                size={48}
+                            />
                             {abilitiesNode}
                         </View>
                     </View>
