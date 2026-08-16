@@ -5,10 +5,14 @@ import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withTiming, Easing
 import DiceFace from './DiceFace';
 import { colors, spacing } from '../../theme';
 
-const BIG_SIZE = 100;
+// Верхняя граница размера грани — на широких/альбомных экранах используется
+// как есть. GAP фиксирован, а сам размер грани (bigSize, считается в
+// компоненте от winW) сжимается на узких телефонных экранах, иначе группа
+// из 4 граней шире самого экрана и вылезает за оба края (было замечено
+// живьём на эмуляторе 411dp-шириной при плотности 420dpi — 4×100 + 3×GAP
+// заведомо больше 411).
+const MAX_BIG_SIZE = 100;
 const GAP = spacing.md;
-const GROUP_W = BIG_SIZE * 4 + GAP * 3;
-const GROUP_H = BIG_SIZE;
 const PLATE_PAD = 28;
 
 const TICK_MS = 90;
@@ -67,12 +71,18 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
 
     useEffect(() => clearTimers, [clearTimers]);
 
+    // Грань сжимается, если 4×MAX_BIG_SIZE+3×GAP не помещаются в 86% ширины
+    // экрана (14% — отступы по краям, чтобы плато не упиралось в края).
+    const bigSize = Math.min(MAX_BIG_SIZE, (winW * 0.86 - GAP * 3) / 4);
+    const groupW = bigSize * 4 + GAP * 3;
+    const groupH = bigSize;
+
     // startCenter — фиксированная заметная точка (центр экрана, чуть выше
     // середины — не перекрывает нижнюю панель в портретной раскладке).
     const startCenterX = winW / 2;
     const startCenterY = winH * 0.4;
-    const startLeft = startCenterX - GROUP_W / 2;
-    const startTop = startCenterY - GROUP_H / 2;
+    const startLeft = startCenterX - groupW / 2;
+    const startTop = startCenterY - groupH / 2;
 
     useEffect(() => {
         if (!trigger || destRect == null) return;
@@ -102,7 +112,7 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
                 setTimeout(() => {
                     const destCenterX = destRect.x + destRect.width / 2;
                     const destCenterY = destRect.y + destRect.height / 2;
-                    const targetScale = Math.max(0.15, destRect.width / GROUP_W);
+                    const targetScale = Math.max(0.15, destRect.width / groupW);
 
                     dx.value = withTiming(destCenterX - startCenterX, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
                     dy.value = withTiming(destCenterY - startCenterY, { duration: FLY_MS, easing: Easing.in(Easing.cubic) });
@@ -141,7 +151,7 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
     if (!visible || !trigger) return null;
 
     return (
-        <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
+        <View pointerEvents="none" style={[styles.root, StyleSheet.absoluteFill]}>
             <Animated.View style={[styles.scrim, scrimStyle]} />
 
             {/* Не завязано на цвет игрока — общий фон для всех бросков.
@@ -153,8 +163,8 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
                     {
                         left: startLeft - PLATE_PAD,
                         top: startTop - PLATE_PAD,
-                        width: GROUP_W + PLATE_PAD * 2,
-                        height: GROUP_H + PLATE_PAD * 2,
+                        width: groupW + PLATE_PAD * 2,
+                        height: groupH + PLATE_PAD * 2,
                     },
                     sceneStyle,
                 ]}
@@ -163,12 +173,12 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
             <Animated.View
                 style={[
                     styles.group,
-                    { left: startLeft, top: startTop, width: GROUP_W, height: GROUP_H },
+                    { left: startLeft, top: startTop, width: groupW, height: groupH },
                     diceStyle,
                 ]}
             >
                 {displayValues.map((v, i) => (
-                    <DiceFace key={i} value={v} color={trigger.color} size={BIG_SIZE} />
+                    <DiceFace key={i} value={v} color={trigger.color} size={bigSize} />
                 ))}
             </Animated.View>
         </View>
@@ -176,8 +186,36 @@ export default function DiceRollOverlay({ trigger, destRect, onDone }) {
 }
 
 const styles = StyleSheet.create({
+    // Два независимых бага, найденных живым прогоном на эмуляторе (см.
+    // CLAUDE.md), оба маскировали друг друга — оверлей не было видно ВООБЩЕ:
+    //
+    // 1) `StyleSheet.absoluteFillObject` в react-native 0.85 БОЛЬШЕ НЕ
+    //    СУЩЕСТВУЕТ (переименован в `StyleSheet.absoluteFill` — см.
+    //    node_modules/react-native/Libraries/StyleSheet/StyleSheetExports.js).
+    //    Обращение к нему даёт `undefined`, `{...undefined}` в объекте — тихо
+    //    `{}` (не ошибка), а `undefined` в массиве стилей — тихо пропускается.
+    //    В итоге ни у корневого View, ни у `scrim` не было НИКАКОГО
+    //    `position:'absolute'`/размеров — они схлопывались в нулевой размер
+    //    молча, без единого предупреждения в консоли. Починено переходом на
+    //    `StyleSheet.absoluteFill` (см. использование ниже и в JSX).
+    // 2) Даже после фикса (1) корневой View (без elevation) на Android
+    //    рисовался ПОД любым соседом с elevation>0 (кнопки, `shadow.card` на
+    //    карточках) — Android переупорядочивает по elevation ВСЕХ прямых
+    //    детей общего родителя, независимо от порядка в JSX. `elevation`
+    //    ниже у `plate`/`group` (12/999) упорядочивает их только ДРУГ
+    //    ОТНОСИТЕЛЬНО ДРУГА внутри этого компонента — самому корню это не
+    //    помогает, нужен свой elevation, отдельно и обязательно.
+    //
+    // Это НЕ тот баг, что был у ParallaxBackground (там ломалась видимость
+    // Animated.Image под рекурсивной анимацией через withTiming-колбэк) —
+    // тут статическая ошибка позиционирования + обычный Android
+    // Z-reordering, ничего общего с Reanimated.
+    root: {
+        zIndex: 999,
+        elevation: 999,
+    },
     scrim: {
-        ...StyleSheet.absoluteFillObject,
+        ...StyleSheet.absoluteFill,
         backgroundColor: '#08070d',
     },
     plate: {
