@@ -1,7 +1,7 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo } from 'react';
 import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { BOARD_LAYOUT, HIGHLIGHT_IMAGE, SEGMENT_IMAGES } from '../../constants/GameConstants';
+import { BOARD_LAYOUT, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
 
@@ -63,14 +63,15 @@ import RunnerToken from './RunnerToken';
  * экране, не координаты, которые видит GameBoardScreen.
  */
 
-// ПЕРВАЯ версия делала подложку allowed_move.png БОЛЬШЕ слота клетки — на
-// практике это давало наплыв на соседние сегменты (клетки в сетке стоят
-// впритык друг к другу, зазора между ними нет). По уточнению пользователя —
-// наоборот: подложка = ровно размер слота, а сама картинка типа клетки
-// (road/sand/...) чуть МЕНЬШЕ слота и отцентрована — тогда "свечение" видно
-// по краям только В ПРЕДЕЛАХ своего слота, не залезая на соседей. Доля,
-// поровну по каждой стороне.
-const SEGMENT_INSET = 0.15;
+// Ассет allowed_move.png (подложка подсветки) пользователь удалил без замены
+// (коммит "segments", 2026-08-28) и попросил вернуть прежний подход — цветная
+// рамка+заливка под доступной клеткой (как было до 2026-08-14), но не толстую.
+// Картинка типа клетки (road/sand/...) по-прежнему чуть МЕНЬШЕ слота и
+// отцентрована, чтобы рамка была видна тонкой полосой по краю слота — сам
+// зазор минимальный (только чтобы заливку было видно), не такой большой,
+// как в версии с картинкой-подложкой.
+const SEGMENT_INSET = 0.06;
+const HIGHLIGHT_BORDER_WIDTH = 1.5;
 
 export default function BoardGrid({
     gridData,
@@ -146,31 +147,29 @@ export default function BoardGrid({
                                     style={{ width: segmentW, height: segmentH }}
                                     activeOpacity={0.75}
                                 >
-                                    {/* Подложка легальной клетки — под обычной картинкой типа
-                                        (та полупрозрачна, opacity:0.9, так что подложка
-                                        просвечивает). Раньше — рамка+цветная заливка поверх,
-                                        теперь — ассет allowed_move.png под низом, РОВНО размер
-                                        слота (не больше — иначе залезает на соседние сегменты,
-                                        они стоят впритык без зазора). "Свечение" по краям
-                                        получается за счёт того, что картинка ТИПА клетки ниже
-                                        чуть МЕНЬШЕ слота (см. SEGMENT_INSET), а не за счёт того,
-                                        что подложка больше. */}
+                                    {/* Подсветка легальной клетки — тонкая рамка+полупрозрачная
+                                        заливка под обычной картинкой типа (та opacity:0.9, так
+                                        что заливка снизу просвечивает по узкому зазору вокруг
+                                        неё, см. SEGMENT_INSET). Раньше был отдельный ассет
+                                        allowed_move.png — пользователь его удалил, попросил
+                                        вернуть рамку/заливку, не толстую. */}
                                     {highlighted && (
-                                        <Image
-                                            source={HIGHLIGHT_IMAGE}
+                                        <View
                                             style={{
                                                 position: 'absolute',
                                                 left: 0,
                                                 top: 0,
                                                 width: segmentW,
                                                 height: segmentH,
-                                                resizeMode: 'stretch',
+                                                backgroundColor: `${HIGHLIGHT_COLOR}55`,
+                                                borderWidth: HIGHLIGHT_BORDER_WIDTH,
+                                                borderColor: HIGHLIGHT_COLOR,
                                             }}
                                             pointerEvents="none"
                                         />
                                     )}
                                     <Image
-                                        source={SEGMENT_IMAGES[cell.type] || SEGMENT_IMAGES.road}
+                                        source={cell.image}
                                         style={{
                                             position: 'absolute',
                                             left: segmentW * (SEGMENT_INSET / 2),

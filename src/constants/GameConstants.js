@@ -125,25 +125,95 @@ export const ASSET_SIZES = {
 /**
  * Изображения ячеек дороги для рендера поля (GameBoardScreen/BoardGrid).
  * Ключи — значения RoadType с бэка и values из assets/tracks/*.json ('road'/
- * 'sand'/'mud'/'wall'/'danger'); 'anomaly' своего ассета не имеет и в
- * lib/board.js падает на 'danger'. Файл dirt_base.png визуально изображает
- * грязь, поэтому ключ — 'mud', а не имя файла.
+ * 'sand'/'mud'/'wall'/'danger'/'anomaly'). По каждому типу — несколько
+ * вариантов ассета (пользователь сам добавил по несколько картинок на тип,
+ * 2026-08-28) — lib/board.js#pickSegmentImage выбирает конкретный вариант
+ * детерминированно по id клетки (не Math.random — иначе картинка "прыгала"
+ * бы на каждый ре-рендер экрана вместо того, чтобы быть стабильной на всю
+ * партию). Файл dirt_base_*.gif визуально изображает грязь, поэтому ключ —
+ * 'mud', а не имя файла. 'anomaly' — новая группа black_hole_*.gif (раньше
+ * своего ассета не было, визуально падало на 'danger').
+ *
+ * У каждого файла есть облегчённый дубликат с припиской '-ez' (пользователь
+ * добавил их 2026-08-28 — на реальном Android-устройстве тяжёлые gif
+ * ощутимо тормозили, см. размеры: например wall_base_1.gif 2.2МБ против
+ * wall_base_1-ez.gif 252КБ, то же для всех остальных). На вебе ресурсы не
+ * настолько ограничены (плюс качество на большом экране виднее) — берём
+ * тяжёлые оригиналы; на native (Android/iOS) — '-ez'-версии. Выбор идёт ОДИН
+ * раз на уровне модуля через Platform.OS, а не по кадру.
  */
-export const SEGMENT_IMAGES = {
-  road: require('../assets/images/road/road_base.png'),
-  sand: require('../assets/images/road/sand_base.png'),
-  mud: require('../assets/images/road/dirt_base.png'),
-  wall: require('../assets/images/road/wall_base.png'),
-  danger: require('../assets/images/road/danger_base.png'),
+const SEGMENT_IMAGES_WEB = {
+  road: [
+    require('../assets/images/road/road_1.gif'),
+    require('../assets/images/road/road_2.gif'),
+    require('../assets/images/road/road_4.gif'),
+  ],
+  sand: [
+    require('../assets/images/road/sand_base_1.gif'),
+    require('../assets/images/road/sand_base_2.gif'),
+    require('../assets/images/road/sand_base_3.gif'),
+  ],
+  mud: [require('../assets/images/road/dirt_base_1.gif')],
+  wall: [
+    require('../assets/images/road/wall_base_1.gif'),
+    require('../assets/images/road/wall_base_2.gif'),
+    require('../assets/images/road/wall_base_3.gif'),
+    require('../assets/images/road/wall_base_4.gif'),
+  ],
+  danger: [
+    require('../assets/images/road/danger_base_1.gif'),
+    require('../assets/images/road/danger_base_2.gif'),
+    require('../assets/images/road/danger_base_3.gif'),
+    require('../assets/images/road/danger_base_4.gif'),
+  ],
+  anomaly: [
+    require('../assets/images/road/black_hole_1.gif'),
+    require('../assets/images/road/black_hole_2.gif'),
+    require('../assets/images/road/black_hole_3.gif'),
+  ],
 };
 
+const SEGMENT_IMAGES_MOBILE = {
+  road: [
+    require('../assets/images/road/road_1-ez.gif'),
+    require('../assets/images/road/road_2-ez.gif'),
+    require('../assets/images/road/road_4-ez.gif'),
+  ],
+  sand: [
+    require('../assets/images/road/sand_base_1-ez.gif'),
+    require('../assets/images/road/sand_base_2-ez.gif'),
+    require('../assets/images/road/sand_base_3-ez.gif'),
+  ],
+  mud: [require('../assets/images/road/dirt_base_1-ez.gif')],
+  wall: [
+    require('../assets/images/road/wall_base_1-ez.gif'),
+    require('../assets/images/road/wall_base_2-ez.gif'),
+    require('../assets/images/road/wall_base_3-ez.gif'),
+    require('../assets/images/road/wall_base_4-ez.gif'),
+  ],
+  danger: [
+    require('../assets/images/road/danger_base_1-ez.gif'),
+    require('../assets/images/road/danger_base_2-ez.gif'),
+    require('../assets/images/road/danger_base_3-ez.gif'),
+    require('../assets/images/road/danger_base_4-ez.gif'),
+  ],
+  anomaly: [
+    require('../assets/images/road/black_hole_1-ez.gif'),
+    require('../assets/images/road/black_hole_2-ez.gif'),
+    require('../assets/images/road/black_hole_3-ez.gif'),
+  ],
+};
+
+export const SEGMENT_IMAGES = Platform.OS === 'web' ? SEGMENT_IMAGES_WEB : SEGMENT_IMAGES_MOBILE;
+
 /**
- * Подложка под сегментом-целью текущего шага (MOVE/SHOOT/reaper-размещение/
- * первый выход на трассу, см. BoardGrid.highlightedCells) — рисуется ПОД
- * обычной картинкой типа клетки (та полупрозрачна, opacity:0.9, так что
- * подложка просвечивает), вместо прежней рамки+цветной заливки поверх.
+ * Цвет подсветки легальной клетки текущего шага (MOVE/SHOOT/reaper-размещение/
+ * первый выход на трассу, см. BoardGrid.highlightedCells). Раньше — отдельный
+ * ассет allowed_move.png под картинкой клетки; пользователь его удалил
+ * (2026-08-28, коммит "segments") без замены и попросил вернуть прежний
+ * подход "рамка+заливка" (был до 2026-08-14), просто не толстую.
  */
-export const HIGHLIGHT_IMAGE = require('../assets/images/road/allowed_move.png');
+export const HIGHLIGHT_COLOR = colors.success;
 
 /**
  * Геометрия игрового поля: сколько блоков дороги существует, сколько

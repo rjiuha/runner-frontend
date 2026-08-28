@@ -123,8 +123,17 @@ export function useBoardLayout() {
     const roadBudgetW = Math.max(0, roadZoneW - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2);
     const roadBudgetH = Math.max(0, screenH - ROAD_AREA_SPACING * 2);
 
-    const segmentW = Math.floor(roadBudgetW / COLS);
-    const segmentH = Math.floor(roadBudgetH / ROWS);
+    // Квадратные сегменты (по запросу пользователя, 2026-08-28) — раньше
+    // segmentW/segmentH считались от разных бюджетов независимо (ширина
+    // делилась на COLS, высота на ROWS), что почти никогда не давало квадрат.
+    // Единый размер — min по обеим осям, чтобы не вылезти ни за бюджет
+    // ширины (один фрагмент COLS колонок), ни за бюджет высоты (все ROWS
+    // дорожек без обрезки); лишний бюджет на не ограничивающей оси просто
+    // остаётся пустым — roadZone (GameBoardScreen) центрирует контейнер
+    // BoardGrid флексом, так что это не ломает раскладку.
+    const segmentSize = Math.floor(Math.min(roadBudgetW / COLS, roadBudgetH / ROWS));
+    const segmentW = segmentSize;
+    const segmentH = segmentSize;
 
     // Нечётные ряды в BoardGrid сдвинуты вправо на segmentW/2 (кирпичная кладка),
     // поэтому их правый край дальше, чем у чётных — без запаса на пол-ячейки
