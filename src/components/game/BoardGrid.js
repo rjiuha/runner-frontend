@@ -1,6 +1,6 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo } from 'react';
-import { Animated, Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
@@ -93,6 +93,13 @@ export default function BoardGrid({
     const runnersByCell = useMemo(() => indexRunnersByCell(runners), [runners]);
     const tokenSize = Math.floor(Math.min(segmentW, segmentH) * 0.72);
     const isPortrait = orientation === 'portrait';
+    // По запросу пользователя: только в веб-браузере, только в альбомной
+    // (горизонтальной) раскладке, и только для road/sand/mud (не
+    // wall/danger/anomaly) — картинки этих типов повёрнуты на 90° по часовой
+    // (CSS-transform rotate(90deg), клетки квадратные — поворот без
+    // искажений/подмены width↔height).
+    const rotateEligible = Platform.OS === 'web' && !isPortrait;
+    const ROTATE_TYPES = new Set(['road', 'sand', 'mud']);
 
     // Ключ карты — "segment-row-localCol" (см. lib/board#indexRunnersByCell).
     // Переводим его в пиксельные координаты той же формулой, что уже
@@ -177,7 +184,14 @@ export default function BoardGrid({
                                             width: segmentW * (1 - SEGMENT_INSET),
                                             height: segmentH * (1 - SEGMENT_INSET),
                                             resizeMode: 'stretch',
-                                            opacity: 0.9,
+                                            // road/sand — по запросу пользователя непрозрачные
+                                            // (не просвечивают подсветку под собой); у остальных
+                                            // типов лёгкая прозрачность оставлена (см. highlight
+                                            // выше — заливка должна быть видна по краю).
+                                            opacity: cell.type === 'road' || cell.type === 'sand' ? 1 : 0.9,
+                                            ...(rotateEligible && ROTATE_TYPES.has(cell.type)
+                                                ? { transform: [{ rotate: '90deg' }] }
+                                                : null),
                                         }}
                                     />
                                 </TouchableOpacity>

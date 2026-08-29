@@ -132,27 +132,27 @@ export const ASSET_SIZES = {
  * бы на каждый ре-рендер экрана вместо того, чтобы быть стабильной на всю
  * партию). Файл dirt_base_*.gif визуально изображает грязь, поэтому ключ —
  * 'mud', а не имя файла. 'anomaly' — новая группа black_hole_*.gif (раньше
- * своего ассета не было, визуально падало на 'danger'). Исключение — 'road'
- * и 'sand': пользователь откатил их обратно на один статичный
- * road_base.png/sand_base.png (без вариантов), см. запись ниже про '-ez'.
+ * своего ассета не было, визуально падало на 'danger'). 'road' — один
+ * статичный вариант (road_base.png), 'sand' — несколько (sand_base_1/2/3.png,
+ * пользователь добавил 2026-08-29).
  *
- * У gif-типов (wall/danger/anomaly/mud) есть облегчённый дубликат с
- * припиской '-ez' (пользователь добавил их 2026-08-28 — на реальном
- * Android-устройстве тяжёлые gif ощутимо тормозили, см. размеры: например
- * wall_base_1.gif 2.2МБ против wall_base_1-ez.gif 252КБ, то же для всех
- * остальных gif). На вебе ресурсы не настолько ограничены (плюс качество на
- * большом экране виднее) — берём тяжёлые gif-оригиналы; на native
- * (Android/iOS) — '-ez'-версии. 'road'/'sand' — уже лёгкие png, свои
- * '-ez'-дубликаты пользователь не завёл, поэтому там один и тот же файл на
- * обеих платформах. Выбор набора идёт ОДИН раз на уровне модуля через
+ * И у gif-типов (wall/danger/anomaly/mud), и у png (road/sand) есть
+ * облегчённый дубликат с припиской '-ez' (пользователь добавил их — на
+ * реальном Android-устройстве тяжёлые файлы ощутимо тормозили, см. размеры:
+ * например wall_base_1.gif 2.2МБ против wall_base_1-ez.gif 252КБ, или
+ * sand_base_1.png 420КБ против sand_base_1-ez.png 92КБ — то же для всех
+ * остальных). На вебе ресурсы не настолько ограничены (плюс качество на
+ * большом экране виднее) — берём тяжёлые оригиналы; на native (Android/iOS)
+ * — '-ez'-версии. Выбор набора идёт ОДИН раз на уровне модуля через
  * Platform.OS, а не по кадру.
  */
-// road/sand больше не многовариантные — пользователь вернул их к одному
-// статичному png на тип (road_base.png/sand_base.png), без '-ez' дубликатов
-// (лёгкие сами по себе, платформенного разделения не требуют).
 const SEGMENT_IMAGES_WEB = {
   road: [require('../assets/images/road/road_base.png')],
-  sand: [require('../assets/images/road/sand_base.png')],
+  sand: [
+    require('../assets/images/road/sand_base_1.png'),
+    require('../assets/images/road/sand_base_2.png'),
+    require('../assets/images/road/sand_base_3.png'),
+  ],
   mud: [require('../assets/images/road/dirt_base_1.gif')],
   wall: [
     require('../assets/images/road/wall_base_1.gif'),
@@ -174,8 +174,12 @@ const SEGMENT_IMAGES_WEB = {
 };
 
 const SEGMENT_IMAGES_MOBILE = {
-  road: [require('../assets/images/road/road_base.png')],
-  sand: [require('../assets/images/road/sand_base.png')],
+  road: [require('../assets/images/road/road_base-ez.png')],
+  sand: [
+    require('../assets/images/road/sand_base_1-ez.png'),
+    require('../assets/images/road/sand_base_2-ez.png'),
+    require('../assets/images/road/sand_base_3-ez.png'),
+  ],
   mud: [require('../assets/images/road/dirt_base_1-ez.gif')],
   wall: [
     require('../assets/images/road/wall_base_1-ez.gif'),
