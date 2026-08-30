@@ -312,8 +312,8 @@ export const RUNNER_TYPES = {
 export const RUNNER_ORDER = [RUNNER_TYPES.TANK, RUNNER_TYPES.ATHLETE, RUNNER_TYPES.SPRINTER];
 
 export const RUNNER_DISPLAY = {
-  [RUNNER_TYPES.TANK]: { label: 'Джаггернаут', icon: require('../assets/images/runner/jaggernaut.png'), size: 3 },
-  [RUNNER_TYPES.ATHLETE]: { label: 'Штурмовик', icon: require('../assets/images/runner/trooper.png'), size: 2 },
+  [RUNNER_TYPES.TANK]: { label: 'Атлет', icon: require('../assets/images/runner/jaggernaut.png'), size: 3 },
+  [RUNNER_TYPES.ATHLETE]: { label: 'Солдат', icon: require('../assets/images/runner/trooper.png'), size: 2 },
   [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', icon: require('../assets/images/runner/scout.png'), size: 1 },
   [RUNNER_TYPES.REAPER]: { label: 'Жнец', icon: require('../assets/images/runner/reaper.png'), size: 0 },
 };
@@ -347,12 +347,14 @@ export const DICE_FACE_IMAGES = {
  * Командные усиления — зеркалят PlayerAbility (бэк, без служебного unghost).
  * min/max — допустимый номинал кубика для активации (см. правила), используется
  * только для визуальной подсказки при перетаскивании кубика на зону.
+ * shortHint — то же самое, но без слова "кубик" (компактная раскладка,
+ * портрет — по прямому запросу пользователя, места мало).
  */
 export const PLAYER_ABILITIES = {
-  boost: { label: 'Буст', min: 1, max: 3, hint: 'кубик 1–3' },
-  heal: { label: 'Лечение', min: 6, max: 6, hint: 'кубик 6' },
-  reaper: { label: 'Жнец', min: 1, max: 6, hint: 'любой кубик' },
-  ghost: { label: 'Призрак', min: 3, max: 5, hint: 'кубик 3–5' },
+  boost: { label: 'Буст', min: 1, max: 3, hint: 'кубик 1–3', shortHint: '1–3' },
+  heal: { label: 'Лечение', min: 6, max: 6, hint: 'кубик 6', shortHint: '6' },
+  reaper: { label: 'Жнец', min: 1, max: 6, hint: 'любой кубик', shortHint: 'любой' },
+  ghost: { label: 'Призрак', min: 3, max: 5, hint: 'кубик 3–5', shortHint: '3–5' },
 };
 
 export const PLAYER_ABILITY_ORDER = ['boost', 'heal', 'reaper', 'ghost'];

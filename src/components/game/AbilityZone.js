@@ -19,7 +19,16 @@ import { colors, font, radius, spacing } from '../../theme';
  * снизу" — ровно офсет на высоту одной зоны). Тот же паттерн, что уже был
  * починен для RunnerCard — меняющееся значение триггерит повторный measure.
  */
-export default function AbilityZone({ abilityKey, assignedDice, hoverState, onMeasured, onPress, remeasureTick = 0 }) {
+export default function AbilityZone({
+    abilityKey,
+    assignedDice,
+    hoverState,
+    onMeasured,
+    onPress,
+    remeasureTick = 0,
+    compact = false,
+    color,
+}) {
     const ref = useRef(null);
     const ability = PLAYER_ABILITIES[abilityKey];
 
@@ -46,11 +55,26 @@ export default function AbilityZone({ abilityKey, assignedDice, hoverState, onMe
             onLayout={measure}
             onPress={filled ? onPress : undefined}
             activeOpacity={filled ? 0.7 : 1}
-            style={[styles.zone, filled && styles.zoneFilled, highlight]}
+            style={[
+                styles.zone,
+                compact && styles.zoneCompact,
+                // Цвет игрока, не фиксированный colors.primary — та же просьба,
+                // что и для RunnerCard/RunnerDiceSlot (см. их комментарии):
+                // единый цвет для всего, что относится к текущему игроку.
+                filled && { borderStyle: 'solid', borderColor: color, backgroundColor: `${color}b8` },
+                highlight,
+            ]}
         >
-            <Text style={styles.label}>{ability.label}</Text>
-            <Text style={styles.hint}>{ability.hint}</Text>
-            <Text style={styles.value}>{filled ? ability.min === ability.max ? ability.min : '✓' : '—'}</Text>
+            <Text style={[styles.label, compact && styles.labelCompact]}>{ability.label}</Text>
+            <Text style={styles.hint}>{compact ? ability.shortHint : ability.hint}</Text>
+            {/* "—"-плейсхолдер убран (экономия места) — строка со значением
+                рендерится, только когда реально есть что показать. Галочка ('✓'
+                для усилений с диапазоном — буст/жнец/призрак) тоже убрана по
+                прямому запросу пользователя: подсветка рамки (zoneFilled) уже
+                сама по себе однозначно показывает факт занятости зоны. Число
+                оставлено только там, где оно РЕАЛЬНО информативно — Лечение
+                (min===max), у него всегда один и тот же номинал. */}
+            {filled && ability.min === ability.max && <Text style={styles.value}>{ability.min}</Text>}
         </TouchableOpacity>
     );
 }
@@ -67,11 +91,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginBottom: spacing.xs,
     },
-    zoneFilled: {
-        borderStyle: 'solid',
-        borderColor: colors.primary,
-        backgroundColor: colors.primaryTranslucent,
-    },
+    // compact (compactColumns, портретная раскладка) — ужимаем зону усилений:
+    // без подсказки (hint) и мельче шрифт заголовка, по прямому запросу
+    // пользователя "ужать пространство под усиления".
+    zoneCompact: { paddingVertical: 4 },
+    labelCompact: { fontSize: font.tiny },
     hoverValid: { borderColor: colors.success, borderStyle: 'solid', backgroundColor: `${colors.success}33` },
     hoverInvalid: { borderColor: colors.danger, borderStyle: 'solid', backgroundColor: `${colors.danger}22` },
     label: { color: colors.textOnDark, fontSize: font.small, fontWeight: 'bold' },

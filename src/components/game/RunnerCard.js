@@ -3,11 +3,11 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import RunnerDiceSlot from './RunnerDiceSlot';
-import { DAMAGE_TOKENS, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_STATUS_LABEL } from '../../constants/GameConstants';
+import { DAMAGE_TOKENS, RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
- * Карточка одного бегуна (Джаггернаут/Штурмовик/Скаут) на планшете игрока:
+ * Карточка одного бегуна (Атлет/Солдат/Скаут) на планшете игрока:
  * иконка, статус, до 2 ячеек повреждений с типом жетона (см. предупреждение
  * про damageTokens в mockGameData.js — на бэке этого поля пока нет), и зона
  * для кубика хода (RunnerDiceSlot) — перетащи кубик из трея на карточку,
@@ -115,7 +115,12 @@ export default function RunnerCard({
             style={[
                 styles.card,
                 compact && styles.cardCompact,
-                active && styles.cardSelected,
+                // Рамка выбранного бегуна — цвет ИГРОКА (color), не фиксированный
+                // фиолетовый colors.primary: по прямому запросу пользователя вся
+                // "принадлежность игроку" (кубики в трее, обводка на доске,
+                // пилюля переключателя) должна быть в одном цвете, а не вперемешку
+                // с отдельной темой акцента.
+                active && { borderColor: color },
                 healTarget && styles.cardHealTarget,
                 pending && styles.cardPending,
                 hoverState === 'valid' && styles.cardHoverValid,
@@ -127,18 +132,16 @@ export default function RunnerCard({
             <View style={styles.cardRow}>
                 <View style={styles.leftArea}>
                     <View style={styles.headRow}>
-                        <RunnerToken type={runner.type} color={color} size={compact ? 24 : 36} selected={active} />
+                        <RunnerToken type={runner.type} color={color} size={compact ? 30 : 36} selected={active} />
 
                         <View style={styles.info}>
                             <Text style={[styles.name, compact && styles.nameCompact]} numberOfLines={1}>
                                 {display?.label ?? runner.type}
                             </Text>
-                            <Text style={[styles.status, { color: statusColor(runner.status) }]}>
-                                {RUNNER_STATUS_LABEL[runner.status] ?? runner.status}
-                            </Text>
-                            {/* В компактном режиме (портретная раскладка, всё должно поместиться
-                                без прокрутки) эта строка — лишняя трата вертикального места,
-                                статус выше уже даёт достаточно контекста. */}
+                            {/* Статус текстом ("Исправен"/"Повреждён"...) убран — кружки
+                                повреждений ниже уже однозначно показывают то же самое
+                                (0/1/2 занятых кружка), отдельная строка избыточна (по
+                                прямому запросу пользователя). */}
                             {!compact && (
                                 <Text style={styles.placement}>
                                     {pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
@@ -147,27 +150,21 @@ export default function RunnerCard({
                         </View>
                     </View>
 
-                    {/* Кружки повреждений — под именем/статусом (по прямому запросу
-                        пользователя — освобождает правый верхний угол под квадрат "Ход"). */}
+                    {/* Кружки повреждений — под именем (по прямому запросу
+                        пользователя, статус текстом больше не занимает эту строку). */}
                     {damageSlots}
                 </View>
 
-                {/* Квадраты "Ход"/"Накат" — своя колонка справа, друг под другом
-                    (см. шапку файла), а не отдельная строка на всю ширину карточки. */}
+                {/* Квадраты "Ход"/"Накат" — рядом друг с другом (по прямому запросу
+                    пользователя, было друг под другом), своя колонка справа от
+                    иконки+имени. */}
                 <View style={styles.diceCol}>
-                    <RunnerDiceSlot label="Ход" value={moveDiceValue} size={compact ? 30 : 40} />
-                    <RunnerDiceSlot label="Накат" value={rollDiceValue} size={compact ? 30 : 40} />
+                    <RunnerDiceSlot label="Ход" value={moveDiceValue} size={compact ? 30 : 40} color={color} />
+                    <RunnerDiceSlot label="Накат" value={rollDiceValue} size={compact ? 30 : 40} color={color} />
                 </View>
             </View>
         </TouchableOpacity>
     );
-}
-
-function statusColor(status) {
-    if (status === RUNNER_STATUS.DESTROYED) return colors.danger;
-    if (status === RUNNER_STATUS.BROKEN) return colors.warning;
-    if (status === RUNNER_STATUS.DAMAGED) return colors.warning;
-    return colors.success;
 }
 
 const styles = StyleSheet.create({
@@ -179,7 +176,6 @@ const styles = StyleSheet.create({
         borderWidth: 2,
         borderColor: 'transparent',
     },
-    cardSelected: { borderColor: colors.primary },
     cardHealTarget: { borderColor: colors.success },
     cardPending: { borderColor: colors.warning, borderStyle: 'dashed' },
     // Подсветка "сюда можно бросить кубик" (см. hoverState) — рамка ВСЕЙ
@@ -192,16 +188,17 @@ const styles = StyleSheet.create({
     // альбомной раскладке (там места достаточно, компактность не нужна).
     cardCompact: { padding: spacing.xs, marginBottom: 4 },
     // cardRow — вся карточка в две колонки: leftArea (иконка+имя+повреждения,
-    // тянется на весь остаток) и diceCol (Ход/Накат, фиксированная узкая
+    // тянется на весь остаток) и diceCol (Ход/Накат бок о бок, фиксированная
     // колонка справа).
     cardRow: { flexDirection: 'row', alignItems: 'flex-start' },
     leftArea: { flex: 1, marginRight: spacing.xs },
     headRow: { flexDirection: 'row', alignItems: 'center' },
-    diceCol: { alignItems: 'center', gap: spacing.xs },
+    // Ход/Накат теперь РЯДОМ (row), не друг под другом — по прямому запросу
+    // пользователя.
+    diceCol: { flexDirection: 'row', alignItems: 'center', gap: spacing.xs },
     info: { flex: 1, marginLeft: spacing.sm },
     name: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     nameCompact: { fontSize: font.tiny },
-    status: { fontSize: font.tiny, marginTop: 2, fontWeight: '600' },
     placement: { fontSize: 10, color: colors.textOnDarkSecondary, marginTop: 1 },
     slots: { flexDirection: 'row', marginTop: spacing.xs },
     slotsCompact: { marginTop: 3, marginLeft: 0 },

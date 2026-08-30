@@ -253,6 +253,8 @@ export default function PlayerInfoPanel({
                 onMeasured={handleMeasured}
                 onPressZone={onPressAbilityZone}
                 remeasureTick={remeasureTick}
+                compact={compactColumns}
+                color={activePlayer.color}
             />
         </>
     );
@@ -426,6 +428,10 @@ const styles = StyleSheet.create({
     // если тоже не влезут на каком-то экране — тот же паттерн).
     columns: { flex: 1, flexDirection: 'row', marginTop: spacing.xs },
     leftColumn: { flex: 2, marginRight: spacing.sm },
-    leftColumnContent: { paddingBottom: spacing.sm },
-    rightColumn: { flex: 1 },
+    // paddingHorizontal — карточки/кубики+усиления теперь НЕ растянуты
+    // впритык к границам своей колонки (по прямому запросу пользователя
+    // "уменьшить ширину" обеих зон) — видимый отступ с обеих сторон, сама
+    // ширина колонок (flex 2:1) не меняется.
+    leftColumnContent: { paddingBottom: spacing.sm, paddingHorizontal: spacing.xs },
+    rightColumn: { flex: 1, paddingHorizontal: spacing.xs },
 });

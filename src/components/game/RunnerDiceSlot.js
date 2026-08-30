@@ -14,11 +14,22 @@ import { colors, font, radius } from '../../theme';
  * то, в какой из двух квадратов навели кубик — оба квадрата всегда просто
  * отображают текущее значение, ничего сами не ловят.
  */
-export default function RunnerDiceSlot({ label, value, size = 40 }) {
+export default function RunnerDiceSlot({ label, value, size = 40, color }) {
+    const filled = value != null;
     return (
         <View style={styles.wrap}>
-            <View style={[styles.square, { width: size, height: size }, value != null && styles.squareFilled]}>
-                <Text style={styles.value}>{value != null ? value : '—'}</Text>
+            <View
+                style={[
+                    styles.square,
+                    { width: size, height: size },
+                    // Цвет игрока (color), не фиксированный colors.primary — та же
+                    // просьба, что и для рамки выбранной карточки (см. RunnerCard):
+                    // всё, что относится к "чей это ход/бегун", должно быть в одном
+                    // цвете с кубиками в трее и обводкой на доске.
+                    filled && { borderStyle: 'solid', borderColor: color, backgroundColor: `${color}b8` },
+                ]}
+            >
+                <Text style={styles.value}>{filled ? value : '—'}</Text>
             </View>
             <Text style={styles.label} numberOfLines={1}>
                 {label}
@@ -37,7 +48,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    squareFilled: { borderStyle: 'solid', borderColor: colors.primary, backgroundColor: colors.primaryTranslucent },
     value: { color: colors.textOnDark, fontSize: font.small, fontWeight: 'bold' },
     label: { color: colors.textOnDarkSecondary, fontSize: 9, marginTop: 2 },
 });
