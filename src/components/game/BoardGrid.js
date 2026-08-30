@@ -1,75 +1,51 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo } from 'react';
-import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { BOARD_LAYOUT, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
+import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { HIGHLIGHT_COLOR } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
 
 /**
- * Прокручиваемая сетка сегментов дороги.
+ * Статичное окно из `cols` подряд идущих колонок трассы (rows × cols, обычно
+ * 6×8) — клетки на экране НИКОГДА не двигаются. До 2026-08-30 окно прыгало
+ * сразу на целый фрагмент (`blockIndex` 0..2, TOTAL_BLOCKS штук). По
+ * дальнейшему запросу пользователя это заменено на посегментный сдвиг:
+ * `windowStart` (из useBoardScroll, глобальный индекс левого/нижнего края
+ * окна в терминах cell.col, шаг ±1 на нажатие/повтор при удержании) выбирает,
+ * какие именно `cols` подряд идущих глобальных колонок сейчас отрисованы —
+ * компонент фильтрует gridData/runners по диапазону `[windowStart,
+ * windowStart+cols)`, без transform/offset вообще.
  *
  * Альбомная раскладка (orientation='landscape'): дорожки — горизонтальные
- * полосы, стек по вертикали, скролл по X. Ряды через один сдвинуты на
- * пол-ячейки (кирпичная кладка), сама прокрутка — через Animated.View и
- * offset, приходящий из useBoardScroll.
+ * полосы, стек по вертикали. Ряды через один сдвинуты на пол-ячейки
+ * (кирпичная кладка). Порядок колонок внутри дорожки — обычный (globalCol
+ * возрастает слева направо).
  *
  * Портретная раскладка (orientation='portrait'): дорожки — вертикальные
- * полосы, стек по горизонтали (все 6 помещаются по ширине без скролла),
- * скролл по Y. По требованию — движение по трассе должно идти СНИЗУ ВВЕРХ
- * (начало трассы у панели игрока внизу экрана, дальше по треку — выше).
- *
- * ПЕРВАЯ версия этого файла добивалась "снизу вверх" трансформом
- * `scaleY(-1)` на всей сетке + контр-отражением каждой картинки/токена —
- * на реальном Android это дало сломанные стрелки прокрутки и свайп,
- * открывающий пустую зону (нет доступа к устройству для отладки, но по
- * описанным симптомам похоже на связку transform+overflow:hidden). Заменено
- * на `flexDirection: 'column-reverse'` — ЧИСТО layout-свойство, не paint-time
- * трансформ: цепочка ячеек лежит в массиве в обычном порядке (globalCol
- * возрастает), 'column-reverse' просто рисует их снизу вверх сама, без
- * transform и без контр-отражения (картинки/токены остаются в нормальной
- * ориентации, потому что ничего физически не отражается — просто порядок
- * укладки другой). Меньше движущихся частей — надёжнее.
- *
- * Вьюпорт (containerHeight, весь оставшийся вертикальный бюджет экрана, см.
- * useBoardLayout) значительно МЕНЬШЕ контента (H = TOTAL_COLS*segmentH, все
- * 3 фрагмента трассы). `justifyContent: 'flex-end'` на внешнем `container`
- * (см. `containerBottomAnchored`) прижимает контент к НИЗУ вьюпорта — иначе
- * RN по умолчанию прижал бы к верху, и при offset=0 в видимой части
- * оказался бы ДАЛЬНИЙ конец трассы вместо начала.
- *
- * Направление offset'а в портретной раскладке — ПОЛОЖИТЕЛЬНОЕ (0=начало,
- * minOffset>0=дальше по треку), в отличие от альбомной (0=начало,
- * minOffset<0=дальше) — см. useBoardLayout/useBoardScroll: чем дальше по
- * треку (globalCol растёт), тем выше нужно поднять контент экрана, а "выше"
- * при column-reverse — это положительный translateY (сдвигает контент вниз
- * от его "нулевой" позиции, вытягивая скрытый сверху хвост в видимую зону
- * снизу... см. useBoardScroll — там разобрано подробнее с конкретными
- * числами). Направление свайпа подтверждено с пользователем: палец ВНИЗ
- * открывает трассу ДАЛЬШЕ (тянешь трассу к себе).
+ * полосы, стек по горизонтали. Движение по трассе — СНИЗУ ВВЕРХ (начало
+ * трассы у панели игрока внизу экрана): левый край окна снизу, дальше по
+ * треку — выше. Реализовано `flexDirection: 'column-reverse'` — чисто
+ * layout-свойство (ячейки в массиве идут по возрастанию globalCol,
+ * column-reverse рисует их снизу вверх сам), без transform/контр-отражений.
  *
  * Токены бегунов в обеих раскладках рисуются ОДНИМ отдельным абсолютным
- * слоем НАД всей сеткой целиком (внутри той же прокручиваемой Animated.View,
- * чтобы ехать вместе со скроллом), с пиксельными координатами, посчитанными
- * вручную — раньше (на Android, в альбомной раскладке) токены, вложенные в
- * каждую ячейку, иногда рисовались ПОД картинкой сегмента (view-flattening),
- * отдельный слой поверх сетки это обходит независимо от компоновки ячейки.
- * В портретной раскладке y считается в ТОЙ ЖЕ системе, что и column-reverse
- * даёт клеткам (см. tokenOverlay ниже) — globalCol=0 внизу, растёт вверх.
+ * слоем НАД сеткой (а не вложены в ячейки) — раньше (Android, альбомная
+ * раскладка) вложенный токен иногда рисовался ПОД картинкой сегмента
+ * (view-flattening), отдельный слой поверх это обходит независимо от
+ * компоновки ячейки. Слой тоже фильтруется по окну — среди runnersByCell
+ * берём только тех, чей глобальный столбец (segment*cols+positionX) сейчас
+ * виден.
  *
  * Тап по клетке всегда сообщается наружу через onCellPress: используется и
  * для звука/фидбека, и для тап-плейсмента выбранного бегуна. Формат cell.id
- * ("segment-row-col") и семантика row/col/blockIndex одинаковы в обеих
+ * ("segment-row-localCol") и семантика row/col/blockIndex одинаковы в обеих
  * раскладках — меняется только то, как клетки визуально расположены на
  * экране, не координаты, которые видит GameBoardScreen.
  */
 
-// Ассет allowed_move.png (подложка подсветки) пользователь удалил без замены
-// (коммит "segments", 2026-08-28) и попросил вернуть прежний подход — цветная
-// рамка+заливка под доступной клеткой (как было до 2026-08-14), но не толстую.
-// Картинка типа клетки (road/sand/...) по-прежнему чуть МЕНЬШЕ слота и
-// отцентрована, чтобы рамка была видна тонкой полосой по краю слота — сам
-// зазор минимальный (только чтобы заливку было видно), не такой большой,
-// как в версии с картинкой-подложкой.
+// Картинка типа клетки (road/sand/...) чуть МЕНЬШЕ слота и отцентрована —
+// подсветка легальной клетки (тонкая рамка+заливка) видна по краю слота
+// в этом зазоре.
 const SEGMENT_INSET = 0.06;
 const HIGHLIGHT_BORDER_WIDTH = 1.5;
 
@@ -79,9 +55,8 @@ export default function BoardGrid({
     cols,
     segmentW,
     segmentH,
-    offset,
+    windowStart = 0,
     orientation = 'landscape',
-    containerHandlers,
     containerWidth,
     containerHeight,
     runners = [],
@@ -101,146 +76,34 @@ export default function BoardGrid({
     const rotateEligible = Platform.OS === 'web' && !isPortrait;
     const ROTATE_TYPES = new Set(['road', 'sand', 'mud']);
 
+    const windowEnd = windowStart + cols; // эксклюзивно
+    const visibleCells = useMemo(
+        () => gridData.filter((cell) => cell.col >= windowStart && cell.col < windowEnd),
+        [gridData, windowStart, windowEnd],
+    );
+
     // Ключ карты — "segment-row-localCol" (см. lib/board#indexRunnersByCell).
-    // Переводим его в пиксельные координаты той же формулой, что уже
-    // определяет визуальную позицию ячейки. Портретная: globalCol=0 внизу
-    // (TOTAL_COLS-1-globalCol растёт сверху вниз, зеркалит column-reverse у
-    // самих клеток), лейн слева направо, без сдвига по X (сдвиг —
-    // "кирпичный", он вертикальный, см. marginTop у лейн-колонки).
+    // segment*cols+localCol даёт тот же globalCol, что и cell.col — только
+    // бегуны из видимого сейчас окна попадают в оверлей.
     const tokenOverlay = useMemo(() => {
         const items = [];
         for (const [key, cellRunners] of runnersByCell.entries()) {
             const [segStr, rowStr, colStr] = key.split('-');
             const segment = Number(segStr);
             const row = Number(rowStr);
-            const localCol = Number(colStr);
-            const globalCol = segment * cols + localCol;
+            const globalCol = segment * cols + Number(colStr);
+            if (globalCol < windowStart || globalCol >= windowEnd) continue;
+            const localCol = globalCol - windowStart;
             const x = isPortrait
                 ? row * segmentW
-                : globalCol * segmentW + (row % 2 !== 0 ? segmentW / 2 : 0);
+                : localCol * segmentW + (row % 2 !== 0 ? segmentW / 2 : 0);
             const y = isPortrait
-                ? (BOARD_LAYOUT.TOTAL_COLS - 1 - globalCol) * segmentH + (row % 2 !== 0 ? segmentH / 2 : 0)
+                ? (cols - 1 - localCol) * segmentH + (row % 2 !== 0 ? segmentH / 2 : 0)
                 : row * segmentH;
             items.push({ key, x, y, topRunner: cellRunners[0], count: cellRunners.length });
         }
         return items;
-    }, [runnersByCell, cols, segmentW, segmentH, isPortrait]);
-
-    const content = (
-        <>
-            {Array.from({ length: rows }).map((_, laneIdx) => {
-                const laneCells = gridData.filter((cell) => cell.row === laneIdx); // уже в порядке возрастания globalCol
-                return (
-                    <View
-                        key={`lane-${laneIdx}`}
-                        style={[
-                            isPortrait ? styles.laneColumn : styles.row,
-                            // Явная height (портрет) — без неё laneRow (flexDirection:'row',
-                            // дефолтный alignItems:'stretch') растягивал/сжимал колонки лейнов
-                            // под общую высоту ряда и "съедал" эффект marginTop у нечётных
-                            // лейнов (кирпичная кладка пропадала целиком — баг с реального
-                            // теста на Android, ровный "плиточный" рисунок вместо кирпичного).
-                            isPortrait && { height: BOARD_LAYOUT.TOTAL_COLS * segmentH },
-                            laneIdx % 2 !== 0 &&
-                                (isPortrait ? { marginTop: segmentH / 2 } : { marginLeft: segmentW / 2 }),
-                        ]}
-                    >
-                        {laneCells.map((cell) => {
-                            const highlighted = highlightedCells?.has(cell.id) ?? false;
-                            return (
-                                <TouchableOpacity
-                                    key={cell.id}
-                                    onPress={() => onCellPress?.(cell)}
-                                    style={{ width: segmentW, height: segmentH }}
-                                    activeOpacity={0.75}
-                                >
-                                    {/* Подсветка легальной клетки — тонкая рамка+полупрозрачная
-                                        заливка под обычной картинкой типа (та opacity:0.9, так
-                                        что заливка снизу просвечивает по узкому зазору вокруг
-                                        неё, см. SEGMENT_INSET). Раньше был отдельный ассет
-                                        allowed_move.png — пользователь его удалил, попросил
-                                        вернуть рамку/заливку, не толстую. */}
-                                    {highlighted && (
-                                        <View
-                                            style={{
-                                                position: 'absolute',
-                                                left: 0,
-                                                top: 0,
-                                                width: segmentW,
-                                                height: segmentH,
-                                                backgroundColor: `${HIGHLIGHT_COLOR}55`,
-                                                borderWidth: HIGHLIGHT_BORDER_WIDTH,
-                                                borderColor: HIGHLIGHT_COLOR,
-                                            }}
-                                            pointerEvents="none"
-                                        />
-                                    )}
-                                    <Image
-                                        source={cell.image}
-                                        style={{
-                                            position: 'absolute',
-                                            left: segmentW * (SEGMENT_INSET / 2),
-                                            top: segmentH * (SEGMENT_INSET / 2),
-                                            width: segmentW * (1 - SEGMENT_INSET),
-                                            height: segmentH * (1 - SEGMENT_INSET),
-                                            resizeMode: 'stretch',
-                                            // road/sand — по запросу пользователя непрозрачные
-                                            // (не просвечивают подсветку под собой); у остальных
-                                            // типов лёгкая прозрачность оставлена (см. highlight
-                                            // выше — заливка должна быть видна по краю).
-                                            opacity: cell.type === 'road' || cell.type === 'sand' ? 1 : 0.9,
-                                            ...(rotateEligible && ROTATE_TYPES.has(cell.type)
-                                                ? { transform: [{ rotate: '90deg' }] }
-                                                : null),
-                                        }}
-                                    />
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-                );
-            })}
-
-            <View
-                style={[
-                    styles.tokenOverlayLayer,
-                    // Явные пиксельные width/height вместо inset-стретчинга
-                    // (StyleSheet.absoluteFillObject: top/left/right/bottom:0):
-                    // родитель (Animated.View) сам без явного размера — его
-                    // ширина/высота выводятся из контента (строк), а не
-                    // заданы числом. Стретч через отступы 0/0/0/0 у ребёнка
-                    // рассчитывает на то, что размер родителя уже известен
-                    // ДО этого прохода компоновки — на части рендеров/платформ
-                    // это давало нулевой размер оверлея (токены пропадали
-                    // целиком, а не просто не на своём месте). Числовой размер
-                    // не зависит от этого нюанса компоновки.
-                    isPortrait
-                        ? { width: rows * segmentW, height: BOARD_LAYOUT.TOTAL_COLS * segmentH }
-                        : { width: BOARD_LAYOUT.TOTAL_COLS * segmentW, height: rows * segmentH },
-                ]}
-                pointerEvents="none"
-            >
-                {tokenOverlay.map(({ key, x, y, topRunner, count }) => (
-                    <View
-                        key={key}
-                        style={[styles.tokenLayer, { left: x, top: y, width: segmentW, height: segmentH }]}
-                    >
-                        <RunnerToken
-                            type={topRunner.type}
-                            color={playerColorById[topRunner.playerId]}
-                            size={tokenSize}
-                            selected={topRunner.id === selectedRunnerId}
-                        />
-                        {count > 1 && (
-                            <View style={styles.stackBadge}>
-                                <Text style={styles.stackBadgeText}>+{count - 1}</Text>
-                            </View>
-                        )}
-                    </View>
-                ))}
-            </View>
-        </>
-    );
+    }, [runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait]);
 
     return (
         <View
@@ -249,17 +112,101 @@ export default function BoardGrid({
                 isPortrait && styles.containerBottomAnchored,
                 { width: containerWidth, height: containerHeight },
             ]}
-            {...containerHandlers}
         >
-            <Animated.View
-                style={
-                    isPortrait
-                        ? [styles.laneRow, { transform: [{ translateY: offset }] }]
-                        : { transform: [{ translateX: offset }] }
-                }
-            >
-                {content}
-            </Animated.View>
+            <View style={isPortrait ? styles.laneRow : undefined}>
+                {Array.from({ length: rows }).map((_, laneIdx) => {
+                    const laneCells = visibleCells
+                        .filter((cell) => cell.row === laneIdx)
+                        .sort((a, b) => a.col - b.col); // возрастание globalCol
+                    return (
+                        <View
+                            key={`lane-${laneIdx}`}
+                            style={[
+                                isPortrait ? styles.laneColumn : styles.row,
+                                isPortrait && { height: cols * segmentH },
+                                laneIdx % 2 !== 0 &&
+                                    (isPortrait ? { marginTop: segmentH / 2 } : { marginLeft: segmentW / 2 }),
+                            ]}
+                        >
+                            {laneCells.map((cell) => {
+                                const highlighted = highlightedCells?.has(cell.id) ?? false;
+                                return (
+                                    <TouchableOpacity
+                                        key={cell.id}
+                                        onPress={() => onCellPress?.(cell)}
+                                        style={{ width: segmentW, height: segmentH }}
+                                        activeOpacity={0.75}
+                                    >
+                                        {highlighted && (
+                                            <View
+                                                style={{
+                                                    position: 'absolute',
+                                                    left: 0,
+                                                    top: 0,
+                                                    width: segmentW,
+                                                    height: segmentH,
+                                                    backgroundColor: `${HIGHLIGHT_COLOR}55`,
+                                                    borderWidth: HIGHLIGHT_BORDER_WIDTH,
+                                                    borderColor: HIGHLIGHT_COLOR,
+                                                }}
+                                                pointerEvents="none"
+                                            />
+                                        )}
+                                        <Image
+                                            source={cell.image}
+                                            style={{
+                                                position: 'absolute',
+                                                left: segmentW * (SEGMENT_INSET / 2),
+                                                top: segmentH * (SEGMENT_INSET / 2),
+                                                width: segmentW * (1 - SEGMENT_INSET),
+                                                height: segmentH * (1 - SEGMENT_INSET),
+                                                resizeMode: 'stretch',
+                                                // road/sand — по запросу пользователя непрозрачные
+                                                // (не просвечивают подсветку под собой); у остальных
+                                                // типов лёгкая прозрачность оставлена (заливка
+                                                // подсветки должна быть видна по краю).
+                                                opacity: cell.type === 'road' || cell.type === 'sand' ? 1 : 0.9,
+                                                ...(rotateEligible && ROTATE_TYPES.has(cell.type)
+                                                    ? { transform: [{ rotate: '90deg' }] }
+                                                    : null),
+                                            }}
+                                        />
+                                    </TouchableOpacity>
+                                );
+                            })}
+                        </View>
+                    );
+                })}
+
+                <View
+                    style={[
+                        styles.tokenOverlayLayer,
+                        isPortrait
+                            ? { width: rows * segmentW, height: cols * segmentH }
+                            : { width: cols * segmentW, height: rows * segmentH },
+                    ]}
+                    pointerEvents="none"
+                >
+                    {tokenOverlay.map(({ key, x, y, topRunner, count }) => (
+                        <View
+                            key={key}
+                            style={[styles.tokenLayer, { left: x, top: y, width: segmentW, height: segmentH }]}
+                        >
+                            <RunnerToken
+                                type={topRunner.type}
+                                color={playerColorById[topRunner.playerId]}
+                                size={tokenSize}
+                                selected={topRunner.id === selectedRunnerId}
+                            />
+                            {count > 1 && (
+                                <View style={styles.stackBadge}>
+                                    <Text style={styles.stackBadgeText}>+{count - 1}</Text>
+                                </View>
+                            )}
+                        </View>
+                    ))}
+                </View>
+            </View>
         </View>
     );
 }
@@ -270,19 +217,17 @@ const styles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'center' },
     // Дорожки расположены слева направо (портретная раскладка), каждая — свой
     // вертикальный стек ячеек. column-reverse: клетки в массиве идут по
-    // возрастанию globalCol, но рисуются СНИЗУ ВВЕРХ (globalCol=0 внизу) —
-    // см. шапку файла, почему это не transform, а просто другой порядок
-    // укладки flexbox.
+    // возрастанию localCol, но рисуются СНИЗУ ВВЕРХ (localCol=0 внизу) — см.
+    // шапку файла.
     // alignItems:'flex-start' — не дефолтный 'stretch': с ним все лейн-колонки
-    // растягивались/сжимались под общую высоту ряда (см. комментарий у
-    // laneColumn выше про исчезнувшую кирпичную кладку), явная height у
-    // колонок это чинит только если сам ряд не пытается их дополнительно
-    // растянуть.
+    // растягивались/сжимались под общую высоту ряда и "съедали" эффект
+    // marginTop у нечётных лейнов (кирпичная кладка пропадала целиком — баг
+    // с реального теста на Android), явная height у колонок это чинит только
+    // если сам ряд не пытается их дополнительно растянуть.
     laneRow: { flexDirection: 'row', alignItems: 'flex-start' },
     laneColumn: { flexDirection: 'column-reverse' },
-    // Один слой на всю сетку, растянутый по размеру Animated.View (сумма
-    // строк/колонок) — см. комментарий в JSX про то, почему токены больше не
-    // вложены в ячейки.
+    // Один слой на весь текущий блок — см. комментарий в JSX про то, почему
+    // токены больше не вложены в ячейки.
     tokenOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 2, elevation: 2 },
     tokenLayer: {
         position: 'absolute',

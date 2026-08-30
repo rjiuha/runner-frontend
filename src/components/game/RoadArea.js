@@ -17,5 +17,10 @@ export default function RoadArea({ children, spacing = 10, backgroundColor = '#3
 const styles = StyleSheet.create({
     relative: { position: 'relative', flex: 1 },
     frame: { position: 'absolute', top: 20, left: 20, right: 20, bottom: 20 },
-    outer: { flex: 1 },
+    // alignItems:'center' — BoardGrid (фиксированного размера, containerWidth/
+    // containerHeight из useBoardLayout) может быть УЖЕ, чем сама RoadArea, если
+    // сегмент размера ограничен высотой, а не шириной (портретная раскладка,
+    // 2026-08-30) — без центрирования дефолтный flex-start прижимал бы сетку к
+    // левому краю, оставляя пустую полосу только справа.
+    outer: { flex: 1, alignItems: 'center' },
 });

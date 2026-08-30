@@ -14,10 +14,14 @@ const ARROW_LABEL = { left: '←', right: '→', up: '↑', down: '↓' };
  * @param {'left'|'right'|'up'|'down'} direction
  * @param {number} size
  * @param {object} handlers
+ * @param {object} [style] доп. стиль на TouchableOpacity (например, alignSelf)
  */
-export default function ArrowButton({ direction, size, handlers }) {
+export default function ArrowButton({ direction, size, handlers, style }) {
     return (
-        <TouchableOpacity style={[styles.btn, { width: size, height: size }]} activeOpacity={0.7} {...handlers}>
+        <TouchableOpacity
+            style={[styles.btn, { width: size, height: size }, style]}
+            activeOpacity={0.7}
+            {...handlers}>
             <Text style={[styles.label, { fontSize: Math.floor(size * 0.5) }]}>
                 {ARROW_LABEL[direction] ?? '→'}
             </Text>

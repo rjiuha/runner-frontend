@@ -24,7 +24,7 @@ export const ROAD_AREA_SPACING = 12;
 export function useBoardLayout() {
     const { width: screenW, height: screenH } = useWindowDimensions();
     const insets = useSafeAreaInsets();
-    const { ROWS, COLS, TOTAL_BLOCKS, TOTAL_COLS } = BOARD_LAYOUT;
+    const { ROWS, COLS, TOTAL_BLOCKS } = BOARD_LAYOUT;
     const orientation = screenH >= screenW ? 'portrait' : 'landscape';
 
     if (orientation === 'portrait') {
@@ -54,38 +54,33 @@ export function useBoardLayout() {
         const boardBudgetW = Math.max(0, screenW - ROAD_AREA_SPACING * 2);
         const boardBudgetH = Math.max(0, screenH - panelH - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2 - insets.top);
 
-        // Раньше segmentW считался от boardBudgetW (почти вся ширина экрана) ÷ ROWS(6),
-        // а segmentH — от boardBudgetH (узкий остаток под доску после панели+стрелок)
-        // ÷ COLS(8): широкий бюджет делённый на маленький делитель против узкого
-        // бюджета делённого на большой — систематически давало segmentW ЗНАЧИТЕЛЬНО
-        // больше segmentH, то есть широкие "альбомные" клетки в портретной раскладке
-        // (баг "ширина и высота перепутаны", поймано на скриншоте с реального Android).
-        // Теперь ОДИН размер — от ширины (единственная ось, которая ничем не делится
-        // с другим UI, значит она и задаёт квадратную клетку), containerHeight/minOffset
-        // просто подстраиваются под то, сколько места реально осталось по вертикали —
-        // не наоборот.
-        const segmentSize = Math.floor(boardBudgetW / ROWS);
+        // Раньше segmentSize считался ТОЛЬКО от ширины (boardBudgetW/ROWS) — на узких
+        // экранах (Android) это давало клетки крупнее, чем реально помещается по
+        // высоте: BoardGrid.laneColumn сдвигает нечётные дорожки на segmentH/2 вниз
+        // (кирпичная кладка, см. BoardGrid.js), поэтому реальная требуемая высота
+        // контента — не COLS*segmentH, а COLS*segmentH + segmentH/2 (запас на этот
+        // сдвиг). Если контейнер (roadContainerH) короче этого — BoardGrid обрезает
+        // (`overflow:'hidden'`) верх сдвинутых дорожек ровно на недостающую половину
+        // сегмента (жалоба пользователя: "у дорог, смещённых вперёд, половина
+        // сегмента не отображается", подтверждено на Android И вебе одновременно —
+        // не платформенный баг, а геометрия). Теперь segmentSize — MIN по обеим осям
+        // (тот же приём, что уже работает в альбомной раскладке ниже): по ширине —
+        // COLS не считаем тут, по высоте — ДЕЛИМ НЕ НА COLS, А НА COLS+0.5, чтобы сразу
+        // заложить место под кирпичный запас. Гарантирует нулевую обрезку на любом
+        // экране — там, где вертикального места much больше (см. живой прогон в вебе),
+        // limiting-фактором становится ширина, и клетки просто крупнее.
+        const segmentSize = Math.floor(Math.min(boardBudgetW / ROWS, boardBudgetH / (COLS + 0.5)));
         const segmentW = segmentSize;
         const segmentH = segmentSize;
 
         const roadContainerW = segmentW * ROWS;
-        // Не ограничиваем одним фрагментом (в отличие от альбомной раскладки) —
-        // берём весь оставшийся вертикальный бюджет целиком, чтобы уместить как
-        // можно больше рядов трассы без скролла (было явно запрошено пользователем).
-        const roadContainerH = boardBudgetH;
-
-        // Аналог minOffset в альбомной раскладке (тот же смысл — "насколько
-        // далеко можно уйти от начала трассы"), но ПОЛОЖИТЕЛЬНЫЙ, не
-        // отрицательный: BoardGrid в портретной раскладке кладёт клетки через
-        // flexDirection:'column-reverse' (globalCol=0 внизу, дальше по треку —
-        // выше), и чтобы поднять контент выше (открыть более дальний участок),
-        // translateY нужно УВЕЛИЧИВАТЬ, а не уменьшать — иначе в альбомной
-        // раскладке. useBoardScroll читает знак minOffset и клэмпит/масштабирует
-        // соответственно, направление свайпа подтверждено с пользователем
-        // (вниз пальцем = дальше по треку). Запас — на "кирпичный" сдвиг
-        // нечётных дорожек, как и в альбомной раскладке.
-        const totalContentH = TOTAL_COLS * segmentH + segmentH / 2;
-        const minOffset = Math.max(0, totalContentH - roadContainerH);
+        // Точно под контент (COLS сегментов + запас на кирпичный сдвиг), НЕ весь
+        // boardBudgetH целиком — раньше контейнер был больше нужного (лишнее пустое
+        // место сверху, т.к. BoardGrid прижимает контент к низу) ИЛИ (на тесных
+        // экранах) МЕНЬШЕ нужного, что и резало сдвинутые дорожки. Излишек бюджета
+        // по вертикали (если есть) просто не используется — центрируется по ширине
+        // роль играет segmentSize, а не сам контейнер.
+        const roadContainerH = segmentH * COLS + segmentH / 2;
 
         return {
             orientation,
@@ -98,7 +93,6 @@ export function useBoardLayout() {
             roadContainerH,
             segmentW,
             segmentH,
-            minOffset,
             rows: ROWS,
             cols: COLS,
             totalBlocks: TOTAL_BLOCKS,
@@ -109,7 +103,12 @@ export function useBoardLayout() {
         Math.min(LAYOUT.LEFT_PANEL_MAX_W, Math.max(LAYOUT.LEFT_PANEL_MIN_W, screenW * LAYOUT.LEFT_PANEL_RATIO)),
     );
 
-    const arrowBtnSize = Math.floor(screenH * 0.15);
+    // Было 0.15 — с ассетом RoadNavButton (реальный рисованный глиф, не
+    // абстрактный кружок ArrowButton) кнопка получалась размером с сам
+    // сегмент дороги (жалоба пользователя). Тот же приём, что и в
+    // портретной раскладке (arrowBtnSize там — 0.075 от ширины) — просто
+    // вдвое меньше прежнего, пол в 28 для пальца/курсора.
+    const arrowBtnSize = Math.max(28, Math.floor(screenH * 0.075));
 
     // Высота зоны переключателя игроков в левой панели — считаем от реальных
     // пикселей окна (как arrowBtnSize), а не долей flex (flex:1/flex:4 внутри
@@ -120,27 +119,32 @@ export function useBoardLayout() {
     // размер не зависит от этой цепочки.
     const switcherH = Math.floor(screenH * 0.15);
     const roadZoneW = Math.max(0, screenW - leftPanelW);
-    const roadBudgetW = Math.max(0, roadZoneW - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2);
+    // ОДИН слот arrowBtnSize, не два — обе кнопки (назад/вперёд) теперь стоят
+    // одной колонкой слева от дороги (см. GameBoardScreen), а не по краям,
+    // освобождая целый arrowBtnSize вправо под саму сетку (по запросу
+    // пользователя — "дать больше пространства под дорогу").
+    const roadBudgetW = Math.max(0, roadZoneW - arrowBtnSize - ROAD_AREA_SPACING * 2);
     const roadBudgetH = Math.max(0, screenH - ROAD_AREA_SPACING * 2);
 
     // Квадратные сегменты (по запросу пользователя, 2026-08-28) — раньше
     // segmentW/segmentH считались от разных бюджетов независимо (ширина
     // делилась на COLS, высота на ROWS), что почти никогда не давало квадрат.
     // Единый размер — min по обеим осям, чтобы не вылезти ни за бюджет
-    // ширины (один фрагмент COLS колонок), ни за бюджет высоты (все ROWS
-    // дорожек без обрезки); лишний бюджет на не ограничивающей оси просто
-    // остаётся пустым — roadZone (GameBoardScreen) центрирует контейнер
-    // BoardGrid флексом, так что это не ломает раскладку.
-    const segmentSize = Math.floor(Math.min(roadBudgetW / COLS, roadBudgetH / ROWS));
+    // ширины, ни за бюджет высоты; лишний бюджет на не ограничивающей оси
+    // просто остаётся пустым — RoadArea.outer центрирует BoardGrid флексом
+    // (alignItems:'center'), так что это не ломает раскладку.
+    //
+    // Делитель по ширине — COLS+0.5, не просто COLS: нечётные ряды в
+    // BoardGrid сдвинуты вправо на segmentW/2 (кирпичная кладка,
+    // marginLeft), поэтому им реально нужно COLS*segmentW + segmentW/2, а
+    // не COLS*segmentW — без этого запаса контейнер (`overflow:'hidden'`)
+    // обрезал самую правую половину сегмента именно у сдвинутых рядов
+    // (жалоба пользователя со скриншотом — обведён красным правый край
+    // дороги в вебе). Тот же класс бага, что уже чинили в портретной
+    // раскладке (там — вертикальный сдвиг, COLS+0.5 по высоте).
+    const segmentSize = Math.floor(Math.min(roadBudgetW / (COLS + 0.5), roadBudgetH / ROWS));
     const segmentW = segmentSize;
     const segmentH = segmentSize;
-
-    // Нечётные ряды в BoardGrid сдвинуты вправо на segmentW/2 (кирпичная кладка),
-    // поэтому их правый край дальше, чем у чётных — без запаса на пол-ячейки
-    // прокрутка упиралась в границу раньше, чем последняя колонка нечётных
-    // рядов успевала полностью появиться на экране (баг: обрезанный
-    // крайний правый фрагмент на нечётных дорожках).
-    const minOffset = -((TOTAL_COLS - COLS) * segmentW + segmentW / 2);
 
     return {
         orientation,
@@ -149,11 +153,10 @@ export function useBoardLayout() {
         leftPanelW,
         arrowBtnSize,
         switcherH,
-        roadContainerW: segmentW * COLS,   // ровно один фрагмент 8 колонок в ширину
+        roadContainerW: segmentW * COLS + segmentW / 2, // запас на кирпичный сдвиг, см. выше
         roadContainerH: segmentH * ROWS,   // все 6 дорожек по высоте, без обрезки
         segmentW,
         segmentH,
-        minOffset,
         rows: ROWS,
         cols: COLS,
         totalBlocks: TOTAL_BLOCKS,

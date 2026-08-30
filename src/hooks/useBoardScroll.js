@@ -1,144 +1,61 @@
 // src/hooks/useBoardScroll.js
-import { useCallback, useRef } from 'react';
-import { Animated, Easing, PanResponder, Platform } from 'react-native';
-import { useScrollAnimation } from './useScrollAnimation';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { BOARD_LAYOUT } from '../constants/GameConstants';
+
+const REPEAT_INTERVAL_MS = 250; // вдвое быстрее прежних 500мс, по прямому запросу пользователя
 
 /**
- * Единый интерфейс прокрутки поля вдоль оси скролла:
- * - веб — зажатие стрелки крутит с постоянной скоростью (useScrollAnimation);
- * - мобильные — палец тащит трек (PanResponder), а стрелки листают блоками
- *   по COLS ячеек (snapToBlock).
+ * Навигация по трассе — сетка (rows × cols, обычно 6×8) на экране физически
+ * никогда не двигается (см. BoardGrid.js), клетки в ней просто подменяются
+ * на соседний срез трассы. `windowStart` — глобальный индекс (0..TOTAL_COLS-
+ * cols) ЛЕВОГО/НИЖНЕГО края видимого окна в терминах cell.col (уже глобальный
+ * столбец, см. lib/board#flattenTrackSegments) — BoardGrid показывает cols
+ * подряд идущих столбцов начиная с него.
  *
- * `axis` ('x' | 'y') — вдоль какой оси экрана идёт скролл: 'x' в альбомной
- * раскладке (доска скроллится по горизонтали), 'y' в портретной (по
- * вертикали) — читает dy/vy жеста напрямую, БЕЗ инверсии: с BoardGrid'ом на
- * `column-reverse` (см. его шапку) знак offset'а для портрета положительный
- * (0=начало, minOffset>0=дальше по треку), и палец вниз естественно даёт
- * dy>0 → offset растёт → трасса открывается дальше — ровно то поведение,
- * которое подтвердил пользователь ("тянешь трассу к себе").
- *
- * `minOffset` может быть ОТРИЦАТЕЛЬНЫМ (альбомная раскладка, ось X) или
- * ПОЛОЖИТЕЛЬНЫМ (портретная, ось Y, см. useBoardLayout) — весь клэмпинг и
- * арифметика блоков ниже считают через `Math.sign(minOffset)`, а не жёстко
- * зашитый диапазон [minOffset, 0], чтобы не дублировать логику под два знака.
- *
- * Оба набора хуков (веб/мобильные) вызываются безусловно (Platform.OS не
- * меняется в течение жизни приложения, но условный вызов хуков всё равно
- * нарушает Rules of Hooks и был багом в прежней версии) — ветвится только то,
- * что возвращается наружу.
+ * До 2026-08-30 (второй заход) окно прыгало сразу на целый фрагмент (8
+ * колонок, blockIndex 0..2). По прямому запросу пользователя это заменено на
+ * посегментный шаг: одно нажатие — сдвиг ровно на 1 колонку; удержание —
+ * повтор каждые REPEAT_INTERVAL_MS (250мс, ускорено с исходных 500мс по
+ * следующему запросу пользователя в тот же день), пока палец/курсор не
+ * отпущен. Один и тот же механизм
+ * для обеих раскладок и платформ (onPressIn запускает немедленный первый шаг
+ * + интервал, onPressOut его останавливает) — раньше веб и мобильные вели
+ * себя по-разному (плавный скролл на вебе, snap-to-block на мобильных),
+ * посегментный шаг одинаково уместен везде, отдельные ветки не нужны.
  */
-export function useBoardScroll({ minOffset, segmentSize, cols, totalBlocks, axis = 'x', webScrollSpeed = 20 }) {
-    const isWeb = Platform.OS === 'web';
+export function useBoardScroll({ cols }) {
+    const maxStart = Math.max(0, BOARD_LAYOUT.TOTAL_COLS - cols);
+    const [windowStart, setWindowStart] = useState(0);
+    const intervalRef = useRef(null);
 
-    const webScroll = useScrollAnimation(minOffset, { scrollSpeed: webScrollSpeed });
+    const stopRepeat = useCallback(() => {
+        if (intervalRef.current) {
+            clearInterval(intervalRef.current);
+            intervalRef.current = null;
+        }
+    }, []);
 
-    const mobileOffset = useRef(new Animated.Value(0)).current;
-    const minOffsetRef = useRef(minOffset);
-    const segmentSizeRef = useRef(segmentSize);
-    const startOffsetRef = useRef(0);
-    const isAnimatingRef = useRef(false);
-
-    // Обновляем на каждый рендер, чтобы обработчики жестов видели актуальные
-    // границы/размеры без пересоздания PanResponder.
-    minOffsetRef.current = minOffset;
-    segmentSizeRef.current = segmentSize;
-
-    const delta = (gestureState) => (axis === 'y' ? gestureState.dy : gestureState.dx);
-    const velocity = (gestureState) => (axis === 'y' ? gestureState.vy : gestureState.vx);
-
-    // Диапазон допустимых значений offset'а — между 0 и minOffset, независимо
-    // от того, какой из них больше (знак minOffset зависит от оси, см. шапку).
-    const clamp = (v) => {
-        const m = minOffsetRef.current;
-        const lo = Math.min(0, m);
-        const hi = Math.max(0, m);
-        return Math.max(lo, Math.min(hi, v));
-    };
-
-    const panResponder = useRef(
-        PanResponder.create({
-            onStartShouldSetPanResponder: () => false,
-            onMoveShouldSetPanResponder: (_evt, gestureState) =>
-                !isAnimatingRef.current && Math.abs(delta(gestureState)) > 5,
-            onPanResponderGrant: () => {
-                startOffsetRef.current = mobileOffset._value;
-            },
-            onPanResponderMove: (_evt, gestureState) => {
-                mobileOffset.setValue(clamp(startOffsetRef.current + delta(gestureState)));
-            },
-            // Лёгкая инерция по скорости флика при отпускании — без снэпа к фрагментам,
-            // палец по-прежнему двигает трек свободно, просто отпускание не обрывает
-            // движение резко. Это грубая оценка "наката" по времени, а не физическая
-            // симуляция, но на ощупь ближе к обычному тачскролу.
-            onPanResponderRelease: (_evt, gestureState) => {
-                const v = velocity(gestureState);
-                if (Math.abs(v) < 0.15) return;
-
-                const target = clamp(mobileOffset._value + v * 180);
-
-                Animated.timing(mobileOffset, {
-                    toValue: target,
-                    duration: 280,
-                    easing: Easing.out(Easing.quad),
-                    useNativeDriver: true,
-                }).start();
-            },
-        }),
-    ).current;
-
-    const snapToBlock = useCallback(
-        (direction) => {
-            if (isAnimatingRef.current) return;
-
-            // dir: +1 если minOffset положительный (портрет/Y), -1 если
-            // отрицательный (альбомная/X, как было изначально) — переводит
-            // текущий offset в "магнитуду продвижения вперёд" (всегда >=0
-            // между 0 и |minOffset|), чтобы дальше считать блоки одной
-            // формулой независимо от знака.
-            const dir = minOffsetRef.current < 0 ? -1 : 1;
-            const currentForward = dir * mobileOffset._value;
-            const blockSize = cols * segmentSizeRef.current;
-            const quotient = Math.floor(currentForward / blockSize); // 0..totalBlocks-1
-
-            const targetBlockIndex =
-                direction === 'back' ? Math.max(0, quotient - 1) : Math.min(totalBlocks - 1, quotient + 1);
-
-            if (targetBlockIndex === quotient) return; // на границе — двигаться некуда
-
-            // Последний блок — не чистое кратное blockSize: minOffset уже включает
-            // запас на "кирпичный" сдвиг нечётных дорожек (см. useBoardLayout), иначе
-            // самая дальняя дорожка в последнем блоке не долистывалась до конца.
-            const targetOffset =
-                targetBlockIndex === totalBlocks - 1 ? minOffsetRef.current : dir * targetBlockIndex * blockSize;
-            isAnimatingRef.current = true;
-            Animated.timing(mobileOffset, {
-                toValue: targetOffset,
-                duration: 300,
-                easing: Easing.out(Easing.quad),
-                useNativeDriver: true,
-            }).start(() => {
-                isAnimatingRef.current = false;
-            });
+    const step = useCallback(
+        (dir) => {
+            setWindowStart((s) => Math.max(0, Math.min(maxStart, s + dir)));
         },
-        [cols, totalBlocks, mobileOffset],
+        [maxStart],
     );
 
-    if (isWeb) {
-        // useScrollAnimation.startScroll(direction): +1 = к дальнему концу
-        // (minOffset, т.е. forward), -1 = обратно к началу (0, т.е. back) —
-        // знак НЕ зависит от знака самого minOffset (сам хук разбирается).
-        return {
-            offset: webScroll.xOffset,
-            containerHandlers: {},
-            backButtonProps: { onPressIn: () => webScroll.startScroll(-1), onPressOut: webScroll.stopScroll },
-            forwardButtonProps: { onPressIn: () => webScroll.startScroll(1), onPressOut: webScroll.stopScroll },
-        };
-    }
+    const startRepeat = useCallback(
+        (dir) => {
+            stopRepeat();
+            step(dir); // немедленный первый шаг — одиночный тап тоже должен сдвинуть на 1
+            intervalRef.current = setInterval(() => step(dir), REPEAT_INTERVAL_MS);
+        },
+        [step, stopRepeat],
+    );
+
+    useEffect(() => () => stopRepeat(), [stopRepeat]);
 
     return {
-        offset: mobileOffset,
-        containerHandlers: panResponder.panHandlers,
-        backButtonProps: { onPress: () => snapToBlock('back') },
-        forwardButtonProps: { onPress: () => snapToBlock('forward') },
+        windowStart,
+        backButtonProps: { onPressIn: () => startRepeat(-1), onPressOut: stopRepeat },
+        forwardButtonProps: { onPressIn: () => startRepeat(1), onPressOut: stopRepeat },
     };
 }

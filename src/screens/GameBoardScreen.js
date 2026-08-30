@@ -26,7 +26,7 @@ import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import {
-    BOARD_LAYOUT, GAME_STATUS, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY, RUNNER_STATUS,
+    GAME_STATUS, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY, RUNNER_STATUS,
     RUNNER_TYPES,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
@@ -162,7 +162,6 @@ export default function GameBoardScreen({ route }) {
         roadContainerH,
         segmentW,
         segmentH,
-        minOffset,
         rows,
         cols,
         totalBlocks,
@@ -177,14 +176,7 @@ export default function GameBoardScreen({ route }) {
     // но оставить кнопки.
     const useMobileNavButtons = isPortrait && Platform.OS !== 'web';
 
-    const { offset, containerHandlers, backButtonProps, forwardButtonProps } = useBoardScroll({
-        minOffset,
-        segmentSize: isPortrait ? segmentH : segmentW,
-        axis: isPortrait ? 'y' : 'x',
-        cols,
-        totalBlocks,
-        webScrollSpeed: BOARD_LAYOUT.WEB_SCROLL_SPEED,
-    });
+    const { windowStart, backButtonProps, forwardButtonProps } = useBoardScroll({ cols });
 
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
@@ -615,10 +607,12 @@ export default function GameBoardScreen({ route }) {
                 />
             )}
 
-            {/* Портретная раскладка: доска сверху (скролл по Y, стрелки вверх/вниз),
-                панель игрока снизу с фиксированной высотой (panelH из useBoardLayout) —
-                см. BoardGrid про "снизу вверх" и useBoardLayout про геометрию.
-                Альбомная — как была: панель слева (см. выше), доска с боку. */}
+            {/* Портретная раскладка: доска сверху (статичная сетка, стрелки вверх/вниз
+                мгновенно сдвигают видимое окно на 1 сегмент/удержание — см.
+                useBoardScroll/BoardGrid), панель игрока снизу с фиксированной высотой
+                (panelH из useBoardLayout) — см. BoardGrid про "снизу вверх" и
+                useBoardLayout про геометрию. Альбомная — как была: панель слева
+                (см. выше), доска с боку. */}
             <View
                 style={[
                     isPortrait ? styles.roadZonePortrait : styles.roadZone,
@@ -628,11 +622,13 @@ export default function GameBoardScreen({ route }) {
                     isPortrait && { paddingTop: insets.top },
                 ]}
             >
-                {/* Портрет: у стрелок СВОЯ логика, ОБРАТНАЯ направлению свайпа
+                {/* Портрет: у стрелок СВОЯ логика, ОБРАТНАЯ направлению прежнего свайпа
                     (подтверждено пользователем явно) — "вверх" = дальше по треку,
                     "вниз" = назад к началу. В альбомной раскладке — как было:
-                    left=back, right=forward. Обе — дискретным прыжком на фрагмент
-                    (см. useBoardScroll.snapToBlock), не плавной прокруткой.
+                    left=back, right=forward. С 2026-08-30 обе — мгновенный посегментный
+                    сдвиг видимого окна (onPressIn: сразу шаг +повтор каждые 500мс, пока
+                    удержана; onPressOut: стоп — см. useBoardScroll), сетка на экране
+                    физически не двигается вообще (ни скролла, ни анимации позиции).
                     useMobileNavButtons: обе RoadNavButton (ассет пользователя,
                     анимация нажатия) стоят РЯДОМ в нижнем слоте, а не одна
                     сверху/одна снизу — по прямому запросу пользователя. Верхний
@@ -644,13 +640,26 @@ export default function GameBoardScreen({ route }) {
                     края экрана — без риска перекрыть реальную кнопку (её там
                     больше нет). */}
                 {useMobileNavButtons ? (
-                    <View style={{ width: arrowBtnSize, height: arrowBtnSize }} />
-                ) : (
+                    <View style={{ width: arrowBtnSize, height: arrowBtnSize, alignSelf: 'center' }} />
+                ) : isPortrait ? (
                     <ArrowButton
-                        direction={isPortrait ? 'up' : 'left'}
+                        direction="up"
                         size={arrowBtnSize}
-                        handlers={isPortrait ? forwardButtonProps : backButtonProps}
+                        handlers={forwardButtonProps}
+                        style={styles.selfCenter}
                     />
+                ) : (
+                    // Альбомная раскладка (веб) — обе кнопки одной колонкой слева от
+                    // дороги (не по краям, как раньше), чтобы отдать освободившуюся
+                    // ширину сетке (по запросу пользователя) — см. useBoardLayout,
+                    // roadBudgetW теперь резервирует один arrowBtnSize, не два.
+                    // RoadNavButton (ассет пользователя) вместо кружочной ArrowButton —
+                    // тоже по прямому запросу; left/right — те же up/down-ассеты,
+                    // повёрнутые на 90° (см. компонент).
+                    <View style={styles.navBtnColumn}>
+                        <RoadNavButton direction="right" size={arrowBtnSize} handlers={forwardButtonProps} />
+                        <RoadNavButton direction="left" size={arrowBtnSize} handlers={backButtonProps} />
+                    </View>
                 )}
 
                 <View style={styles.roadFrameWrap}>
@@ -661,9 +670,8 @@ export default function GameBoardScreen({ route }) {
                             cols={cols}
                             segmentW={segmentW}
                             segmentH={segmentH}
-                            offset={offset}
+                            windowStart={windowStart}
                             orientation={orientation}
-                            containerHandlers={containerHandlers}
                             containerWidth={roadContainerW}
                             containerHeight={roadContainerH}
                             runners={runners}
@@ -677,8 +685,9 @@ export default function GameBoardScreen({ route }) {
                         весь пустой верхний слот (arrowBtnSize, кнопки там больше
                         нет), плюс небольшой запас — так рамка реально доходит до
                         истинного верха экрана. Лево/право — чуть за край экрана.
-                        Низ — 0 (шов с панелью, там никакого bleed — иначе
-                        разъедутся и вернётся зазор). */}
+                        Низ — 0 (шов с панелью, теперь БЕЗ навигационных кнопок между
+                        зонами — рамки соприкасаются впритык, каждая остаётся отдельной
+                        рамкой со всеми 4 скруглёнными углами — НЕ сливаются в одну). */}
                     {useMobileNavButtons && (
                         <MobileFrameOverlay
                             borderDp={arrowBtnSize}
@@ -689,18 +698,23 @@ export default function GameBoardScreen({ route }) {
                             }}
                         />
                     )}
+                    {/* Кнопки навигации у этого блока БОЛЬШЕ НЕТ (до 2026-08-30, третий
+                        заход того же дня, они были отдельным View между roadFrameWrap и
+                        panelFrameWrap высотой arrowBtnSize — рамки не смыкались,
+                        оставалась голая полоса фона под кнопками). Убрав этот слот,
+                        roadFrameWrap (flex:1) сам забирает освободившуюся высоту —
+                        рамки теперь стоят вплотную без зазора. Кнопки (вместе с кнопкой
+                        лога) переехали в отдельный seamRow ниже — единый ряд,
+                        отцентрированный ровно НА стыке рамок (по запросу пользователя),
+                        а не внутри одной из них. */}
                 </View>
 
-                {useMobileNavButtons ? (
-                    <View style={styles.navBtnRow}>
-                        <RoadNavButton direction="up" size={arrowBtnSize} handlers={forwardButtonProps} />
-                        <RoadNavButton direction="down" size={arrowBtnSize} handlers={backButtonProps} />
-                    </View>
-                ) : (
+                {!useMobileNavButtons && isPortrait && (
                     <ArrowButton
-                        direction={isPortrait ? 'down' : 'right'}
+                        direction="down"
                         size={arrowBtnSize}
-                        handlers={isPortrait ? backButtonProps : forwardButtonProps}
+                        handlers={backButtonProps}
+                        style={styles.selfCenter}
                     />
                 )}
             </View>
@@ -728,7 +742,9 @@ export default function GameBoardScreen({ route }) {
                         headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
                     />
                     {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
-                        (шов с дорогой, см. комментарий у неё выше). */}
+                        (шов с дорогой, см. комментарий у неё выше) — рамки просто
+                        стоят вплотную без зазора, каждая остаётся отдельной рамкой
+                        со всеми 4 скруглёнными углами (НЕ сливаются в одну). */}
                     {useMobileNavButtons && (
                         <MobileFrameOverlay
                             borderDp={arrowBtnSize}
@@ -738,7 +754,29 @@ export default function GameBoardScreen({ route }) {
                 </View>
             )}
 
-            <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
+            {/* Единый ряд: стрелки вверх/вниз + кнопка лога, отцентрированный ровно НА
+                стыке рамок (дорога/панель) — половина ряда лежит на нижней кромке
+                дорожной рамки, половина на верхней кромке рамки панели. panelH
+                известна (панель — последний child фиксированной высоты в колонке,
+                прижат к самому низу wrapper), поэтому seam = panelH от низа экрана;
+                bottom ряда = panelH − arrowBtnSize/2 ставит ЦЕНТР ряда (row height
+                зафиксирована = arrowBtnSize) ровно на этот шов, независимо от
+                фактической высоты кнопки лога — она просто center'уется внутри той
+                же строки через alignItems. EventLogPanel в режиме position="seam"
+                рендерит только кнопку-тоггл инлайн (без своего абсолютного wrapper'а)
+                и раскрывающийся список — абсолютным дропдауном НАД собой. Только для
+                useMobileNavButtons (мобильная рамка) — на вебе/альбомной раскладке
+                лог остаётся в прежнем углу (position ниже), кнопки — прежние
+                ArrowButton в потоке. */}
+            {useMobileNavButtons ? (
+                <View style={[styles.seamRow, { bottom: panelH - arrowBtnSize / 2, height: arrowBtnSize }]}>
+                    <RoadNavButton direction="up" size={arrowBtnSize} handlers={forwardButtonProps} />
+                    <RoadNavButton direction="down" size={arrowBtnSize} handlers={backButtonProps} />
+                    <EventLogPanel entries={eventLog} position="seam" />
+                </View>
+            ) : (
+                <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
+            )}
         </View>
     );
 }
@@ -766,11 +804,36 @@ const styles = StyleSheet.create({
     // PlayerInfoPanel через её проп height, как и раньше).
     roadFrameWrap: { flex: 1, position: 'relative' },
     panelFrameWrap: { position: 'relative' },
-    // Обе кнопки навигации рядом в нижнем слоте (см. useMobileNavButtons) —
-    // по прямому запросу пользователя, вместо одной сверху/одной снизу.
-    navBtnRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'center' },
+    // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
+    // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому
+    // left+right без width, а не flex. zIndex/elevation выше рамок (10) и
+    // выше EventLogPanel-плашек в остальных режимах (25), чтобы кнопки и
+    // тоггл лога были кликабельны и видны поверх текстуры рамок.
+    seamRow: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: spacing.md,
+        zIndex: 30,
+        elevation: 30,
+    },
     roadZone: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    roadZonePortrait: { flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' },
+    // БЕЗ alignItems:'center' (было раньше) — roadFrameWrap должен СТРЕТЧИТЬСЯ на
+    // всю ширину (иначе рамка вокруг дороги сжималась бы до ширины самой сетки,
+    // когда сегмент ограничен высотой, а не шириной, см. useBoardLayout — рамка
+    // не доставала бы до боковых краёв экрана). Верхний спейсер/ArrowButton внутри
+    // всё равно имеют явный width, стретч на них не влияет.
+    roadZonePortrait: { flex: 1, flexDirection: 'column', justifyContent: 'space-between' },
+    // roadZonePortrait больше не центрирует детей по кросс-оси (см. выше) — этим
+    // двум ArrowButton (веб-портрет, useMobileNavButtons=false) нужно вернуть
+    // центрирование персонально, иначе они прилипнут к левому краю экрана.
+    selfCenter: { alignSelf: 'center' },
+    // Альбомная раскладка (веб) — обе кнопки навигации одной колонкой слева
+    // от дороги (см. комментарий в JSX и useBoardLayout.roadBudgetW).
+    navBtnColumn: { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: spacing.md },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
     collisionBanner: {

@@ -12,13 +12,19 @@ import { colors, font, radius, spacing } from '../../theme';
  *
  * `position` — 'bottom-right' (по умолчанию, альбомная раскладка): плашка в
  * правом нижнем углу, разворачивается ВВЕРХ (панель растёт от кнопки).
- * 'top' (портретная раскладка, по запросу пользователя — "под батарейкой
- * заряда телефона"): плашка сверху экрана, разворачивается ВНИЗ.
+ * 'top' (портретная раскладка на вебе/без мобильной рамки): плашка сверху
+ * экрана, разворачивается ВНИЗ. 'seam' (мобильная рамка, портрет) — тоггл
+ * рендерится БЕЗ своего абсолютного wrapper'а (никакого position:absolute
+ * на себе, обычный inline-элемент) — вызывающий код (GameBoardScreen)
+ * кладёт его инлайн в общий ряд с кнопками навигации, отцентрированный на
+ * стыке рамок; список при открытии — абсолютный дропдаун НАД тогглом
+ * (`bottom:'100%'`), не раздувает высоту самого ряда.
  */
 export default function EventLogPanel({ entries, position = 'bottom-right' }) {
     const [open, setOpen] = useState(false);
     const scrollRef = useRef(null);
     const isTop = position === 'top';
+    const isSeam = position === 'seam';
     // GameBoardScreen сознательно без SafeAreaView (см. его шапку) — без
     // этого top:spacing.md рисовал плашку ПОД статус-баром/чёлкой телефона
     // (жалоба пользователя — лог наезжал туда же, где часы). insets.top уже
@@ -38,7 +44,7 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
     const list = open && (
         <ScrollView
             ref={scrollRef}
-            style={[styles.panel, isTop ? styles.panelTop : styles.panelBottom]}
+            style={[styles.panel, isSeam ? null : isTop ? styles.panelTop : styles.panelBottom]}
             contentContainerStyle={styles.panelContent}
         >
             {entries.length === 0 ? (
@@ -52,6 +58,15 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
             )}
         </ScrollView>
     );
+
+    if (isSeam) {
+        return (
+            <View style={styles.seamWrapper} pointerEvents="box-none">
+                {list && <View style={styles.seamListWrap}>{list}</View>}
+                {toggle}
+            </View>
+        );
+    }
 
     return (
         <View
@@ -86,6 +101,20 @@ const styles = StyleSheet.create({
     wrapperTop: {
         position: 'absolute', left: spacing.md, zIndex: 25, elevation: 25,
         alignItems: 'flex-start',
+    },
+    // 'seam' — БЕЗ position:'absolute' на себе: это обычный inline-элемент,
+    // кладётся вызывающим кодом в свой собственный flex-ряд (GameBoardScreen,
+    // seamRow). position:'relative' тут только чтобы список (seamListWrap)
+    // мог позиционироваться АБСОЛЮТНО относительно тоггла, не влияя на высоту
+    // ряда, в котором он лежит.
+    seamWrapper: { position: 'relative', alignItems: 'center' },
+    // bottom:'100%' — сразу над тогглом, поверх дорожной сетки. left:'50%' +
+    // translateX(-150) — центрирует фиксированную ширину панели (300, см.
+    // ниже) под тогглом независимо от его собственной ширины (та зависит от
+    // текста и не известна заранее без onLayout).
+    seamListWrap: {
+        position: 'absolute', bottom: '100%', left: '50%',
+        transform: [{ translateX: -150 }], marginBottom: spacing.xs,
     },
     toggle: {
         backgroundColor: colors.bgLight, borderRadius: radius.pill,
