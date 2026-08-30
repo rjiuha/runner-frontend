@@ -39,6 +39,22 @@ export function pickSegmentImage(type, cellId) {
 }
 
 /**
+ * Тип "подложки" под клетки danger/anomaly/mud/wall — по прямому запросу
+ * пользователя, 2026-08-30/31: под danger, anomaly и wall (стена — тоже
+ * препятствие НА дороге, та же логика) кладём road, под mud (грязь/dirt) —
+ * случайный (детерминированно по id клетки, как и сам pickSegmentImage) sand.
+ * Остальные типы (road/sand) без подложки — это они сами и есть "земля",
+ * класть под них ещё один слой нечего.
+ */
+const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', wall: 'road', mud: 'sand' };
+
+/** Картинка подложки для типа клетки, или null если подложка не нужна (см. BASE_IMAGE_TYPE). */
+export function pickBaseImage(type, cellId) {
+    const baseType = BASE_IMAGE_TYPE[type];
+    return baseType ? pickSegmentImage(baseType, cellId) : null;
+}
+
+/**
  * Разворачивает 3 фрагмента трассы (trackBegin/trackMiddle/trackEnd — форма
  * {name, grid}, см. RunnerGame::toArray() на бэке) в плоский список ячеек для
  * BoardGrid. Сетка на бэке — grid[X][Y]: X (0..cols-1) — позиция вперёд по
@@ -65,6 +81,7 @@ export function flattenTrackSegments(segments, rows, cols) {
                     rawType,
                     type,
                     image: pickSegmentImage(type, id),
+                    baseImage: pickBaseImage(type, id),
                 });
             }
         }

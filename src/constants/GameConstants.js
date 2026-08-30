@@ -212,6 +212,20 @@ export const SEGMENT_IMAGES = Platform.OS === 'web' ? SEGMENT_IMAGES_WEB : SEGME
 export const HIGHLIGHT_COLOR = colors.success;
 
 /**
+ * Прозрачность картинки типа клетки (BoardGrid) — road/sand непрозрачны (по
+ * более раннему запросу, не просвечивают заливку подсветки под собой).
+ * danger/anomaly/mud — по прямому запросу пользователя, 2026-08-31, сделаны
+ * ещё прозрачнее (0.9→0.75, потом ещё →0.65 — суммарно на 25 процентных
+ * пунктов), чтобы сквозь них было лучше видно подложку (см.
+ * lib/board#pickBaseImage — road под danger/anomaly, sand под mud). wall —
+ * тем же запросом переведён на ту же обработку (0.9→0.65 + подложка road).
+ */
+export const CELL_OPACITY = {
+  road: 1, sand: 1,
+  danger: 0.65, anomaly: 0.65, mud: 0.65, wall: 0.65,
+};
+
+/**
  * Цвета для визуального различения 3 фрагментов трассы (см.
  * FragmentLabelStrip и BoardGrid#fragmentBoundaryLine, 2026-08-30). Первая
  * версия нарочно избегала danger/success/warning (уже заняты жетонами

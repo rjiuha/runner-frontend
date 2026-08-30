@@ -1,7 +1,7 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { BOARD_LAYOUT, FRAGMENT_COLORS, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
+import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
 
@@ -221,6 +221,28 @@ export default function BoardGrid({
                                         style={{ width: segmentW, height: segmentH }}
                                         activeOpacity={0.75}
                                     >
+                                        {cell.baseImage && (
+                                            // Подложка (road под danger/anomaly, sand под mud, см.
+                                            // lib/board#pickBaseImage) — во весь слот, БЕЗ инсета и
+                                            // БЕЗ уменьшенной прозрачности (это "земля", она всегда
+                                            // непрозрачна) — сама клетка (danger/anomaly/mud, см. ниже)
+                                            // рисуется поверх с меньшей opacity, поэтому подложка
+                                            // просвечивает сквозь неё.
+                                            <Image
+                                                source={cell.baseImage}
+                                                style={{
+                                                    position: 'absolute',
+                                                    left: 0,
+                                                    top: 0,
+                                                    width: segmentW,
+                                                    height: segmentH,
+                                                    resizeMode: 'stretch',
+                                                    // baseImage — всегда road или sand (см. BASE_IMAGE_TYPE),
+                                                    // оба входят в ROTATE_TYPES — доп. проверка не нужна.
+                                                    ...(rotateEligible ? { transform: [{ rotate: '90deg' }] } : null),
+                                                }}
+                                            />
+                                        )}
                                         {highlighted && (
                                             <View
                                                 style={{
@@ -245,11 +267,12 @@ export default function BoardGrid({
                                                 width: segmentW * (1 - SEGMENT_INSET),
                                                 height: segmentH * (1 - SEGMENT_INSET),
                                                 resizeMode: 'stretch',
-                                                // road/sand — по запросу пользователя непрозрачные
-                                                // (не просвечивают подсветку под собой); у остальных
-                                                // типов лёгкая прозрачность оставлена (заливка
-                                                // подсветки должна быть видна по краю).
-                                                opacity: cell.type === 'road' || cell.type === 'sand' ? 1 : 0.9,
+                                                // road/sand непрозрачны (не просвечивают подсветку под
+                                                // собой); wall — лёгкая прозрачность (заливка подсветки
+                                                // видна по краю); danger/anomaly/mud — ещё прозрачнее
+                                                // (по прямому запросу пользователя, чтобы сквозь них было
+                                                // видно baseImage-подложку выше), см. CELL_OPACITY.
+                                                opacity: CELL_OPACITY[cell.type] ?? 0.9,
                                                 ...(rotateEligible && ROTATE_TYPES.has(cell.type)
                                                     ? { transform: [{ rotate: '90deg' }] }
                                                     : null),
