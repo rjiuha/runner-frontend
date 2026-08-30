@@ -1,7 +1,7 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { HIGHLIGHT_COLOR } from '../../constants/GameConstants';
+import { BOARD_LAYOUT, FRAGMENT_COLORS, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
 
@@ -48,6 +48,10 @@ import RunnerToken from './RunnerToken';
 // в этом зазоре.
 const SEGMENT_INSET = 0.06;
 const HIGHLIGHT_BORDER_WIDTH = 1.5;
+// Линия-подсветка стыка фрагментов (см. рендер ниже) — по прямому запросу
+// пользователя, 2026-08-30, тот же цвет, что FragmentLabelStrip использует
+// для полосы этого фрагмента (FRAGMENT_COLORS[blockIndex]).
+const FRAGMENT_BOUNDARY_LINE_PX = 3;
 
 export default function BoardGrid({
     gridData,
@@ -104,6 +108,86 @@ export default function BoardGrid({
         }
         return items;
     }, [runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait]);
+
+    // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
+    // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
+    // 2026-08-30) — на каждой дорожке рисуем сам стык (горизонтальный отрезок
+    // в портрете, вертикальный в альбомной), ПЛЮС отрезок-перемычку до
+    // соседней дорожки, компенсирующий кирпичный сдвиг между ними
+    // (segmentH/2 в портрете, segmentW/2 в альбомной — тот же сдвиг, что даёт
+    // laneIdx%2 marginTop/marginLeft у самих ячеек). Координаты считаются той
+    // же формулой, что и у tokenOverlay выше (там уже проверено, что она
+    // совпадает с реальной раскладкой ячеек) — здесь просто взят НИЖНИЙ край
+    // (портрет) / ЛЕВЫЙ край (альбомная) клетки, с которой начинается
+    // фрагмент, вместо центра клетки.
+    const fragmentBoundarySegments = useMemo(() => {
+        const half = FRAGMENT_BOUNDARY_LINE_PX / 2;
+        const segments = [];
+        const numFragments = Math.round(BOARD_LAYOUT.TOTAL_COLS / BOARD_LAYOUT.COLS);
+        for (let f = 1; f < numFragments; f++) {
+            const boundaryCol = f * BOARD_LAYOUT.COLS;
+            const localCol = boundaryCol - windowStart;
+            if (localCol < 0 || localCol >= cols) continue; // стык сейчас не в видимом окне
+            const color = FRAGMENT_COLORS[f % FRAGMENT_COLORS.length];
+
+            if (isPortrait) {
+                // Нижний край клетки localCol в дорожке lane — та же формула, что
+                // у tokenOverlay.y (верх клетки), + segmentH.
+                const edgeY = (lane) =>
+                    (cols - 1 - localCol) * segmentH + (lane % 2 !== 0 ? segmentH / 2 : 0) + segmentH;
+                for (let lane = 0; lane < rows; lane++) {
+                    const y = edgeY(lane);
+                    segments.push({
+                        key: `h-${f}-${lane}`,
+                        style: {
+                            left: lane * segmentW, top: y - half,
+                            width: segmentW, height: FRAGMENT_BOUNDARY_LINE_PX,
+                            backgroundColor: color,
+                        },
+                    });
+                    if (lane < rows - 1) {
+                        const yNext = edgeY(lane + 1);
+                        segments.push({
+                            key: `v-${f}-${lane}`,
+                            style: {
+                                left: (lane + 1) * segmentW - half, top: Math.min(y, yNext) - half,
+                                width: FRAGMENT_BOUNDARY_LINE_PX, height: Math.abs(yNext - y) + FRAGMENT_BOUNDARY_LINE_PX,
+                                backgroundColor: color,
+                            },
+                        });
+                    }
+                }
+            } else {
+                // Левый край клетки localCol в дорожке lane — та же формула, что
+                // у tokenOverlay.x (альбомная ветка не реверснута, левый край и
+                // так граничит с предыдущей клеткой, доп. смещения не нужно).
+                const edgeX = (lane) => localCol * segmentW + (lane % 2 !== 0 ? segmentW / 2 : 0);
+                for (let lane = 0; lane < rows; lane++) {
+                    const x = edgeX(lane);
+                    segments.push({
+                        key: `v-${f}-${lane}`,
+                        style: {
+                            left: x - half, top: lane * segmentH,
+                            width: FRAGMENT_BOUNDARY_LINE_PX, height: segmentH,
+                            backgroundColor: color,
+                        },
+                    });
+                    if (lane < rows - 1) {
+                        const xNext = edgeX(lane + 1);
+                        segments.push({
+                            key: `h-${f}-${lane}`,
+                            style: {
+                                left: Math.min(x, xNext) - half, top: (lane + 1) * segmentH - half,
+                                width: Math.abs(xNext - x) + FRAGMENT_BOUNDARY_LINE_PX, height: FRAGMENT_BOUNDARY_LINE_PX,
+                                backgroundColor: color,
+                            },
+                        });
+                    }
+                }
+            }
+        }
+        return segments;
+    }, [windowStart, cols, rows, segmentW, segmentH, isPortrait]);
 
     return (
         <View
@@ -206,6 +290,20 @@ export default function BoardGrid({
                         </View>
                     ))}
                 </View>
+
+                <View
+                    style={[
+                        styles.fragmentBoundaryLayer,
+                        isPortrait
+                            ? { width: rows * segmentW, height: cols * segmentH }
+                            : { width: cols * segmentW, height: rows * segmentH },
+                    ]}
+                    pointerEvents="none"
+                >
+                    {fragmentBoundarySegments.map((seg) => (
+                        <View key={seg.key} style={[styles.fragmentBoundarySegment, seg.style]} />
+                    ))}
+                </View>
             </View>
         </View>
     );
@@ -229,6 +327,12 @@ const styles = StyleSheet.create({
     // Один слой на весь текущий блок — см. комментарий в JSX про то, почему
     // токены больше не вложены в ячейки.
     tokenOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 2, elevation: 2 },
+    // Слой линии-стыка фрагментов (см. fragmentBoundarySegments) — НАД
+    // токенами (zIndex выше tokenOverlayLayer), та же защита от Android
+    // view-flattening (см. CLAUDE.md, пятый заход), что и у остальных
+    // абсолютных слоёв этого компонента.
+    fragmentBoundaryLayer: { position: 'absolute', top: 0, left: 0, zIndex: 4, elevation: 4 },
+    fragmentBoundarySegment: { position: 'absolute' },
     tokenLayer: {
         position: 'absolute',
         alignItems: 'center',

@@ -9,6 +9,7 @@ import RoadNavButton from '../components/game/RoadNavButton';
 import MobileFrameOverlay from '../components/game/MobileFrameOverlay';
 import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
+import FragmentLabelStrip from '../components/game/FragmentLabelStrip';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
 import GameWaitingRoom from '../components/game/GameWaitingRoom';
 import EventLogPanel from '../components/game/EventLogPanel';
@@ -19,15 +20,15 @@ import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
-import { flattenTrackSegments } from '../lib/board';
+import { flattenTrackSegments, computeFragmentBands } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import {
-    GAME_STATUS, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY, RUNNER_STATUS,
-    RUNNER_TYPES,
+    GAME_STATUS, MOBILE_FRAME_BLEED, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY,
+    RUNNER_STATUS, RUNNER_TYPES,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
 
@@ -41,11 +42,6 @@ const STATUS_LABEL = {
 // Через сколько показать кнопку ручного рефетча, если игрок-цель зависшей
 // коллизии (game.extraTurnPlayer) долго не отвечает — бэк это сам не разруливает.
 const COLLISION_STUCK_TIMEOUT = 18000;
-
-// Насколько мобильная рамка (MobileFrameOverlay) выступает за истинные внешние
-// края экрана (лево/право у обеих зон, низ у панели) — по прямому запросу
-// пользователя, чтобы скруглённый угол не был виден отдельно от края экрана.
-const MOBILE_FRAME_BLEED = 10;
 
 const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
 const SEGMENT_KEYS = ['trackBegin', 'trackMiddle', 'trackEnd'];
@@ -158,12 +154,14 @@ export default function GameBoardScreen({ route }) {
         panelH,
         arrowBtnSize,
         switcherH,
+        labelStripW,
         roadContainerW,
         roadContainerH,
         segmentW,
         segmentH,
         rows,
         cols,
+        viewportCols,
         totalBlocks,
     } = useBoardLayout();
     const isPortrait = orientation === 'portrait';
@@ -176,7 +174,7 @@ export default function GameBoardScreen({ route }) {
     // но оставить кнопки.
     const useMobileNavButtons = isPortrait && Platform.OS !== 'web';
 
-    const { windowStart, backButtonProps, forwardButtonProps } = useBoardScroll({ cols });
+    const { windowStart, backButtonProps, forwardButtonProps } = useBoardScroll({ cols: viewportCols });
 
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
@@ -277,6 +275,17 @@ export default function GameBoardScreen({ route }) {
     const gridData = useMemo(
         () => flattenTrackSegments([game?.trackBegin, game?.trackMiddle, game?.trackEnd], rows, cols),
         [game?.trackBegin, game?.trackMiddle, game?.trackEnd, rows, cols],
+    );
+
+    // Имена 3 фрагментов трассы (карт) для FragmentLabelStrip — портретная
+    // раскладка, полоса слева от доски (см. useBoardLayout.labelStripW).
+    const segmentNames = useMemo(
+        () => [game?.trackBegin?.name, game?.trackMiddle?.name, game?.trackEnd?.name],
+        [game?.trackBegin?.name, game?.trackMiddle?.name, game?.trackEnd?.name],
+    );
+    const fragmentBands = useMemo(
+        () => computeFragmentBands(windowStart, viewportCols, cols, segmentNames),
+        [windowStart, viewportCols, cols, segmentNames],
     );
 
     // Легальные клетки для тапа прямо сейчас — зависит от того, какой шаг идёт.
@@ -632,16 +641,17 @@ export default function GameBoardScreen({ route }) {
                     useMobileNavButtons: обе RoadNavButton (ассет пользователя,
                     анимация нажатия) стоят РЯДОМ в нижнем слоте, а не одна
                     сверху/одна снизу — по прямому запросу пользователя. Верхний
-                    слот при этом остаётся ПУСТЫМ распорным View той же высоты
-                    (arrowBtnSize) — geometry в useBoardLayout по-прежнему
-                    резервирует под него место (не трогали), просто там ничего
-                    не рисуется, и рамка (bleed.top ниже) спокойно перекрывает
-                    этот пустой слот на всю его высоту, дотягиваясь до истинного
-                    края экрана — без риска перекрыть реальную кнопку (её там
-                    больше нет). */}
-                {useMobileNavButtons ? (
-                    <View style={{ width: arrowBtnSize, height: arrowBtnSize, alignSelf: 'center' }} />
-                ) : isPortrait ? (
+                    слот раньше оставался ПУСТЫМ распорным View той же высоты
+                    (arrowBtnSize) — кнопки там больше нет, а useBoardLayout
+                    по-прежнему резервировал под него бюджет высоты, из-за чего
+                    над доской оставалась настоящая пустая полоса (жалоба
+                    пользователя, 2026-08-30). Слот убран совсем (рендерим
+                    null) — useBoardLayout для mobileNav-случая теперь не
+                    вычитает этот резерв вообще (см. reservedArrowsH там),
+                    высота уходит доске. paddingTop:insets.top на
+                    roadZonePortrait по-прежнему даёт клиренс под статус-бар/
+                    вырез, bleed.top ниже подправлен под убранный слот. */}
+                {useMobileNavButtons ? null : isPortrait ? (
                     <ArrowButton
                         direction="up"
                         size={arrowBtnSize}
@@ -664,35 +674,66 @@ export default function GameBoardScreen({ route }) {
 
                 <View style={styles.roadFrameWrap}>
                     <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
-                        <BoardGrid
-                            gridData={gridData}
-                            rows={rows}
-                            cols={cols}
-                            segmentW={segmentW}
-                            segmentH={segmentH}
-                            windowStart={windowStart}
-                            orientation={orientation}
-                            containerWidth={roadContainerW}
-                            containerHeight={roadContainerH}
-                            runners={runners}
-                            playerColorById={playerColorById}
-                            selectedRunnerId={activeRunner?.id ?? null}
-                            highlightedCells={highlightedCells}
-                            onCellPress={handleCellPress}
-                        />
+                        {isPortrait ? (
+                            // Полоса с именем фрагмента(ов) слева от сетки — доступна только
+                            // в портретной раскладке, где под неё зарезервирована ширина
+                            // (labelStripW, см. useBoardLayout) вместо того, чтобы центрировать
+                            // сетку и оставлять пустые поля по бокам.
+                            <View style={styles.roadRowPortrait}>
+                                <FragmentLabelStrip
+                                    bands={fragmentBands}
+                                    width={labelStripW}
+                                    segmentSize={segmentH}
+                                    totalHeight={roadContainerH}
+                                />
+                                <BoardGrid
+                                    gridData={gridData}
+                                    rows={rows}
+                                    cols={viewportCols}
+                                    segmentW={segmentW}
+                                    segmentH={segmentH}
+                                    windowStart={windowStart}
+                                    orientation={orientation}
+                                    containerWidth={roadContainerW}
+                                    containerHeight={roadContainerH}
+                                    runners={runners}
+                                    playerColorById={playerColorById}
+                                    selectedRunnerId={activeRunner?.id ?? null}
+                                    highlightedCells={highlightedCells}
+                                    onCellPress={handleCellPress}
+                                />
+                            </View>
+                        ) : (
+                            <BoardGrid
+                                gridData={gridData}
+                                rows={rows}
+                                cols={viewportCols}
+                                segmentW={segmentW}
+                                segmentH={segmentH}
+                                windowStart={windowStart}
+                                orientation={orientation}
+                                containerWidth={roadContainerW}
+                                containerHeight={roadContainerH}
+                                runners={runners}
+                                playerColorById={playerColorById}
+                                selectedRunnerId={activeRunner?.id ?? null}
+                                highlightedCells={highlightedCells}
+                                onCellPress={handleCellPress}
+                            />
+                        )}
                     </RoadArea>
-                    {/* bleed.top закрывает И вырез/статус-бар (insets.top), И
-                        весь пустой верхний слот (arrowBtnSize, кнопки там больше
-                        нет), плюс небольшой запас — так рамка реально доходит до
-                        истинного верха экрана. Лево/право — чуть за край экрана.
-                        Низ — 0 (шов с панелью, теперь БЕЗ навигационных кнопок между
-                        зонами — рамки соприкасаются впритык, каждая остаётся отдельной
-                        рамкой со всеми 4 скруглёнными углами — НЕ сливаются в одну). */}
+                    {/* bleed.top закрывает И вырез/статус-бар (insets.top), плюс
+                        небольшой запас — так рамка реально доходит до истинного верха
+                        экрана. Раньше добавлялся ещё +arrowBtnSize (под пустой верхний
+                        слот) — слота больше нет (см. комментарий выше), убрано отсюда
+                        тоже. Лево/право — чуть за край экрана. Низ — 0 (шов с панелью,
+                        рамки соприкасаются впритык, каждая остаётся отдельной рамкой со
+                        всеми 4 скруглёнными углами — НЕ сливаются в одну). */}
                     {useMobileNavButtons && (
                         <MobileFrameOverlay
                             borderDp={arrowBtnSize}
                             bleed={{
-                                top: insets.top + arrowBtnSize + MOBILE_FRAME_BLEED,
+                                top: insets.top + MOBILE_FRAME_BLEED,
                                 left: MOBILE_FRAME_BLEED,
                                 right: MOBILE_FRAME_BLEED,
                             }}
@@ -803,6 +844,10 @@ const styles = StyleSheet.create({
     // RoadArea напрямую); panelFrameWrap — без flex (высота идёт от
     // PlayerInfoPanel через её проп height, как и раньше).
     roadFrameWrap: { flex: 1, position: 'relative' },
+    // Полоса имени фрагмента (FragmentLabelStrip) + сетка, бок о бок — портретная
+    // раскладка. Обе имеют явную height=roadContainerH (см. JSX), выравнивать
+    // по кросс-оси дополнительно не нужно.
+    roadRowPortrait: { flexDirection: 'row' },
     panelFrameWrap: { position: 'relative' },
     // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
     // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому

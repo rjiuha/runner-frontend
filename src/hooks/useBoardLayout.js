@@ -1,7 +1,7 @@
 // src/hooks/useBoardLayout.js
-import { useWindowDimensions } from 'react-native';
+import { Platform, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { BOARD_LAYOUT, LAYOUT } from '../constants/GameConstants';
+import { BOARD_LAYOUT, LAYOUT, MOBILE_FRAME_BLEED } from '../constants/GameConstants';
 
 /** Отступ, который GameBoardScreen передаёт в RoadArea (spacing). Держим в одном месте,
  *  чтобы геометрия сетки и реальный визуальный отступ никогда не разъезжались. */
@@ -24,7 +24,7 @@ export const ROAD_AREA_SPACING = 12;
 export function useBoardLayout() {
     const { width: screenW, height: screenH } = useWindowDimensions();
     const insets = useSafeAreaInsets();
-    const { ROWS, COLS, TOTAL_BLOCKS } = BOARD_LAYOUT;
+    const { ROWS, COLS, TOTAL_BLOCKS, TOTAL_COLS } = BOARD_LAYOUT;
     const orientation = screenH >= screenW ? 'portrait' : 'landscape';
 
     if (orientation === 'portrait') {
@@ -45,42 +45,80 @@ export function useBoardLayout() {
         // полоска) физически нужно немного места, ниже уже обрежет текст.
         const switcherH = Math.max(36, Math.floor(panelH * 0.09));
 
+        // Полоса слева от доски с именем текущего(их) фрагмента(ов) трассы (см.
+        // FragmentLabelStrip/GameBoardScreen) — по прямому запросу пользователя
+        // 2026-08-30: вместо того чтобы центрировать сетку и оставлять пустой
+        // зазор по бокам (когда высота — лимитирующая ось, см. ниже), зазор
+        // отдаётся под полезную полосу с текстом.
+        const labelStripW = Math.max(22, Math.floor(screenW * 0.06));
+
+        // mobileNav — то же условие, что GameBoardScreen.useMobileNavButtons
+        // (портрет+native): там верхняя/нижняя стрелка не рисуются в потоке
+        // вообще (кнопки — в абсолютном seamRow на стыке рамок, см. экран),
+        // поэтому для этого случая НЕ нужно резервировать под них никакой
+        // высоты. Раньше боджет всегда вычитал arrowBtnSize*2 (место под
+        // верхнюю И нижнюю кнопку), даже когда в потоке реально стояла только
+        // одна пустая распорка (верхняя) — то самое "невидимое место сверху",
+        // которое заметил пользователь. Веб-портрет по-прежнему рисует обе
+        // ArrowButton в потоке (см. GameBoardScreen) — там резерв нужен как и
+        // раньше.
+        const mobileNav = Platform.OS !== 'web';
+        const reservedArrowsH = mobileNav ? 0 : arrowBtnSize * 2;
+
         // insets.top — GameBoardScreen без SafeAreaView (см. его шапку), сам
         // добавляет paddingTop:insets.top на roadZonePortrait, чтобы верхняя
-        // стрелка не рисовалась под статус-баром/вырезом камеры; здесь тот же
-        // отступ нужно вычесть из бюджета, иначе геометрия (roadContainerH)
-        // окажется больше реально доступного места и низ доски вылезет за
-        // пределы зоны.
-        const boardBudgetW = Math.max(0, screenW - ROAD_AREA_SPACING * 2);
-        const boardBudgetH = Math.max(0, screenH - panelH - arrowBtnSize * 2 - ROAD_AREA_SPACING * 2 - insets.top);
+        // стрелка/сетка не рисовалась под статус-баром/вырезом камеры; здесь
+        // тот же отступ нужно вычесть из бюджета, иначе геометрия
+        // (roadContainerH) окажется больше реально доступного места и низ
+        // доски вылезет за пределы зоны.
+        // Мобильная sci-fi рамка (MobileFrameOverlay, только mobileNav-случай)
+        // рисует декоративную кайму толщиной arrowBtnSize (borderDp), выступающую
+        // НАРУЖУ за истинный правый край экрана на MOBILE_FRAME_BLEED (см.
+        // GameBoardScreen — bleed.right) — значит её ВНУТРЕННИЙ край (там, где
+        // кайма начинает перекрывать контент) находится на (arrowBtnSize -
+        // MOBILE_FRAME_BLEED) px от истинного края, а не на 0. Без этой поправки
+        // сетка считалась вплотную до ROAD_AREA_SPACING от края — декоративная
+        // кайма рамки перекрывала/пряталa под собой правый столбец клеток
+        // (жалоба пользователя, 2026-08-30: "дорога уходит за рамку"). Резерв
+        // нужен только там, где рамка вообще рисуется (mobileNav); веб-портрет
+        // её не рисует.
+        const frameEdgeClearance = mobileNav
+            ? Math.max(0, arrowBtnSize - MOBILE_FRAME_BLEED - ROAD_AREA_SPACING)
+            : 0;
+        const boardBudgetW = Math.max(0, screenW - ROAD_AREA_SPACING * 2 - labelStripW - frameEdgeClearance);
+        const boardBudgetH = Math.max(0, screenH - panelH - reservedArrowsH - ROAD_AREA_SPACING * 2 - insets.top);
 
-        // Раньше segmentSize считался ТОЛЬКО от ширины (boardBudgetW/ROWS) — на узких
-        // экранах (Android) это давало клетки крупнее, чем реально помещается по
-        // высоте: BoardGrid.laneColumn сдвигает нечётные дорожки на segmentH/2 вниз
-        // (кирпичная кладка, см. BoardGrid.js), поэтому реальная требуемая высота
-        // контента — не COLS*segmentH, а COLS*segmentH + segmentH/2 (запас на этот
-        // сдвиг). Если контейнер (roadContainerH) короче этого — BoardGrid обрезает
-        // (`overflow:'hidden'`) верх сдвинутых дорожек ровно на недостающую половину
-        // сегмента (жалоба пользователя: "у дорог, смещённых вперёд, половина
-        // сегмента не отображается", подтверждено на Android И вебе одновременно —
-        // не платформенный баг, а геометрия). Теперь segmentSize — MIN по обеим осям
-        // (тот же приём, что уже работает в альбомной раскладке ниже): по ширине —
-        // COLS не считаем тут, по высоте — ДЕЛИМ НЕ НА COLS, А НА COLS+0.5, чтобы сразу
-        // заложить место под кирпичный запас. Гарантирует нулевую обрезку на любом
-        // экране — там, где вертикального места much больше (см. живой прогон в вебе),
-        // limiting-фактором становится ширина, и клетки просто крупнее.
-        const segmentSize = Math.floor(Math.min(boardBudgetW / ROWS, boardBudgetH / (COLS + 0.5)));
+        // Клетки — квадратные, размер теперь считается ТОЛЬКО от ширины (не
+        // min(ширина,высота), как раньше) — по прямому запросу пользователя:
+        // раньше высота почти всегда была лимитирующей осью (кирпичный запас
+        // COLS+0.5), из-за чего сетка получалась мельче, чем позволяла ширина,
+        // и центрирование оставляло пустые полосы по бокам. Теперь ширина
+        // используется целиком (без остатка, кроме floor-погрешности <ROWS px),
+        // а вертикальная ось (сколько КОЛОНОК трассы реально видно
+        // одновременно, viewportCols ниже) просто подстраивается под то, что
+        // остаётся по высоте — это безопасно, потому что прокрутка и так идёт
+        // ПОСЕГМЕНТНО (по одной колонке), а не блоками по 8 (см.
+        // useBoardScroll) — не обязательно показывать ровно целый фрагмент
+        // (BOARD_LAYOUT.COLS=8) одновременно.
+        const segmentSize = Math.max(1, Math.floor(boardBudgetW / ROWS));
         const segmentW = segmentSize;
         const segmentH = segmentSize;
 
+        // Сколько колонок трассы реально помещается по высоте при этом
+        // размере клетки — с запасом в полклетки на кирпичный сдвиг нечётных
+        // дорожек (тот же смысл, что раньше был в делителе COLS+0.5). Не
+        // привязано к BOARD_LAYOUT.COLS (8, размер ОДНОГО фрагмента в данных
+        // с бэка) — это отдельная величина ("сколько видно на экране прямо
+        // сейчас"), см. viewportCols в возвращаемом объекте и его использование
+        // в BoardGrid/useBoardScroll (НЕ в lib/board#flattenTrackSegments —
+        // там структура данных по-прежнему 8 колонок на фрагмент).
+        const viewportCols = Math.max(
+            1,
+            Math.min(TOTAL_COLS, Math.floor((boardBudgetH - segmentSize / 2) / segmentSize)),
+        );
+
         const roadContainerW = segmentW * ROWS;
-        // Точно под контент (COLS сегментов + запас на кирпичный сдвиг), НЕ весь
-        // boardBudgetH целиком — раньше контейнер был больше нужного (лишнее пустое
-        // место сверху, т.к. BoardGrid прижимает контент к низу) ИЛИ (на тесных
-        // экранах) МЕНЬШЕ нужного, что и резало сдвинутые дорожки. Излишек бюджета
-        // по вертикали (если есть) просто не используется — центрируется по ширине
-        // роль играет segmentSize, а не сам контейнер.
-        const roadContainerH = segmentH * COLS + segmentH / 2;
+        const roadContainerH = segmentH * viewportCols + segmentH / 2;
 
         return {
             orientation,
@@ -89,12 +127,14 @@ export function useBoardLayout() {
             panelH,
             arrowBtnSize,
             switcherH,
+            labelStripW,
             roadContainerW,
             roadContainerH,
             segmentW,
             segmentH,
             rows: ROWS,
             cols: COLS,
+            viewportCols,
             totalBlocks: TOTAL_BLOCKS,
         };
     }
@@ -153,12 +193,14 @@ export function useBoardLayout() {
         leftPanelW,
         arrowBtnSize,
         switcherH,
+        labelStripW: 0, // полоса фрагментов — только портретная раскладка, см. её ветку выше
         roadContainerW: segmentW * COLS + segmentW / 2, // запас на кирпичный сдвиг, см. выше
         roadContainerH: segmentH * ROWS,   // все 6 дорожек по высоте, без обрезки
         segmentW,
         segmentH,
         rows: ROWS,
         cols: COLS,
+        viewportCols: COLS, // альбомная раскладка не тронута — всегда целый фрагмент (8) одновременно
         totalBlocks: TOTAL_BLOCKS,
     };
 }

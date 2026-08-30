@@ -73,6 +73,28 @@ export function flattenTrackSegments(segments, rows, cols) {
 }
 
 /**
+ * Группирует видимое окно прокрутки [windowStart, windowStart+viewportCols)
+ * по фрагменту трассы (blockIndex = floor(globalCol/fragmentCols)) — для
+ * FragmentLabelStrip (портретная раскладка), чтобы показать имя фрагмента(ов),
+ * видимых прямо сейчас, и границу между ними, если окно как раз пересекает
+ * стык. Порядок результата — по возрастанию localCol (0 = ближе к
+ * windowStart), что в портретной раскладке соответствует НИЗУ полосы (то же
+ * направление, что и сама сетка — движение по трассе снизу вверх, см.
+ * BoardGrid).
+ */
+export function computeFragmentBands(windowStart, viewportCols, fragmentCols, segmentNames) {
+    const bands = [];
+    for (let i = 0; i < viewportCols; i++) {
+        const globalCol = windowStart + i;
+        const blockIndex = Math.floor(globalCol / fragmentCols);
+        const last = bands[bands.length - 1];
+        if (last && last.blockIndex === blockIndex) last.count += 1;
+        else bands.push({ blockIndex, count: 1, name: segmentNames?.[blockIndex] ?? null });
+    }
+    return bands;
+}
+
+/**
  * Индекс "бегунов по ячейке" — ключ совпадает с id ячейки из flattenTrackSegments
  * (segment-row-col = segment-positionY-positionX), поэтому BoardGrid может отдать
  * O(1)-поиск токенов для каждой отрисованной клетки вместо перебора на каждый рендер.
