@@ -315,7 +315,20 @@ export default function PlayerInfoPanel({
                             {reaperNode}
                             {runnerCards}
                         </ScrollView>
-                        <View style={styles.rightColumn}>
+                        {/* ScrollView, не голый View (было раньше) — при сжатом panelH
+                            (см. useBoardLayout/PANEL_MAX_H, 2026-08-30) контент правой
+                            колонки (кубики+усиления) может не поместиться по высоте;
+                            без ScrollView лишнее просто визуально вылезало за пределы
+                            колонки и перекрывало переключатель игроков под ней (жалоба
+                            пользователя со скриншотом). Тот же remeasure-паттерн, что
+                            и у leftColumn. */}
+                        <ScrollView
+                            style={styles.rightColumn}
+                            contentContainerStyle={styles.rightColumnContent}
+                            showsVerticalScrollIndicator={false}
+                            onScrollEndDrag={bumpRemeasure}
+                            onMomentumScrollEnd={bumpRemeasure}
+                        >
                             <Text style={styles.sectionTitle}>Кубики</Text>
                             <DiceTray
                                 dice={trayDice}
@@ -327,7 +340,7 @@ export default function PlayerInfoPanel({
                                 size={28}
                             />
                             {abilitiesNode}
-                        </View>
+                        </ScrollView>
                     </View>
                 ) : (
                     // Живой прогон (веб) вскрыл тот же баг устаревающего measureInWindow
@@ -434,4 +447,5 @@ const styles = StyleSheet.create({
     // ширина колонок (flex 2:1) не меняется.
     leftColumnContent: { paddingBottom: spacing.sm, paddingHorizontal: spacing.xs },
     rightColumn: { flex: 1, paddingHorizontal: spacing.xs },
+    rightColumnContent: { paddingBottom: spacing.sm },
 });
