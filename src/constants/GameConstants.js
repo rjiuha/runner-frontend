@@ -212,6 +212,37 @@ export const SEGMENT_IMAGES = Platform.OS === 'web' ? SEGMENT_IMAGES_WEB : SEGME
 export const HIGHLIGHT_COLOR = colors.success;
 
 /**
+ * Кнопки навигации по дороге для мобильного приложения (портретная
+ * раскладка, native — НЕ веб, пользователь явно не захотел разбираться, как
+ * это будет выглядеть для браузера) — замена круглой ArrowButton, свой
+ * глиф+рамка уже нарисованы в ассете, см. RoadNavButton.js.
+ *
+ * Первая версия декоративной рамки (один квадратный `frame.png`, нарезанный
+ * скриптом на 9 частей) не прижилась — асимметрия толщины по сторонам,
+ * искажённые углы, наплыв рамок друг на друга (см. историю в CLAUDE.md).
+ * Пользователь заменил её на честно подготовленный набор — один угол
+ * (верхний правый) и 2 планки (верхняя горизонтальная, правая
+ * вертикальная), с ТОЧНО совпадающей толщиной уголка и планки (проверено
+ * по пикселям: у угла толщина сверху 47px/справа 49px — совпадает с
+ * высотой горизонтальной планки (47px) и шириной вертикальной (49px)).
+ * Остальные 3 угла и вторые стороны планок — то же изображение,
+ * отзеркаленное `scaleX:-1`/`scaleY:-1` в MobileFrameOverlay, отдельных
+ * файлов под них не нужно.
+ */
+export const MOBILE_FRAME_CORNER_TR = require('../assets/images/ui/mobile/frame_corner.png');
+export const MOBILE_FRAME_EDGE_TOP = require('../assets/images/ui/mobile/frame_gorizont.png');
+export const MOBILE_FRAME_EDGE_RIGHT = require('../assets/images/ui/mobile/frame_vert.png');
+// Ассет — квадрат 200×200, толщина каймы внутри него ~47-49px (см. выше) —
+// используем среднее (48) как референс для пересчёта масштаба под целевую
+// толщину рамки на экране (MobileFrameOverlay.borderDp).
+export const MOBILE_FRAME_CORNER_SIZE_PX = 200;
+export const MOBILE_FRAME_BORDER_PX = 48;
+export const ROAD_NAV_BUTTON_IMAGES = {
+  up: require('../assets/images/ui/mobile/road_map_button_up.png'),
+  down: require('../assets/images/ui/mobile/road_map_button_down.png'),
+};
+
+/**
  * Геометрия игрового поля: сколько блоков дороги существует, сколько
  * колонок видно/всего в очереди, и скорость непрерывной прокрутки на вебе
  */

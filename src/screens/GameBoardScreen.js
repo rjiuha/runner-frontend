@@ -1,10 +1,12 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import ArrowButton from '../components/game/ArrowButton';
+import RoadNavButton from '../components/game/RoadNavButton';
+import MobileFrameOverlay from '../components/game/MobileFrameOverlay';
 import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
@@ -39,6 +41,11 @@ const STATUS_LABEL = {
 // Через сколько показать кнопку ручного рефетча, если игрок-цель зависшей
 // коллизии (game.extraTurnPlayer) долго не отвечает — бэк это сам не разруливает.
 const COLLISION_STUCK_TIMEOUT = 18000;
+
+// Насколько мобильная рамка (MobileFrameOverlay) выступает за истинные внешние
+// края экрана (лево/право у обеих зон, низ у панели) — по прямому запросу
+// пользователя, чтобы скруглённый угол не был виден отдельно от края экрана.
+const MOBILE_FRAME_BLEED = 10;
 
 const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
 const SEGMENT_KEYS = ['trackBegin', 'trackMiddle', 'trackEnd'];
@@ -161,6 +168,14 @@ export default function GameBoardScreen({ route }) {
         totalBlocks,
     } = useBoardLayout();
     const isPortrait = orientation === 'portrait';
+    // RoadNavButton (ассет пользователя вместо круглой ArrowButton) — только
+    // мобильное приложение, НЕ веб ("не совсем понимаю, как это будет
+    // выглядеть для браузера"), и только портретная раскладка. Декоративную
+    // sci-fi рамку вокруг дороги/панели (MobileFrameOverlay) пробовали и
+    // откатили — на реальном Android-эмуляторе рамки оказались слишком
+    // большими и с искажёнными углами, пользователь попросил убрать рамку,
+    // но оставить кнопки.
+    const useMobileNavButtons = isPortrait && Platform.OS !== 'web';
 
     const { offset, containerHandlers, backButtonProps, forwardButtonProps } = useBoardScroll({
         minOffset,
@@ -617,61 +632,110 @@ export default function GameBoardScreen({ route }) {
                     (подтверждено пользователем явно) — "вверх" = дальше по треку,
                     "вниз" = назад к началу. В альбомной раскладке — как было:
                     left=back, right=forward. Обе — дискретным прыжком на фрагмент
-                    (см. useBoardScroll.snapToBlock), не плавной прокруткой. */}
-                <ArrowButton
-                    direction={isPortrait ? 'up' : 'left'}
-                    size={arrowBtnSize}
-                    handlers={isPortrait ? forwardButtonProps : backButtonProps}
-                />
-
-                <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
-                    <BoardGrid
-                        gridData={gridData}
-                        rows={rows}
-                        cols={cols}
-                        segmentW={segmentW}
-                        segmentH={segmentH}
-                        offset={offset}
-                        orientation={orientation}
-                        containerHandlers={containerHandlers}
-                        containerWidth={roadContainerW}
-                        containerHeight={roadContainerH}
-                        runners={runners}
-                        playerColorById={playerColorById}
-                        selectedRunnerId={activeRunner?.id ?? null}
-                        highlightedCells={highlightedCells}
-                        onCellPress={handleCellPress}
+                    (см. useBoardScroll.snapToBlock), не плавной прокруткой.
+                    useMobileNavButtons: обе RoadNavButton (ассет пользователя,
+                    анимация нажатия) стоят РЯДОМ в нижнем слоте, а не одна
+                    сверху/одна снизу — по прямому запросу пользователя. Верхний
+                    слот при этом остаётся ПУСТЫМ распорным View той же высоты
+                    (arrowBtnSize) — geometry в useBoardLayout по-прежнему
+                    резервирует под него место (не трогали), просто там ничего
+                    не рисуется, и рамка (bleed.top ниже) спокойно перекрывает
+                    этот пустой слот на всю его высоту, дотягиваясь до истинного
+                    края экрана — без риска перекрыть реальную кнопку (её там
+                    больше нет). */}
+                {useMobileNavButtons ? (
+                    <View style={{ width: arrowBtnSize, height: arrowBtnSize }} />
+                ) : (
+                    <ArrowButton
+                        direction={isPortrait ? 'up' : 'left'}
+                        size={arrowBtnSize}
+                        handlers={isPortrait ? forwardButtonProps : backButtonProps}
                     />
-                </RoadArea>
+                )}
 
-                <ArrowButton
-                    direction={isPortrait ? 'down' : 'right'}
-                    size={arrowBtnSize}
-                    handlers={isPortrait ? backButtonProps : forwardButtonProps}
-                />
+                <View style={styles.roadFrameWrap}>
+                    <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
+                        <BoardGrid
+                            gridData={gridData}
+                            rows={rows}
+                            cols={cols}
+                            segmentW={segmentW}
+                            segmentH={segmentH}
+                            offset={offset}
+                            orientation={orientation}
+                            containerHandlers={containerHandlers}
+                            containerWidth={roadContainerW}
+                            containerHeight={roadContainerH}
+                            runners={runners}
+                            playerColorById={playerColorById}
+                            selectedRunnerId={activeRunner?.id ?? null}
+                            highlightedCells={highlightedCells}
+                            onCellPress={handleCellPress}
+                        />
+                    </RoadArea>
+                    {/* bleed.top закрывает И вырез/статус-бар (insets.top), И
+                        весь пустой верхний слот (arrowBtnSize, кнопки там больше
+                        нет), плюс небольшой запас — так рамка реально доходит до
+                        истинного верха экрана. Лево/право — чуть за край экрана.
+                        Низ — 0 (шов с панелью, там никакого bleed — иначе
+                        разъедутся и вернётся зазор). */}
+                    {useMobileNavButtons && (
+                        <MobileFrameOverlay
+                            borderDp={arrowBtnSize}
+                            bleed={{
+                                top: insets.top + arrowBtnSize + MOBILE_FRAME_BLEED,
+                                left: MOBILE_FRAME_BLEED,
+                                right: MOBILE_FRAME_BLEED,
+                            }}
+                        />
+                    )}
+                </View>
+
+                {useMobileNavButtons ? (
+                    <View style={styles.navBtnRow}>
+                        <RoadNavButton direction="up" size={arrowBtnSize} handlers={forwardButtonProps} />
+                        <RoadNavButton direction="down" size={arrowBtnSize} handlers={backButtonProps} />
+                    </View>
+                ) : (
+                    <ArrowButton
+                        direction={isPortrait ? 'down' : 'right'}
+                        size={arrowBtnSize}
+                        handlers={isPortrait ? backButtonProps : forwardButtonProps}
+                    />
+                )}
             </View>
 
             {isPortrait && (
-                <PlayerInfoPanel
-                    players={players}
-                    activePlayerId={activePlayerId}
-                    onSelectPlayer={setActivePlayerId}
-                    myPlayerId={myPlayer?.id ?? null}
-                    canAct={myTurn && !busy}
-                    myStep={myStep}
-                    pendingAbility={pendingAbility}
-                    pendingSelect={pendingSelect}
-                    canSelectRunner={canSelectRunner}
-                    onDropOnAbility={handleDropOnAbility}
-                    onPressAbilityZone={handlePressAbilityZone}
-                    onDropOnRunner={handleDropOnRunner}
-                    onRunnerCardPress={handleRunnerCardPress}
-                    height={panelH}
-                    switcherHeight={switcherH}
-                    switcherAtBottom
-                    compactColumns
-                    headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
-                />
+                <View style={styles.panelFrameWrap}>
+                    <PlayerInfoPanel
+                        players={players}
+                        activePlayerId={activePlayerId}
+                        onSelectPlayer={setActivePlayerId}
+                        myPlayerId={myPlayer?.id ?? null}
+                        canAct={myTurn && !busy}
+                        myStep={myStep}
+                        pendingAbility={pendingAbility}
+                        pendingSelect={pendingSelect}
+                        canSelectRunner={canSelectRunner}
+                        onDropOnAbility={handleDropOnAbility}
+                        onPressAbilityZone={handlePressAbilityZone}
+                        onDropOnRunner={handleDropOnRunner}
+                        onRunnerCardPress={handleRunnerCardPress}
+                        height={panelH}
+                        switcherHeight={switcherH}
+                        switcherAtBottom
+                        compactColumns
+                        headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
+                    />
+                    {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
+                        (шов с дорогой, см. комментарий у неё выше). */}
+                    {useMobileNavButtons && (
+                        <MobileFrameOverlay
+                            borderDp={arrowBtnSize}
+                            bleed={{ bottom: MOBILE_FRAME_BLEED, left: MOBILE_FRAME_BLEED, right: MOBILE_FRAME_BLEED }}
+                        />
+                    )}
+                </View>
             )}
 
             <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
@@ -694,6 +758,17 @@ const styles = StyleSheet.create({
     // панель снизу (см. useBoardLayout.orientation).
     wrapper: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
     wrapperPortrait: { flexDirection: 'column' },
+    // Обёртки под MobileFrameOverlay — ТОЛЬКО position:'relative', БЕЗ
+    // overflow:'hidden'. Рамка сама заполняет их РОВНО (не вылезает за
+    // границы, см. компонент) — эти View просто дают ей позиционирующий
+    // контекст. roadFrameWrap — flex:1 (тот же слот, что раньше держал
+    // RoadArea напрямую); panelFrameWrap — без flex (высота идёт от
+    // PlayerInfoPanel через её проп height, как и раньше).
+    roadFrameWrap: { flex: 1, position: 'relative' },
+    panelFrameWrap: { position: 'relative' },
+    // Обе кнопки навигации рядом в нижнем слоте (см. useMobileNavButtons) —
+    // по прямому запросу пользователя, вместо одной сверху/одной снизу.
+    navBtnRow: { flexDirection: 'row', gap: spacing.md, alignItems: 'center' },
     roadZone: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     roadZonePortrait: { flex: 1, flexDirection: 'column', alignItems: 'center', justifyContent: 'space-between' },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
