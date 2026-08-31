@@ -88,22 +88,29 @@ export default function BoardGrid({
         });
     }, [runners, runnerVisualPositions]);
     const runnersByCell = useMemo(() => indexRunnersByCell(effectiveRunners), [effectiveRunners]);
-    // Кольцо-токен — размер как ИЗНАЧАЛЬНО (0.72 от слота), пользователь
-    // попросил вернуть после первой попытки увеличить весь токен целиком
-    // (×1.5, откачено). Заметность персонажа теперь решает ТОЛЬКО картинка
-    // внутри кольца — см. BOARD_TOKEN_IMAGE_SCALE ниже (RunnerToken.imageScale),
-    // кольцо она не трогает.
-    const tokenSize = Math.floor(Math.min(segmentW, segmentH) * 0.72);
-    // Картинка внутри кольца — по умолчанию 0.68*size (RunnerToken). Несколько
-    // раундов увеличения по прямому запросу пользователя (0.68 → ×1.8 → ×1.15
-    // → ×1.15, картинка нарочно больше кольца) в итоге дали персонажа ЗАМЕТНО
-    // больше самого сегмента дороги (~1.34×segmentSize) — на живом скриншоте,
-    // 2026-08-31, это читалось как "персонаж вне клетки", а не "крупный
-    // персонаж". Пересчитано от обратного: картинка должна остаться немного
-    // БОЛЬШЕ кольца (0.72×segmentSize) — эффект "выходит за кольцо" сохранён,
-    // — но сама итоговая картинка должна быть чуть МЕНЬШЕ сегмента, а не
-    // больше него. 0.9×segmentSize / (0.72×segmentSize) = 1.25.
-    const BOARD_TOKEN_IMAGE_SCALE = 1.25;
+    // Кольцо-токен — увеличено с 0.72 до 0.82 от слота (2026-08-31, девятый
+    // заход) по прямому запросу пользователя: одиночный персонаж должен быть
+    // "почти размером с плитку". Вместе с BOARD_TOKEN_IMAGE_SCALE ниже картинка
+    // получается ~0.97×segmentSize — заполняет почти весь тайл, не вылезая
+    // заметно за его пределы (не путать с прошлыми попытками ×1.8/×1.34, где
+    // персонаж читался как "вне клетки", см. история в CLAUDE.md).
+    const tokenSize = Math.floor(Math.min(segmentW, segmentH) * 0.82);
+    // Картинка внутри кольца — по умолчанию 0.68*size (RunnerToken). Итоговая
+    // картинка = tokenSize*BOARD_TOKEN_IMAGE_SCALE ≈ 0.97×segmentSize.
+    const BOARD_TOKEN_IMAGE_SCALE = 1.18;
+    // Пара при коллизии — живой прогон на Android (2026-08-31, девятый заход,
+    // после первой правки): пользователь увидел результат вживую и попросил
+    // персонажей ещё крупнее (~20%) и зазор между ними поменьше ("находятся
+    // далековато друг от друга"). 0.75 → 0.9 от одиночной картинки (0.75*1.2),
+    // зазор 0.06 → 0.02 от сегмента. Пара по-прежнему шире одной клетки при
+    // такой доле — осознанно (см. комментарий у BOARD_TOKEN_IMAGE_SCALE выше:
+    // "не уменьшались" важнее, чем "не вылезать за плитку" по прямому
+    // пожеланию пользователя), только сама компенсация (зазор) объективно
+    // нужна, чтобы картинки не накладывались друг на друга при таком размере.
+    const singleImageSize = tokenSize * BOARD_TOKEN_IMAGE_SCALE;
+    const pairImageSize = singleImageSize * 0.9;
+    const pairGap = Math.max(2, Math.floor(Math.min(segmentW, segmentH) * 0.02));
+    const pairSize = Math.floor(pairImageSize / BOARD_TOKEN_IMAGE_SCALE);
     const isPortrait = orientation === 'portrait';
     // По запросу пользователя: только в веб-браузере, только в альбомной
     // (горизонтальной) раскладке, и только для road/sand/mud (не
@@ -134,6 +141,22 @@ export default function BoardGrid({
     // текущему игроку (не должно случаться в норме) — фолбэк по возрастанию id.
     // 3+ бегунов на клетке (не должно происходить по правилам) — старое
     // поведение "первый + значок +N", см. type:'stack' ниже.
+    // ПЛОСКИЙ список — один элемент НА БЕГУНА (не на клетку), key всегда
+    // runner.id, независимо от того, солирует он на клетке или в паре при
+    // столкновении. Раньше пара оборачивалась в `<React.Fragment key={cellKey}>`
+    // — React сверяет ключи СПИСКА на ЕГО СОБСТВЕННОМ уровне вложенности: пока
+    // бегун был один, его RunnerTokenSlide был ПРЯМЫМ элементом списка с
+    // key=runner.id; как только на клетку заезжал второй бегун, тот же бегун
+    // вдруг оказывался ВНУТРИ Fragment с key=CELL — на верхнем уровне списка
+    // это выглядело как "исчез элемент с key=216, появился новый элемент с
+    // key='0-2-1'" (Fragment), и React полностью размонтировал/монтировал
+    // поддерево — Animated-состояние RunnerTokenSlide (см. компонент) терялось,
+    // и следующее перемещение (в частности разлёт после автоматического
+    // разрешения коллизии) рисовалось телепортом, а не анимированным перелётом
+    // (жалоба пользователя, 2026-08-31, живой тест). Теперь ключ на верхнем
+    // уровне списка ВСЕГДА id бегуна — переход соло↔пара для НЕГО просто
+    // меняет x/y/size у ТОГО ЖЕ элемента списка, что штатно подхватывает
+    // RunnerTokenSlide.
     const tokenOverlay = useMemo(() => {
         const items = [];
         for (const [key, cellRunners] of runnersByCell.entries()) {
@@ -160,6 +183,13 @@ export default function BoardGrid({
                 : row * segmentH;
 
             if (cellRunners.length === 2) {
+                // Два бегуна рядом, лицом друг к другу (collision_east/west) —
+                // кто слева/справа не угадать по данным (бэк не шлёт "кто
+                // откуда пришёл"), простое детерминированное правило: текущий
+                // активный игрок (тот, кто "наехал") — справа (лицом влево,
+                // collision_west), другой — слева (лицом вправо,
+                // collision_east); если ни один не принадлежит текущему
+                // игроку (не должно случаться в норме) — фолбэк по id.
                 const [a, b] = cellRunners;
                 const aIsMover = String(a.playerId) === String(currentTurnPlayerId);
                 const bIsMover = String(b.playerId) === String(currentTurnPlayerId);
@@ -168,13 +198,37 @@ export default function BoardGrid({
                 if (aIsMover && !bIsMover) [leftRunner, rightRunner] = [b, a];
                 else if (bIsMover && !aIsMover) [leftRunner, rightRunner] = [a, b];
                 else [leftRunner, rightRunner] = a.id < b.id ? [a, b] : [b, a];
-                items.push({ type: 'pair', key, x, y, leftRunner, rightRunner });
+                const midX = x + segmentW / 2;
+                const midY = y + segmentH / 2;
+                items.push({
+                    runnerId: leftRunner.id, runner: leftRunner,
+                    x: midX - pairGap / 2 - pairSize, y: midY - pairSize / 2,
+                    boxW: pairSize, boxH: pairSize, tokenSize: pairSize,
+                    anim: { kind: 'collision', side: 'east' },
+                });
+                items.push({
+                    runnerId: rightRunner.id, runner: rightRunner,
+                    x: midX + pairGap / 2, y: midY - pairSize / 2,
+                    boxW: pairSize, boxH: pairSize, tokenSize: pairSize,
+                    anim: { kind: 'collision', side: 'west' },
+                });
             } else {
-                items.push({ type: 'stack', key, x, y, topRunner: cellRunners[0], count: cellRunners.length });
+                // 3+ бегунов на клетке (не должно происходить по правилам) —
+                // старое поведение "первый + значок +N".
+                const topRunner = cellRunners[0];
+                items.push({
+                    runnerId: topRunner.id, runner: topRunner,
+                    x, y, boxW: segmentW, boxH: segmentH, tokenSize,
+                    anim: runnerAnims?.[topRunner.id] ?? null,
+                    badgeCount: cellRunners.length,
+                });
             }
         }
         return items;
-    }, [runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait, currentTurnPlayerId]);
+    }, [
+        runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait,
+        currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims,
+    ]);
 
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
     // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
@@ -361,91 +415,37 @@ export default function BoardGrid({
                     ]}
                     pointerEvents="none"
                 >
-                    {tokenOverlay.map((item) => {
-                        if (item.type === 'pair') {
-                            // Два бегуна рядом, лицом друг к другу (collision_east/west,
-                            // см. комментарий у tokenOverlay выше) — кольцо меньше обычного
-                            // токена (иначе не поместятся вдвоём в одну клетку), делят
-                            // клетку по горизонтали через её середину с небольшим зазором.
-                            // imageScale — тот же BOARD_TOKEN_IMAGE_SCALE, что у одиночного
-                            // токена (жалоба пользователя, 2026-08-31, второй заход: без
-                            // него тут действовал дефолт RunnerToken 0.68, персонажи в паре
-                            // выглядели заметно мельче, чем при обычном движении).
-                            const pairGap = 2;
-                            const pairSize = Math.floor(Math.min(segmentW, segmentH) * 0.46);
-                            const midX = item.x + segmentW / 2;
-                            const midY = item.y + segmentH / 2;
-                            return (
-                                <React.Fragment key={item.key}>
-                                    <View
-                                        style={[
-                                            styles.tokenLayer,
-                                            { left: midX - pairGap / 2 - pairSize, top: midY - pairSize / 2, width: pairSize, height: pairSize },
-                                        ]}
-                                    >
-                                        <RunnerToken
-                                            type={item.leftRunner.type}
-                                            status={item.leftRunner.status}
-                                            color={playerColorById[item.leftRunner.playerId]}
-                                            size={pairSize}
-                                            imageScale={BOARD_TOKEN_IMAGE_SCALE}
-                                            showRing={false}
-                                            anim={{ kind: 'collision', side: 'east' }}
-                                        />
-                                    </View>
-                                    <View
-                                        style={[
-                                            styles.tokenLayer,
-                                            { left: midX + pairGap / 2, top: midY - pairSize / 2, width: pairSize, height: pairSize },
-                                        ]}
-                                    >
-                                        <RunnerToken
-                                            type={item.rightRunner.type}
-                                            status={item.rightRunner.status}
-                                            color={playerColorById[item.rightRunner.playerId]}
-                                            size={pairSize}
-                                            imageScale={BOARD_TOKEN_IMAGE_SCALE}
-                                            showRing={false}
-                                            anim={{ kind: 'collision', side: 'west' }}
-                                        />
-                                    </View>
-                                </React.Fragment>
-                            );
-                        }
-                        const { x, y, topRunner, count } = item;
-                        return (
-                            // key — id БЕГУНА, не ключ клетки (item.key меняется при каждом
-                            // перемещении) — RunnerTokenSlide хранит Animated.ValueXY во
-                            // внутреннем ref, переживающем ре-рендеры ТОЛЬКО если React не
-                            // пересоздаёт сам компонент; ключ клетки тут разрушил бы
-                            // скольжение при каждом шаге (см. комментарий в RunnerTokenSlide).
-                            <RunnerTokenSlide
-                                key={topRunner.id}
-                                x={x}
-                                y={y}
-                                width={segmentW}
-                                height={segmentH}
-                                style={styles.tokenLayer}
-                                windowStart={windowStart}
-                            >
-                                <RunnerToken
-                                    type={topRunner.type}
-                                    status={topRunner.status}
-                                    color={playerColorById[topRunner.playerId]}
-                                    size={tokenSize}
-                                    imageScale={BOARD_TOKEN_IMAGE_SCALE}
-                                    showRing={false}
-                                    selected={topRunner.id === selectedRunnerId}
-                                    anim={runnerAnims?.[topRunner.id] ?? null}
-                                />
-                                {count > 1 && (
-                                    <View style={styles.stackBadge}>
-                                        <Text style={styles.stackBadgeText}>+{count - 1}</Text>
-                                    </View>
-                                )}
-                            </RunnerTokenSlide>
-                        );
-                    })}
+                    {tokenOverlay.map((item) => (
+                        // key — ВСЕГДА id бегуна, ОДИН И ТОТ ЖЕ элемент списка при переходе
+                        // солист↔пара (см. комментарий у tokenOverlay) — RunnerTokenSlide
+                        // хранит Animated.ValueXY во внутреннем ref, переживающем ре-рендеры
+                        // ТОЛЬКО если React не пересоздаёт сам компонент.
+                        <RunnerTokenSlide
+                            key={item.runnerId}
+                            x={item.x}
+                            y={item.y}
+                            width={item.boxW}
+                            height={item.boxH}
+                            style={styles.tokenLayer}
+                            windowStart={windowStart}
+                        >
+                            <RunnerToken
+                                type={item.runner.type}
+                                status={item.runner.status}
+                                color={playerColorById[item.runner.playerId]}
+                                size={item.tokenSize}
+                                imageScale={BOARD_TOKEN_IMAGE_SCALE}
+                                showRing={false}
+                                selected={item.runnerId === selectedRunnerId}
+                                anim={item.anim}
+                            />
+                            {item.badgeCount > 1 && (
+                                <View style={styles.stackBadge}>
+                                    <Text style={styles.stackBadgeText}>+{item.badgeCount - 1}</Text>
+                                </View>
+                            )}
+                        </RunnerTokenSlide>
+                    ))}
                 </View>
 
                 <View

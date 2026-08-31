@@ -1,5 +1,5 @@
 // src/components/game/RunnerToken.js
-import React, { useRef } from 'react';
+import React from 'react';
 import { Image, StyleSheet, View } from 'react-native';
 import { RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
@@ -51,10 +51,6 @@ export default function RunnerToken({
     type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
     showRing = true, style,
 }) {
-    // ref до любого early return — правила хуков требуют звать хуки на
-    // каждый рендер одинаково, а display может оказаться пустым ниже.
-    const prevSourceRef = useRef(null);
-
     const display = RUNNER_DISPLAY[type];
     if (!display) return null;
 
@@ -64,25 +60,20 @@ export default function RunnerToken({
     const isDualLayer = raw != null && typeof raw === 'object' && 'base' in raw && 'mask' in raw;
     const source = isDualLayer ? raw : (raw ?? display.icon);
 
-    // key форсирует ремонт <Image> — но ТОЛЬКО когда source буквально тот же
-    // require-ассет, что уже отображался (два move в направлении UP подряд
-    // при многошаговом ходе, например) — иначе gif не перезапустился бы с
-    // первого кадра, native-слой не считает "тот же файл" сменой картинки.
-    // Если source РЕАЛЬНО другой (обычный случай: idle→move, move→attack и
-    // т.п.) — key НЕ меняем: полный размонт/монтаж <Image> на Android даёт
-    // заметный "пустой" кадр, пока новый gif декодируется с нуля (жалоба
-    // пользователя, 2026-08-31 — "персонаж исчезает на короткое мгновение").
-    // Обычная смена prop `source` на уже смонтированной Image перезапускает
-    // анимацию сама, без разрушения нативной view. Для dual-layer сравниваем
-    // объект {base,mask} целиком — он один и тот же require-литерал модуля
-    // (стабильная ссылка) на каждый повторный выбор той же анимации.
-    const sameSourceAsBefore = prevSourceRef.current === source;
-    prevSourceRef.current = source;
-    const animKey = avatar
-        ? 'avatar'
-        : sameSourceAsBefore && anim
-            ? `repeat-${anim.kind}-${anim.direction ?? anim.side ?? ''}-${anim.nonce ?? ''}`
-            : 'stable';
+    // `key` у <Image> ниже — ВСЕГДА одна и та же строка ('base'/'mask'/'img'),
+    // никогда не меняется. Раньше (до 2026-08-31, девятый заход) key нарочно
+    // менялся на повторе ОДНОЙ И ТОЙ ЖЕ анимации подряд (два шага UP подряд
+    // при многошаговом ходе), чтобы форсировать перезапуск gif с первого
+    // кадра — это оказалось настоящей причиной жалобы "персонаж исчезает и
+    // появляется" (мигание): смена key = полный размонт/монтаж <Image>, а на
+    // Android новый gif решает свои надо декодировать заново — на кадр-два
+    // экран пустой. Смена prop `source` на уже смонтированной Image и без
+    // того перезапускает анимацию сама (стандартное поведение RN Image для
+    // gif) — принудительный remount не нужен вообще, только вредит. Ценой
+    // этого фикса могла бы быть "не совсем с первого кадра" при повторе
+    // одного и того же шага подряд — но это гораздо менее заметно, чем
+    // видимое мигание.
+    const animKey = avatar ? 'avatar' : 'stable';
 
     const imgBoxStyle = { width: size * imageScale, height: size * imageScale };
     // НЕ StyleSheet.absoluteFillObject (top/left/right/bottom:0, без явных
