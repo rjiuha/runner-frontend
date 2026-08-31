@@ -46,10 +46,20 @@ import { getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/r
  * обводка стала избыточной (прямой запрос пользователя). Белая рамка
  * `selected` (сейчас выбран для хода/выстрела) — другая, никак не связанная
  * с цветом игрока сущность, рисуется независимо от `showRing`.
+ *
+ * `imageAlign` — 'center' (по умолчанию) или 'bottom'. Определяет, как
+ * картинка (которая может быть БОЛЬШЕ кольца, см. imageScale выше)
+ * позиционируется ВНУТРИ кольца по вертикали. 'bottom' — по прямому запросу
+ * пользователя, 2026-09-01, ТОЛЬКО для доски на native (BoardGrid) — низ
+ * картинки прижат к низу кольца, лишний размер выпирает только ВВЕРХ, не
+ * поровну на все 4 стороны. Кольцо само по себе тоже должно быть прижато к
+ * низу своего родителя — за это отвечает ВНЕШНИЙ контейнер (см.
+ * BoardGrid#styles.tokenLayerBottom), этот проп красит только внутреннее
+ * позиционирование картинки относительно кольца.
  */
 export default function RunnerToken({
     type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
-    showRing = true, style,
+    showRing = true, imageAlign = 'center', style,
 }) {
     const display = RUNNER_DISPLAY[type];
     if (!display) return null;
@@ -90,6 +100,7 @@ export default function RunnerToken({
         <View
             style={[
                 styles.ring,
+                imageAlign === 'bottom' && styles.ringBottom,
                 {
                     width: size,
                     height: size,
@@ -128,9 +139,22 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    ringBottom: {
+        justifyContent: 'flex-end',
+    },
+    // Известный баг Android: `elevation` на View БЕЗ явного backgroundColor
+    // иногда рисует тень/контур по ПРЯМОУГОЛЬНОЙ границе вида, игнорируя
+    // borderRadius (Android считает форму от заливки, а не только от
+    // borderRadius) — у токенов на доске (showRing=false) кольцо обычно без
+    // фона вообще, отсюда "у некоторых персонажей квадрат вместо кружка"
+    // (жалоба пользователя, 2026-09-01, живой скриншот с Android — квадрат
+    // именно вокруг ВЫБРАННОГО бегуна). backgroundColor:'transparent' даёт
+    // Android нужную явную форму для расчёта тени, ничего визуально не меняя
+    // (сама заливка прозрачная).
     selected: {
         borderWidth: 3,
         borderColor: '#fff',
+        backgroundColor: 'transparent',
         shadowColor: '#fff',
         shadowOpacity: 0.9,
         shadowRadius: 4,

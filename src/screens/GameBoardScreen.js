@@ -422,7 +422,33 @@ export default function GameBoardScreen({ route }) {
         return { highlightedCells: new Set(), tapMode: null };
     }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game]);
 
-    const shotSound = useAudioPlayer(require('../assets/sounds/lazer.mp3'));
+    // Звук "лазера" СИНХРОННО с анимацией перемещения — по прямому запросу
+    // пользователя, 2026-09-01: играет, пока у ХОТЬ ОДНОГО бегуна сейчас
+    // проигрывается поза 'move' (см. hooks/useRunnerAnimations —
+    // anims[runnerId].kind), останавливается и перематывается в начало, как
+    // только ни у кого больше нет активной 'move'-позы (обычная остановка
+    // ходьбы ИЛИ переход на другую позу — attack/fly/gotShot и т.п. — тоже
+    // гасит звук, он строго про саму ходьбу). Раньше тут ЕЩЁ был отдельный
+    // одноразовый "клик" (shotSound) на КАЖДЫЙ тап по клетке в
+    // handleCellPress ниже — убран целиком по прямому запросу пользователя,
+    // 2026-09-01, второй заход: он казался блокирующим (пока не доиграет —
+    // персонаж не шёл на вид), и вообще не должен был звучать сам по себе.
+    const moveSound = useAudioPlayer(require('../assets/sounds/lazer.mp3'));
+    useEffect(() => {
+        moveSound.loop = true;
+    }, [moveSound]);
+    const anyRunnerMoving = useMemo(
+        () => Object.values(runnerAnim.anims).some((a) => a?.kind === 'move'),
+        [runnerAnim.anims],
+    );
+    useEffect(() => {
+        if (anyRunnerMoving) {
+            moveSound.play();
+        } else {
+            moveSound.pause();
+            moveSound.seekTo(0);
+        }
+    }, [anyRunnerMoving, moveSound]);
 
     const runAction = useCallback(async (fn) => {
         setBusy(true);
@@ -437,9 +463,6 @@ export default function GameBoardScreen({ route }) {
 
     const handleCellPress = useCallback(
         (cell) => {
-            shotSound.seekTo(0);
-            shotSound.play();
-
             if (!tapMode) return;
             const key = cell.id; // "segment-row-col" = "segment-positionY-positionX", см. lib/board.js
             if (!highlightedCells.has(key)) return;
@@ -479,7 +502,7 @@ export default function GameBoardScreen({ route }) {
                 );
             }
         },
-        [shotSound, tapMode, highlightedCells, activeRunner, cols, pendingAbility, runAction],
+        [tapMode, highlightedCells, activeRunner, cols, pendingAbility, runAction],
     );
 
     // Дроп кубика на карточку бегуна — шаг SELECT. Реальный /select уходит не

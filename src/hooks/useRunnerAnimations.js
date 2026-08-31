@@ -111,11 +111,21 @@ export function useRunnerAnimations() {
             const mergeTarget = queue.length ? queue[queue.length - 1] : active.current[runnerId];
 
             if (mergeTarget?.extra?.pending && extra?.toPosition) {
-                mergeTarget.kind = kind;
+                // Заготовка от 'anomaly' (kind уже 'fly', см. lib/runnerAnimTriggers)
+                // держит kind — вход в/из аномалии всегда 'fly', даже если
+                // следующий runner_save по эвристике forwardNeighbors решил бы
+                // иначе (по прямому запросу пользователя, 2026-09-01: "при
+                // попадании в аномалию передвижение из неё должно быть
+                // анимацией fly", не полагаемся на эвристику для этого
+                // случая — есть явный сигнал от бэка). Заготовка от step_move
+                // (kind 'move') по-прежнему берёт решение ИЗ ВХОДЯЩЕГО trigger
+                // (обычный путь, как было).
+                const finalKind = mergeTarget.kind === 'fly' ? 'fly' : kind;
+                mergeTarget.kind = finalKind;
                 mergeTarget.extra = { ...mergeTarget.extra, ...extra, pending: false };
                 if (mergeTarget === active.current[runnerId]) {
                     const { pending, ...animExtra } = mergeTarget.extra;
-                    setAnims((prev) => ({ ...prev, [runnerId]: { ...prev[runnerId], ...animExtra, kind } }));
+                    setAnims((prev) => ({ ...prev, [runnerId]: { ...prev[runnerId], ...animExtra, kind: finalKind } }));
                     setVisualPositions((prev) => ({ ...prev, [runnerId]: extra.toPosition }));
                 }
                 return;

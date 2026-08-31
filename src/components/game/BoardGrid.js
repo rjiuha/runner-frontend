@@ -1,5 +1,5 @@
 // src/components/game/BoardGrid.js
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
@@ -53,6 +53,10 @@ const HIGHLIGHT_BORDER_WIDTH = 1.5;
 // пользователя, 2026-08-30, тот же цвет, что FragmentLabelStrip использует
 // для полосы этого фрагмента (FRAGMENT_COLORS[blockIndex]).
 const FRAGMENT_BOUNDARY_LINE_PX = 3;
+// Минимальное время показа коллизионной позы (2026-09-01, по прямому запросу
+// пользователя — "коллизия слишком быстро отыгрывает") — см. подробный
+// разбор у tokenOverlay ниже.
+const COLLISION_MIN_HOLD_MS = 1000;
 
 export default function BoardGrid({
     gridData,
@@ -96,19 +100,27 @@ export default function BoardGrid({
     // персонаж читался как "вне клетки", см. история в CLAUDE.md).
     const tokenSize = Math.floor(Math.min(segmentW, segmentH) * 0.82);
     // Картинка внутри кольца — по умолчанию 0.68*size (RunnerToken). Итоговая
-    // картинка = tokenSize*BOARD_TOKEN_IMAGE_SCALE ≈ 0.97×segmentSize.
-    const BOARD_TOKEN_IMAGE_SCALE = 1.18;
-    // Пара при коллизии — живой прогон на Android (2026-08-31, девятый заход,
-    // после первой правки): пользователь увидел результат вживую и попросил
-    // персонажей ещё крупнее (~20%) и зазор между ними поменьше ("находятся
-    // далековато друг от друга"). 0.75 → 0.9 от одиночной картинки (0.75*1.2),
-    // зазор 0.06 → 0.02 от сегмента. Пара по-прежнему шире одной клетки при
-    // такой доле — осознанно (см. комментарий у BOARD_TOKEN_IMAGE_SCALE выше:
-    // "не уменьшались" важнее, чем "не вылезать за плитку" по прямому
-    // пожеланию пользователя), только сама компенсация (зазор) объективно
-    // нужна, чтобы картинки не накладывались друг на друга при таком размере.
+    // картинка = tokenSize*BOARD_TOKEN_IMAGE_SCALE ≈ 0.97×segmentSize на вебе.
+    // На native — ещё +30% (×1.3), а следующим заходом (2026-09-01, третий
+    // раз) ЕЩЁ +15% (×1.15, итого ×1.495 от исходного) — низ картинки
+    // прижат к низу клетки вместо центра (см. anchorBottom/imageAlign ниже),
+    // так что "ноги" остаются на месте, а верхняя часть туловища выпирает
+    // всё дальше вверх — ровно то, что попросил пользователь. Только для
+    // Android/iOS — веб-версию просил не трогать (там текущий размер/
+    // центрирование уже устраивает).
+    const isNativeToken = Platform.OS !== 'web';
+    const BOARD_TOKEN_IMAGE_SCALE = isNativeToken ? 1.18 * 1.3 * 1.15 : 1.18;
+    // Пара при коллизии — несколько раундов живой правки на Android
+    // (2026-08-31/09-01, по факту увиденного пользователем): 0.575 → 0.75 →
+    // 0.9 от одиночной картинки, зазор 0.06 → 0.02 от сегмента. Финально —
+    // персонажи в паре ТОЧНО того же размера, что и в idle (pairImageSize =
+    // singleImageSize, множитель убран целиком), зазор НЕ трогаем (пользователь
+    // явно попросил оставить как есть и "посмотреть как будет"). Пара
+    // по-прежнему шире одной клетки при таком размере — осознанно (см.
+    // комментарий у BOARD_TOKEN_IMAGE_SCALE выше: "не уменьшались" важнее,
+    // чем "не вылезать за плитку" по прямому пожеланию пользователя).
     const singleImageSize = tokenSize * BOARD_TOKEN_IMAGE_SCALE;
-    const pairImageSize = singleImageSize * 0.9;
+    const pairImageSize = singleImageSize;
     const pairGap = Math.max(2, Math.floor(Math.min(segmentW, segmentH) * 0.02));
     const pairSize = Math.floor(pairImageSize / BOARD_TOKEN_IMAGE_SCALE);
     const isPortrait = orientation === 'portrait';
@@ -157,9 +169,103 @@ export default function BoardGrid({
     // уровне списка ВСЕГДА id бегуна — переход соло↔пара для НЕГО просто
     // меняет x/y/size у ТОГО ЖЕ элемента списка, что штатно подхватывает
     // RunnerTokenSlide.
+    // Холды коллизий — { [pairKey]: { until, x, y, leftRunner, rightRunner } },
+    // pairKey = "меньшийId-большийId" (стабилен независимо от того, кто слева/
+    // справа). Мутируется ПРЯМО в теле useMemo ниже (не через setState) — это
+    // намеренно: холды не должны триггерить отдельный ре-рендер сами по себе,
+    // они просто МЕНЯЮТ то, что решает вычислить tokenOverlay на уже
+    // идущем рендере. holdTick — единственный способ ЗАСТАВИТЬ React
+    // пересчитать tokenOverlay РОВНО когда истекает минимальное время показа,
+    // даже если до этого не прилетело вообще ни одного нового события/пропа
+    // (см. setTimeout ниже).
+    const collisionHoldsRef = useRef({});
+    const [holdTick, setHoldTick] = useState(0);
+
+    // Один элемент — один бегун (см. комментарий выше про плоский список и
+    // стабильный key=runner.id). Коллизия (2 бегуна на клетке) — особый
+    // случай с двумя доп. требованиями пользователя, 2026-09-01:
+    //   1) Коллизионная поза не должна появляться РАНЬШЕ, чем "приезжающий"
+    //      бегун доиграет СВОЮ анимацию ходьбы/перелёта (`runnerAnims[id].kind
+    //      === 'move'|'fly'`) — до этого оба рисуются как обычные независимые
+    //      solo-токены (визуально один из них едет в клетку, где стоит
+    //      другой — RunnerTokenSlide это уже умеет благодаря стабильному key).
+    //   2) Как только оба "settled" — коллизия должна быть видна НЕ МЕНЬШЕ
+    //      COLLISION_MIN_HOLD_MS, даже если бэк уже увёл одного из них в
+    //      другую клетку буквально в следующем событии. Реализовано холдом:
+    //      пока pairKey активен, реальные позиции ОБОИХ бегунов в этом
+    //      цикле игнорируются целиком (heldRunnerIds) — их рисует ТОЛЬКО
+    //      второй проход снизу, на замороженных x/y/leftRunner/rightRunner,
+    //      пока не истечёт `until`. RunnerTokenSlide не видит разницы между
+    //      "x/y не менялись, потому что мы держим холд" и "x/y реально не
+    //      менялись" — как только холд снимается и мы наконец отдаём его
+    //      РЕАЛЬНУЮ (уже возможно ушедшую вперёд) позицию, он честно
+    //      анимированно доскользит остаток пути.
     const tokenOverlay = useMemo(() => {
         const items = [];
+        const now = Date.now();
+
+        const pushSolo = (runner, sx, sy) => {
+            items.push({
+                runnerId: runner.id, runner, x: sx, y: sy,
+                boxW: segmentW, boxH: segmentH, tokenSize,
+                anim: runnerAnims?.[runner.id] ?? null,
+                anchorBottom: isNativeToken,
+            });
+        };
+        // Бокс пары — ТОТ ЖЕ segmentW×segmentH, что у соло-токена, НИКОГДА
+        // не pairSize (жалоба пользователя, 2026-09-01, четвёртый заход:
+        // "анимация перемещения проигрывается уже в целевом сегменте" —
+        // настоящая причина найдена в RunnerTokenSlide: тот сравнивает
+        // width/height между рендерами и, если они ИЗМЕНИЛИСЬ, считает это
+        // сменой раскладки экрана — мгновенно телепортирует БЕЗ слайда (см.
+        // компонент, resized-ветка, задумана для поворота/ресайза окна).
+        // Раньше пара использовала бокс размером pairSize — ЛЮБОЙ переход
+        // соло↔пара (вход в коллизию/выход из неё) МЕНЯЛ width/height и ложно
+        // срабатывал эту защиту, съедая слайд ровно в момент приезда/отскока.
+        // Теперь бокс константен при любом переходе — разъезд между двумя
+        // персонажами даёт ЧИСТО transform:translateX на самом RunnerToken
+        // (innerOffsetX ниже), размер бокса это не трогает вообще.
+        const pushPair = (leftRunner, rightRunner, cellX, cellY) => {
+            // Расстояние от центра клетки до центра КАЖДОГО токена — уменьшено
+            // на 7% (жалоба пользователя, 2026-09-01, третий заход: "чуть
+            // сблизь анимации коллизии"). Трогаем именно offset, не pairGap
+            // отдельно — эффект остаётся пропорциональным независимо от
+            // текущего pairSize.
+            const offset = (pairGap / 2 + pairSize / 2) * 0.93;
+            items.push({
+                runnerId: leftRunner.id, runner: leftRunner,
+                x: cellX, y: cellY, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
+                anim: { kind: 'collision', side: 'east' },
+                // Пара крепится к низу клетки ТАК ЖЕ, как одиночный токен (см.
+                // anchorBottom/isNativeToken выше) — раньше была единственным
+                // состоянием, которое центрировалось по вертикали, пользователь
+                // прямо попросил единообразия ("должны быть так же, как и в
+                // других состояниях"). На вебе — по-прежнему центр (не трогаем).
+                anchorBottom: isNativeToken,
+                innerOffsetX: -offset,
+            });
+            items.push({
+                runnerId: rightRunner.id, runner: rightRunner,
+                x: cellX, y: cellY, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
+                anim: { kind: 'collision', side: 'west' },
+                anchorBottom: isNativeToken,
+                innerOffsetX: offset,
+            });
+        };
+
+        const heldRunnerIds = new Set();
+        for (const pairKey of Object.keys(collisionHoldsRef.current)) {
+            const hold = collisionHoldsRef.current[pairKey];
+            if (now >= hold.until) { delete collisionHoldsRef.current[pairKey]; continue; }
+            heldRunnerIds.add(hold.leftRunner.id);
+            heldRunnerIds.add(hold.rightRunner.id);
+        }
+        const refreshedPairKeys = new Set();
+
         for (const [key, cellRunners] of runnersByCell.entries()) {
+            const visible = cellRunners.filter((r) => !heldRunnerIds.has(r.id));
+            if (visible.length === 0) continue; // оба тут заморожены — их рисует второй проход
+
             const [segStr, rowStr, colStr] = key.split('-');
             const segment = Number(segStr);
             const row = Number(rowStr);
@@ -182,52 +288,71 @@ export default function BoardGrid({
                 ? (cols - 1 - localCol) * segmentH + (row % 2 !== 0 ? segmentH / 2 : 0)
                 : row * segmentH;
 
-            if (cellRunners.length === 2) {
-                // Два бегуна рядом, лицом друг к другу (collision_east/west) —
-                // кто слева/справа не угадать по данным (бэк не шлёт "кто
-                // откуда пришёл"), простое детерминированное правило: текущий
-                // активный игрок (тот, кто "наехал") — справа (лицом влево,
-                // collision_west), другой — слева (лицом вправо,
-                // collision_east); если ни один не принадлежит текущему
-                // игроку (не должно случаться в норме) — фолбэк по id.
-                const [a, b] = cellRunners;
-                const aIsMover = String(a.playerId) === String(currentTurnPlayerId);
-                const bIsMover = String(b.playerId) === String(currentTurnPlayerId);
-                let leftRunner;
-                let rightRunner;
-                if (aIsMover && !bIsMover) [leftRunner, rightRunner] = [b, a];
-                else if (bIsMover && !aIsMover) [leftRunner, rightRunner] = [a, b];
-                else [leftRunner, rightRunner] = a.id < b.id ? [a, b] : [b, a];
-                const midX = x + segmentW / 2;
-                const midY = y + segmentH / 2;
-                items.push({
-                    runnerId: leftRunner.id, runner: leftRunner,
-                    x: midX - pairGap / 2 - pairSize, y: midY - pairSize / 2,
-                    boxW: pairSize, boxH: pairSize, tokenSize: pairSize,
-                    anim: { kind: 'collision', side: 'east' },
-                });
-                items.push({
-                    runnerId: rightRunner.id, runner: rightRunner,
-                    x: midX + pairGap / 2, y: midY - pairSize / 2,
-                    boxW: pairSize, boxH: pairSize, tokenSize: pairSize,
-                    anim: { kind: 'collision', side: 'west' },
-                });
-            } else {
-                // 3+ бегунов на клетке (не должно происходить по правилам) —
-                // старое поведение "первый + значок +N".
-                const topRunner = cellRunners[0];
-                items.push({
-                    runnerId: topRunner.id, runner: topRunner,
-                    x, y, boxW: segmentW, boxH: segmentH, tokenSize,
-                    anim: runnerAnims?.[topRunner.id] ?? null,
-                    badgeCount: cellRunners.length,
-                });
+            if (visible.length === 2) {
+                const [a, b] = visible;
+                const isArriving = (r) => {
+                    const kind = runnerAnims?.[r.id]?.kind;
+                    return kind === 'move' || kind === 'fly';
+                };
+                if (isArriving(a) || isArriving(b)) {
+                    pushSolo(a, x, y);
+                    pushSolo(b, x, y);
+                    continue;
+                }
+
+                // Оба settled — коллизия. Кто слева/справа (см. комментарий
+                // у tokenOverlay выше про детерминированное правило по
+                // currentTurnPlayerId/id) считаем ОДИН раз на весь холд —
+                // сторона не должна "прыгать" посреди показа.
+                const pairKey = a.id < b.id ? `${a.id}-${b.id}` : `${b.id}-${a.id}`;
+                let hold = collisionHoldsRef.current[pairKey];
+                if (!hold) {
+                    const aIsMover = String(a.playerId) === String(currentTurnPlayerId);
+                    const bIsMover = String(b.playerId) === String(currentTurnPlayerId);
+                    let leftRunner;
+                    let rightRunner;
+                    if (aIsMover && !bIsMover) [leftRunner, rightRunner] = [b, a];
+                    else if (bIsMover && !aIsMover) [leftRunner, rightRunner] = [a, b];
+                    else [leftRunner, rightRunner] = a.id < b.id ? [a, b] : [b, a];
+                    hold = { until: now + COLLISION_MIN_HOLD_MS, x, y, leftRunner, rightRunner };
+                    collisionHoldsRef.current[pairKey] = hold;
+                    setTimeout(() => setHoldTick((t) => t + 1), COLLISION_MIN_HOLD_MS + 30);
+                } else {
+                    hold.x = x; hold.y = y; // пока реально вместе — держим позицию свежей
+                }
+                refreshedPairKeys.add(pairKey);
+                pushPair(hold.leftRunner, hold.rightRunner, x, y);
+                continue;
             }
+
+            // 1 (или 3+, не должно происходить по правилам — старое
+            // поведение "первый + значок +N") видимый бегун на клетке.
+            const topRunner = visible[0];
+            items.push({
+                runnerId: topRunner.id, runner: topRunner,
+                x, y, boxW: segmentW, boxH: segmentH, tokenSize,
+                anim: runnerAnims?.[topRunner.id] ?? null,
+                badgeCount: visible.length,
+                // Низ картинки прижат к низу клетки вместо центра — ТОЛЬКО
+                // на native (см. isNativeToken выше), только у одиночных
+                // токенов (у пары свой маленький бокс "впритык" к самому
+                // персонажу, там anchorBottom не нужен — центр).
+                anchorBottom: isNativeToken,
+            });
         }
+
+        // Пары, которые уже РАЗЪЕХАЛИСЬ по-настоящему (бэк увёл одного из
+        // них в другую клетку), но минимальное время показа ещё не истекло —
+        // дорисовать на замороженной (последней известной вместе) позиции.
+        for (const [pairKey, hold] of Object.entries(collisionHoldsRef.current)) {
+            if (refreshedPairKeys.has(pairKey)) continue;
+            pushPair(hold.leftRunner, hold.rightRunner, hold.x, hold.y);
+        }
+
         return items;
     }, [
         runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait,
-        currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims,
+        currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims, isNativeToken, holdTick,
     ]);
 
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
@@ -426,7 +551,7 @@ export default function BoardGrid({
                             y={item.y}
                             width={item.boxW}
                             height={item.boxH}
-                            style={styles.tokenLayer}
+                            style={item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer}
                             windowStart={windowStart}
                         >
                             <RunnerToken
@@ -436,8 +561,10 @@ export default function BoardGrid({
                                 size={item.tokenSize}
                                 imageScale={BOARD_TOKEN_IMAGE_SCALE}
                                 showRing={false}
+                                imageAlign={item.anchorBottom ? 'bottom' : 'center'}
                                 selected={item.runnerId === selectedRunnerId}
                                 anim={item.anim}
+                                style={item.innerOffsetX ? { transform: [{ translateX: item.innerOffsetX }] } : null}
                             />
                             {item.badgeCount > 1 && (
                                 <View style={styles.stackBadge}>
@@ -482,18 +609,28 @@ const styles = StyleSheet.create({
     laneRow: { flexDirection: 'row', alignItems: 'flex-start' },
     laneColumn: { flexDirection: 'column-reverse' },
     // Один слой на весь текущий блок — см. комментарий в JSX про то, почему
-    // токены больше не вложены в ячейки.
-    tokenOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 2, elevation: 2 },
-    // Слой линии-стыка фрагментов (см. fragmentBoundarySegments) — НАД
-    // токенами (zIndex выше tokenOverlayLayer), та же защита от Android
+    // токены больше не вложены в ячейки. zIndex ВЫШЕ fragmentBoundaryLayer —
+    // персонажи должны рисоваться ПОВЕРХ линии-стыка фрагментов, не под ней
+    // (жалоба пользователя, 2026-09-01, четвёртый заход — было наоборот).
+    tokenOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 4, elevation: 4 },
+    // Слой линии-стыка фрагментов (см. fragmentBoundarySegments) — ПОД
+    // токенами (zIndex ниже tokenOverlayLayer), та же защита от Android
     // view-flattening (см. CLAUDE.md, пятый заход), что и у остальных
     // абсолютных слоёв этого компонента.
-    fragmentBoundaryLayer: { position: 'absolute', top: 0, left: 0, zIndex: 4, elevation: 4 },
+    fragmentBoundaryLayer: { position: 'absolute', top: 0, left: 0, zIndex: 2, elevation: 2 },
     fragmentBoundarySegment: { position: 'absolute' },
     tokenLayer: {
         position: 'absolute',
         alignItems: 'center',
         justifyContent: 'center',
+    },
+    // Только native (см. isNativeToken/anchorBottom в компоненте) — низ
+    // персонажа прижат к низу клетки вместо центра, картинка (которая теперь
+    // на 30% крупнее сегмента) выпирает вверх, а не поровну на все 4 стороны.
+    tokenLayerBottom: {
+        position: 'absolute',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
     },
     stackBadge: {
         position: 'absolute',

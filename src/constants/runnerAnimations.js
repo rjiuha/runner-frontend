@@ -18,10 +18,16 @@ import { RUNNER_STATUS, RUNNER_TYPES } from './GameConstants';
  * своими отдельными клипами broken/destroyed внутри).
  *
  * Направлений в ассетах 5 (north/north-west/north-east/south-west/
- * south-east) — но в игре есть только 3 "вперёд"-направления (UP/LEFT_UP/
- * RIGHT_UP, см. lib/hexDirection#MOVE_DIRECTIONS), назад бегун никогда не
- * ходит и не стреляет — south-west/south-east в GAME_DIRECTION_TO_ASSET_KEY
- * снизу осознанно не задействованы.
+ * south-east) — в игре 3 "вперёд"-направления (UP/LEFT_UP/RIGHT_UP, см.
+ * lib/hexDirection#MOVE_DIRECTIONS), назад бегун никогда не ходит и не
+ * стреляет, но LEFT_UP/RIGHT_UP не всегда визуально идут "вверх": south-west/
+ * south-east используются для ХОДЬБЫ (не для стрельбы, см.
+ * resolveMoveAssetDirection ниже) — по прямому запросу пользователя,
+ * 2026-09-01, для шага на "кирпично"-смещённую соседнюю дорожку без
+ * продвижения вглубь (чистый боковой шаг на нечётную дорожку — та смещена
+ * "назад" на пол-сегмента, см. BoardGrid — `row % 2 !== 0 →
+ * marginTop/marginLeft segment/2`) — north-* тут выглядел бы шагающим
+ * вперёд, хотя фактически шаг чисто боковой на "отстающую" дорожку.
  *
  * **Перекраска неона под цвет игрока** (2026-08-31): каждая анимация — не
  * один gif, а ПАРА {base, mask}. base — тот же кадр, но неоновые вставки
@@ -204,16 +210,43 @@ export const RUNNER_ANIMATION_SETS = {
 
 /**
  * Игровое направление (DirectionService, см. lib/hexDirection.js) → ключ в
- * move/attack выше. LEFT_UP/RIGHT_UP НЕ совпадают с "визуально влево/вправо"
- * — в портретной раскладке дорожки идут слева направо по возрастанию
- * positionY (см. BoardGrid), а LEFT_UP как раз УВЕЛИЧИВАЕТ positionY (см.
- * hexDirection#neighborPosition) — то есть визуально ведёт бегуна ВПРАВО по
- * экрану, RIGHT_UP — влево. Названия достались от бэковой геометрии (другая
- * система координат), не от экрана. Сопоставлено ассетам по факту видимого
- * направления (жалоба пользователя после живого теста на Android, 2026-08-31
- * — "перепутаны анимации влево и вправо", было наоборот).
+ * move/attack выше. Единственная точка, где решается, какой ассет играть —
+ * ХОДЬБА И СТРЕЛЬБА используют её ОДИНАКОВО (2026-09-01, четвёртый заход:
+ * раньше стрельба ошибочно была исключена — считалось, что раз бегун не
+ * двигается, "целевой дорожки" нет, но целится он всё равно через ТУ ЖЕ
+ * hex-клетку, что и шаг — canShoot() на бэке проверяет ровно тех же соседей,
+ * что и движение, см. lib/hexDirection#forwardNeighbors).
+ *
+ * Два независимых нюанса геометрии:
+ *  1) LEFT_UP/RIGHT_UP НЕ совпадают с "визуально влево/вправо" — в
+ *     портретной раскладке дорожки идут слева направо по возрастанию
+ *     positionY (см. BoardGrid), а LEFT_UP как раз УВЕЛИЧИВАЕТ positionY
+ *     (см. hexDirection#neighborPosition) — то есть визуально ведёт бегуна
+ *     ВПРАВО по экрану (east), RIGHT_UP — влево (west). Названия достались
+ *     от бэковой геометрии (другая система координат), не от экрана.
+ *     Сопоставлено ассетам по факту видимого направления (жалоба
+ *     пользователя после живого теста на Android, 2026-08-31 — "перепутаны
+ *     анимации влево и вправо", было наоборот).
+ *  2) LEFT_UP/RIGHT_UP не всегда "вверх по экрану": bird's-eye по
+ *     DirectionService — при ЧЁТНОЙ старой глубине (см. lib/hexDirection,
+ *     CLAUDE.md) это чисто боковой шаг/прицел на соседнюю дорожку БЕЗ
+ *     продвижения (depthChanged=false), а дорожки через одну смещены на
+ *     пол-сегмента "назад" (см. BoardGrid — нечётный индекс дорожки получает
+ *     marginTop/marginLeft). Если целевая дорожка (targetLaneOdd) — именно
+ *     такая смещённая, чисто боковой шаг/прицел визуально идёт чуть НАЗАД
+ *     по экрану — используем south-*, а не north-*. Если глубина ВСЁ-ТАКИ
+ *     продвинулась (depthChanged=true, старая глубина была нечётной —
+ *     LEFT_UP/RIGHT_UP тогда диагональ вперёд), полный сегмент продвижения
+ *     вглубь всегда перевешивает пол-сегментное смещение дорожки — итог
+ *     всегда "вперёд", north-*, независимо от чётности целевой дорожки.
  */
-export const GAME_DIRECTION_TO_ASSET_KEY = { UP: 'north', LEFT_UP: 'northEast', RIGHT_UP: 'northWest' };
+export function resolveMoveAssetDirection(direction, depthChanged, targetLaneOdd) {
+    if (direction === 'UP') return 'north';
+    const isEast = direction === 'LEFT_UP'; // см. нюанс (1) выше
+    if (depthChanged) return isEast ? 'northEast' : 'northWest';
+    if (targetLaneOdd) return isEast ? 'southEast' : 'southWest';
+    return isEast ? 'northEast' : 'northWest';
+}
 
 /** RUNNER_STATUS → какая из 2 папок ассетов (healthy/damaged) используется. */
 function statusFolder(status) {
@@ -248,9 +281,13 @@ export function getRunnerAnimationImage(type, status, anim) {
         if (status === RUNNER_STATUS.DESTROYED) return bucket.destroyed; // холодный старт/reconnect без анимации перехода
         return bucket.idle;
     }
-    if (anim.kind === 'move' || anim.kind === 'attack') {
-        const dirKey = GAME_DIRECTION_TO_ASSET_KEY[anim.direction] ?? 'north';
-        return bucket[anim.kind]?.[dirKey] ?? bucket.idle;
+    if (anim.kind === 'move') {
+        const dirKey = resolveMoveAssetDirection(anim.direction, anim.depthChanged, anim.targetLaneOdd);
+        return bucket.move?.[dirKey] ?? bucket.idle;
+    }
+    if (anim.kind === 'attack') {
+        const dirKey = resolveMoveAssetDirection(anim.direction, anim.depthChanged, anim.targetLaneOdd);
+        return bucket.attack?.[dirKey] ?? bucket.idle;
     }
     if (anim.kind === 'fly') return bucket.fly;
     if (anim.kind === 'gotShot') return bucket.gotShot;

@@ -67,14 +67,12 @@ export default function AbilityZone({
         >
             <Text style={[styles.label, compact && styles.labelCompact]}>{ability.label}</Text>
             <Text style={styles.hint}>{compact ? ability.shortHint : ability.hint}</Text>
-            {/* "—"-плейсхолдер убран (экономия места) — строка со значением
-                рендерится, только когда реально есть что показать. Галочка ('✓'
-                для усилений с диапазоном — буст/жнец/призрак) тоже убрана по
-                прямому запросу пользователя: подсветка рамки (zoneFilled) уже
-                сама по себе однозначно показывает факт занятости зоны. Число
-                оставлено только там, где оно РЕАЛЬНО информативно — Лечение
-                (min===max), у него всегда один и тот же номинал. */}
-            {filled && ability.min === ability.max && <Text style={styles.value}>{ability.min}</Text>}
+            {/* Число/галочка при занятой зоне убраны целиком (были — только
+                для Лечения, min===max) по прямому запросу пользователя,
+                2026-09-01: подсветка рамки (filled-стиль выше) уже сама по
+                себе однозначно показывает занятость, а любой доп. элемент,
+                появляющийся/исчезающий вместе с filled, менял высоту зоны —
+                "чтобы не менять размерность области". */}
         </TouchableOpacity>
     );
 }
@@ -100,5 +98,4 @@ const styles = StyleSheet.create({
     hoverInvalid: { borderColor: colors.danger, borderStyle: 'solid', backgroundColor: `${colors.danger}22` },
     label: { color: colors.textOnDark, fontSize: font.small, fontWeight: 'bold' },
     hint: { color: colors.textOnDarkSecondary, fontSize: 10, marginTop: 1 },
-    value: { color: colors.textOnDark, fontSize: font.small, fontWeight: 'bold', marginTop: 2 },
 });
