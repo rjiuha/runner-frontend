@@ -4,7 +4,6 @@ import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-nativ
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import ArrowButton from '../components/game/ArrowButton';
 import RoadNavButton from '../components/game/RoadNavButton';
 import MobileFrameOverlay from '../components/game/MobileFrameOverlay';
 import RoadArea from '../components/game/RoadArea';
@@ -190,16 +189,25 @@ export default function GameBoardScreen({ route }) {
         cols,
         viewportCols,
         totalBlocks,
+        navBtnSize,
     } = useBoardLayout();
     const isPortrait = orientation === 'portrait';
-    // RoadNavButton (ассет пользователя вместо круглой ArrowButton) — только
-    // мобильное приложение, НЕ веб ("не совсем понимаю, как это будет
-    // выглядеть для браузера"), и только портретная раскладка. Декоративную
-    // sci-fi рамку вокруг дороги/панели (MobileFrameOverlay) пробовали и
-    // откатили — на реальном Android-эмуляторе рамки оказались слишком
-    // большими и с искажёнными углами, пользователь попросил убрать рамку,
-    // но оставить кнопки.
+    // useMobileNavButtons — родное мобильное приложение (не веб) в портретной
+    // раскладке панели: там кнопки навигации стоят РЯДОМ в нижнем слоте на
+    // стыке рамок (seamRow ниже), а не в потоке. Декоративную sci-fi рамку
+    // вокруг дороги/панели (MobileFrameOverlay) пробовали и откатили — на
+    // реальном Android-эмуляторе рамки оказались слишком большими и с
+    // искажёнными углами, пользователь попросил убрать рамку, но оставить
+    // кнопки. Для остальных случаев (веб, включая широкое окно) — см.
+    // navBtnSize/`navBtnColumnLeft` ниже, тот же ассет RoadNavButton, но
+    // колонкой слева от дороги, по прямому запросу пользователя, 2026-08-31.
     const useMobileNavButtons = isPortrait && Platform.OS !== 'web';
+    // navBtnSize (кнопки слева от дороги, не в mobileNav-случае) — половина
+    // размера сегмента, посчитана в useBoardLayout вместе с самим сегментом
+    // (там же учтена ширина, которую эта колонка отъедает у сетки — см.
+    // computeRoadGeometry#reserveNavColumn), не дублируем расчёт здесь.
+    // arrowBtnSize остаётся только для mobileNav-кнопок в seamRow — те
+    // привязаны к толщине декоративной рамки, не к сегменту.
 
     const { windowStart, backButtonProps, forwardButtonProps } = useBoardScroll({ cols: viewportCols });
 
@@ -687,43 +695,37 @@ export default function GameBoardScreen({ route }) {
                 только расположение ПАНЕЛИ игрока: снизу под дорогой на узком
                 окне (panelH из useBoardLayout, см. BoardGrid про "снизу
                 вверх"), слева от дороги на широком (см. leftPanelW выше) —
-                эту часть пользователь попросил оставить "как сейчас". Сам
-                блок дороги (эта View) внутри ВСЕГДА колонка (стрелка вверх/
-                сетка/стрелка вниз друг под другом) — при широком окне она
-                просто становится flex-ребёнком строки verhnего wrapper (см.
-                styles.wrapper), а не отдельной "альбомной" структурой. */}
+                эту часть пользователь попросил оставить "как сейчас". Кнопки
+                навигации (не mobileNav-случай) — КОЛОНКОЙ СЛЕВА от дороги
+                (по прямому запросу пользователя, 2026-08-31, третий заход —
+                было выше/ниже), поэтому сам блок дороги (эта View) — строка
+                (кнопки | дорога), а не колонка. */}
             <View
                 style={[
                     styles.roadZonePortrait,
-                    // Без этого верхняя стрелка (первый flow-элемент в этом
-                    // блоке, экран без SafeAreaView) рисовалась под статус-баром/
-                    // вырезом камеры — не видна и не тапабельна (жалоба пользователя).
+                    // Без этого кнопки/сетка (первый flow-элемент в этом
+                    // блоке, экран без SafeAreaView) рисовались под статус-баром/
+                    // вырезом камеры — не видны и не тапабельны (жалоба пользователя).
                     { paddingTop: insets.top },
                 ]}
             >
-                {/* Стрелки — ВСЕГДА вверх/вниз (не зависит от расположения панели,
-                    см. комментарий выше блока): "вверх" = дальше по треку, "вниз" =
-                    назад к началу (подтверждено пользователем явно). Мгновенный
-                    посегментный сдвиг видимого окна (onPressIn: сразу шаг +повтор
-                    каждые 500мс, пока удержана; onPressOut: стоп — см.
-                    useBoardScroll), сетка на экране физически не двигается вообще
-                    (ни скролла, ни анимации позиции). useMobileNavButtons (портрет+
-                    native): обе RoadNavButton (ассет пользователя, анимация нажатия)
-                    стоят РЯДОМ в нижнем слоте на стыке рамок (см. seamRow ниже), а не
-                    в потоке здесь — верхний слот тогда рендерит null, useBoardLayout
-                    для этого случая не резервирует под него высоту вообще (см.
-                    reservedArrowsH там). На широком окне (панель слева) этот блок —
-                    та же самая ArrowButton up/down, что и раньше была только в
-                    портретной раскладке — раньше здесь стояла отдельная колонка
-                    RoadNavButton влево/вправо (`navBtnColumn`, удалена вместе с
-                    отдельной "альбомной" геометрией дороги). */}
-                {useMobileNavButtons ? null : (
-                    <ArrowButton
-                        direction="up"
-                        size={arrowBtnSize}
-                        handlers={forwardButtonProps}
-                        style={styles.selfCenter}
-                    />
+                {/* Кнопки — ВСЕГДА вверх/вниз, колонкой СЛЕВА от дороги (не зависит от
+                    расположения панели, см. комментарий выше блока): "вверх" = дальше по
+                    треку, "вниз" = назад к началу (подтверждено пользователем явно).
+                    Мгновенный посегментный сдвиг видимого окна (onPressIn: сразу шаг
+                    +повтор каждые 250мс, пока удержана; onPressOut: стоп — см.
+                    useBoardScroll), сетка на экране физически не двигается вообще (ни
+                    скролла, ни анимации позиции). RoadNavButton — тот же ассет, что и в
+                    mobileNav-случае (не круглая ArrowButton), размер — navBtnSize
+                    (половина размера сегмента, прямой запрос пользователя, а не доля
+                    экрана). useMobileNavButtons (портрет+native): здесь рендерится null —
+                    у него СВОИ RoadNavButton в нижнем слоте на стыке рамок (см. seamRow
+                    ниже), не в потоке здесь. */}
+                {!useMobileNavButtons && (
+                    <View style={styles.navBtnColumnLeft}>
+                        <RoadNavButton direction="up" size={navBtnSize} handlers={forwardButtonProps} />
+                        <RoadNavButton direction="down" size={navBtnSize} handlers={backButtonProps} />
+                    </View>
                 )}
 
                 <View style={styles.roadFrameWrap}>
@@ -746,9 +748,7 @@ export default function GameBoardScreen({ route }) {
                     </RoadArea>
                     {/* bleed.top закрывает И вырез/статус-бар (insets.top), плюс
                         небольшой запас — так рамка реально доходит до истинного верха
-                        экрана. Раньше добавлялся ещё +arrowBtnSize (под пустой верхний
-                        слот) — слота больше нет (см. комментарий выше), убрано отсюда
-                        тоже. Лево/право — чуть за край экрана. Низ — 0 (шов с панелью,
+                        экрана. Лево/право — чуть за край экрана. Низ — 0 (шов с панелью,
                         рамки соприкасаются впритык, каждая остаётся отдельной рамкой со
                         всеми 4 скруглёнными углами — НЕ сливаются в одну). */}
                     {useMobileNavButtons && (
@@ -761,25 +761,7 @@ export default function GameBoardScreen({ route }) {
                             }}
                         />
                     )}
-                    {/* Кнопки навигации у этого блока БОЛЬШЕ НЕТ (до 2026-08-30, третий
-                        заход того же дня, они были отдельным View между roadFrameWrap и
-                        panelFrameWrap высотой arrowBtnSize — рамки не смыкались,
-                        оставалась голая полоса фона под кнопками). Убрав этот слот,
-                        roadFrameWrap (flex:1) сам забирает освободившуюся высоту —
-                        рамки теперь стоят вплотную без зазора. Кнопки (вместе с кнопкой
-                        лога) переехали в отдельный seamRow ниже — единый ряд,
-                        отцентрированный ровно НА стыке рамок (по запросу пользователя),
-                        а не внутри одной из них. */}
                 </View>
-
-                {!useMobileNavButtons && (
-                    <ArrowButton
-                        direction="down"
-                        size={arrowBtnSize}
-                        handlers={backButtonProps}
-                        style={styles.selfCenter}
-                    />
-                )}
             </View>
 
             {isPortrait && (
@@ -828,9 +810,9 @@ export default function GameBoardScreen({ route }) {
                 же строки через alignItems. EventLogPanel в режиме position="seam"
                 рендерит только кнопку-тоггл инлайн (без своего абсолютного wrapper'а)
                 и раскрывающийся список — абсолютным дропдауном НАД собой. Только для
-                useMobileNavButtons (мобильная рамка) — на вебе/альбомной раскладке
-                лог остаётся в прежнем углу (position ниже), кнопки — прежние
-                ArrowButton в потоке. */}
+                useMobileNavButtons (мобильная рамка) — вне этого случая лог остаётся
+                в прежнем углу (position ниже), кнопки навигации — RoadNavButton
+                колонкой слева от дороги (см. navBtnColumnLeft выше). */}
             {useMobileNavButtons ? (
                 <View style={[styles.seamRow, { bottom: panelH - arrowBtnSize / 2, height: arrowBtnSize }]}>
                     <RoadNavButton direction="up" size={arrowBtnSize} handlers={forwardButtonProps} />
@@ -887,18 +869,20 @@ const styles = StyleSheet.create({
         zIndex: 30,
         elevation: 30,
     },
-    // Блок дороги (стрелка вверх/сетка/стрелка вниз) — ВСЕГДА колонка, дорога
-    // всегда вертикальная независимо от расположения панели (см. комментарий
-    // в JSX). БЕЗ alignItems:'center' — roadFrameWrap должен СТРЕТЧИТЬСЯ на
-    // всю ширину (иначе рамка вокруг дороги сжималась бы до ширины самой сетки,
-    // когда сегмент ограничен высотой, а не шириной, см. useBoardLayout — рамка
-    // не доставала бы до боковых краёв экрана). Верхний спейсер/ArrowButton внутри
-    // всё равно имеют явный width, стретч на них не влияет.
-    roadZonePortrait: { flex: 1, flexDirection: 'column', justifyContent: 'space-between' },
-    // roadZonePortrait не центрирует детей по кросс-оси (см. выше) — обеим
-    // ArrowButton (useMobileNavButtons=false) нужно вернуть центрирование
-    // персонально, иначе они прилипнут к левому краю экрана.
-    selfCenter: { alignSelf: 'center' },
+    // Блок дороги (кнопки навигации | сетка) — ВСЕГДА строка (кнопки колонкой
+    // слева, дорога справа, по прямому запросу пользователя, 2026-08-31,
+    // третий заход — было выше/ниже), дорога всегда вертикальная независимо
+    // от расположения панели (см. комментарий в JSX). alignItems:'stretch'
+    // (дефолт) — roadFrameWrap растягивается на всю высоту блока.
+    roadZonePortrait: { flex: 1, flexDirection: 'row' },
+    // Кнопки навигации слева от дороги — колонка, отцентрированная по высоте
+    // относительно roadFrameWrap (соседний flex:1-ребёнок этой же строки).
+    navBtnColumnLeft: {
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
+    },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
     collisionBanner: {

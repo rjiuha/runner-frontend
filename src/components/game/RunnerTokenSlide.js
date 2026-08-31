@@ -35,12 +35,37 @@ const SLIDE_DURATION_MS = 1700;
  * в исходную и только тогда начинал ехать (жалоба пользователя, 2026-08-31).
  * useLayoutEffect выполняется синхронно до того, как обновление уходит на
  * отрисовку — прыжка в исходную позицию никто не видит.
+ *
+ * `windowStart` — текущий сдвиг видимого окна прокрутки (см. useBoardScroll/
+ * BoardGrid). x/y меняются НЕ только когда бегун реально сходил с клетки на
+ * клетку, но и когда игрок просто пролистал дорогу стрелками — окно
+ * прокрутки сдвинулось, localCol у всех токенов пересчитался, x/y "поехали",
+ * хотя сам бегун стоит на месте. Раньше это тоже проигрывало слайд-анимацию
+ * (жалоба пользователя, 2026-08-31, второй заход: "при скролле персонажи
+ * медленно перемещаются на клетки, так быть не должно, они должны
+ * перемещаться как сегменты — моментально"). Та же история с `width`/
+ * `height` (= segmentW/segmentH) — они меняются при ресайзе/повороте окна
+ * (новый segmentSize пересчитан целиком, см. useBoardLayout), токен опять
+ * "едет" на новое место вместо мгновенного скачка вместе с самой сеткой
+ * (третья жалоба пользователя, 2026-08-31, тот же день). Фикс — общий:
+ * следим за изменением windowStart И width/height ОТДЕЛЬНО от x/y — если
+ * что-то из них изменилось с прошлого рендера, применяем новую x/y
+ * МГНОВЕННО (сброс translate в 0 без Animated.timing), не дожидаясь
+ * следующего реального перемещения бегуна, которое уже будет анимировано
+ * как обычно.
  */
-export default function RunnerTokenSlide({ x, y, width, height, style, children }) {
+export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart }) {
     const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
     const prevPos = useRef(null);
+    const prevWindowStart = useRef(windowStart);
+    const prevSize = useRef({ width, height });
 
     useLayoutEffect(() => {
+        const scrolled = prevWindowStart.current !== windowStart;
+        prevWindowStart.current = windowStart;
+        const resized = prevSize.current.width !== width || prevSize.current.height !== height;
+        prevSize.current = { width, height };
+
         if (prevPos.current == null) {
             prevPos.current = { x, y };
             return; // первый рендер — ехать неоткуда
@@ -50,13 +75,18 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children 
         prevPos.current = { x, y };
         if (dx === 0 && dy === 0) return;
 
+        if (scrolled || resized) {
+            translate.setValue({ x: 0, y: 0 }); // мгновенно, как и сами сегменты сетки
+            return;
+        }
+
         translate.setValue({ x: dx, y: dy });
         Animated.timing(translate, {
             toValue: { x: 0, y: 0 },
             duration: SLIDE_DURATION_MS,
             useNativeDriver: true,
         }).start();
-    }, [x, y, translate]);
+    }, [x, y, width, height, windowStart, translate]);
 
     return (
         <Animated.View

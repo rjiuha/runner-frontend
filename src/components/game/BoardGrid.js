@@ -426,6 +426,7 @@ export default function BoardGrid({
                                 width={segmentW}
                                 height={segmentH}
                                 style={styles.tokenLayer}
+                                windowStart={windowStart}
                             >
                                 <RunnerToken
                                     type={topRunner.type}
