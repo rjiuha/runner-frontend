@@ -611,7 +611,7 @@ export default function GameBoardScreen({ route }) {
             segmentW={segmentW}
             segmentH={segmentH}
             windowStart={windowStart}
-            orientation={orientation}
+            orientation="portrait"
             containerWidth={roadContainerW}
             containerHeight={roadContainerH}
             runners={runners}
@@ -619,6 +619,7 @@ export default function GameBoardScreen({ route }) {
             selectedRunnerId={activeRunner?.id ?? null}
             highlightedCells={highlightedCells}
             runnerAnims={runnerAnim.anims}
+            runnerVisualPositions={runnerAnim.visualPositions}
             currentTurnPlayerId={game.playerOrder}
             onCellPress={handleCellPress}
         />
@@ -642,7 +643,19 @@ export default function GameBoardScreen({ route }) {
                         </>
                     )}
                     {!myCollision && showStuckRefresh && (
-                        <Button title="Обновить состояние" variant="info" onPress={resync} style={styles.collisionBtn} />
+                        <Button
+                            title="Обновить состояние"
+                            variant="info"
+                            onPress={() => {
+                                // Полный REST-рефетч заменяет game-стейт целиком, минуя
+                                // событийный поток, который двигает очередь анимаций —
+                                // без сброса застрявшая очередь держала бы бегуна в
+                                // визуальной позиции старого (уже неактуального) шага.
+                                runnerAnim.reset();
+                                resync();
+                            }}
+                            style={styles.collisionBtn}
+                        />
                     )}
                 </View>
             )}
@@ -667,81 +680,69 @@ export default function GameBoardScreen({ route }) {
                 />
             )}
 
-            {/* Портретная раскладка: доска сверху (статичная сетка, стрелки вверх/вниз
+            {/* Дорога ВСЕГДА вертикальная (статичная сетка, стрелки вверх/вниз
                 мгновенно сдвигают видимое окно на 1 сегмент/удержание — см.
-                useBoardScroll/BoardGrid), панель игрока снизу с фиксированной высотой
-                (panelH из useBoardLayout) — см. BoardGrid про "снизу вверх" и
-                useBoardLayout про геометрию. Альбомная — как была: панель слева
-                (см. выше), доска с боку. */}
+                useBoardScroll/BoardGrid) — по прямому запросу пользователя,
+                2026-08-31 (шестой заход), независимо от формы окна. Меняется
+                только расположение ПАНЕЛИ игрока: снизу под дорогой на узком
+                окне (panelH из useBoardLayout, см. BoardGrid про "снизу
+                вверх"), слева от дороги на широком (см. leftPanelW выше) —
+                эту часть пользователь попросил оставить "как сейчас". Сам
+                блок дороги (эта View) внутри ВСЕГДА колонка (стрелка вверх/
+                сетка/стрелка вниз друг под другом) — при широком окне она
+                просто становится flex-ребёнком строки verhnего wrapper (см.
+                styles.wrapper), а не отдельной "альбомной" структурой. */}
             <View
                 style={[
-                    isPortrait ? styles.roadZonePortrait : styles.roadZone,
-                    // Без этого верхняя стрелка (первый flow-элемент в портретной
-                    // раскладке, экран без SafeAreaView) рисовалась под статус-баром/
+                    styles.roadZonePortrait,
+                    // Без этого верхняя стрелка (первый flow-элемент в этом
+                    // блоке, экран без SafeAreaView) рисовалась под статус-баром/
                     // вырезом камеры — не видна и не тапабельна (жалоба пользователя).
-                    isPortrait && { paddingTop: insets.top },
+                    { paddingTop: insets.top },
                 ]}
             >
-                {/* Портрет: у стрелок СВОЯ логика, ОБРАТНАЯ направлению прежнего свайпа
-                    (подтверждено пользователем явно) — "вверх" = дальше по треку,
-                    "вниз" = назад к началу. В альбомной раскладке — как было:
-                    left=back, right=forward. С 2026-08-30 обе — мгновенный посегментный
-                    сдвиг видимого окна (onPressIn: сразу шаг +повтор каждые 500мс, пока
-                    удержана; onPressOut: стоп — см. useBoardScroll), сетка на экране
-                    физически не двигается вообще (ни скролла, ни анимации позиции).
-                    useMobileNavButtons: обе RoadNavButton (ассет пользователя,
-                    анимация нажатия) стоят РЯДОМ в нижнем слоте, а не одна
-                    сверху/одна снизу — по прямому запросу пользователя. Верхний
-                    слот раньше оставался ПУСТЫМ распорным View той же высоты
-                    (arrowBtnSize) — кнопки там больше нет, а useBoardLayout
-                    по-прежнему резервировал под него бюджет высоты, из-за чего
-                    над доской оставалась настоящая пустая полоса (жалоба
-                    пользователя, 2026-08-30). Слот убран совсем (рендерим
-                    null) — useBoardLayout для mobileNav-случая теперь не
-                    вычитает этот резерв вообще (см. reservedArrowsH там),
-                    высота уходит доске. paddingTop:insets.top на
-                    roadZonePortrait по-прежнему даёт клиренс под статус-бар/
-                    вырез, bleed.top ниже подправлен под убранный слот. */}
-                {useMobileNavButtons ? null : isPortrait ? (
+                {/* Стрелки — ВСЕГДА вверх/вниз (не зависит от расположения панели,
+                    см. комментарий выше блока): "вверх" = дальше по треку, "вниз" =
+                    назад к началу (подтверждено пользователем явно). Мгновенный
+                    посегментный сдвиг видимого окна (onPressIn: сразу шаг +повтор
+                    каждые 500мс, пока удержана; onPressOut: стоп — см.
+                    useBoardScroll), сетка на экране физически не двигается вообще
+                    (ни скролла, ни анимации позиции). useMobileNavButtons (портрет+
+                    native): обе RoadNavButton (ассет пользователя, анимация нажатия)
+                    стоят РЯДОМ в нижнем слоте на стыке рамок (см. seamRow ниже), а не
+                    в потоке здесь — верхний слот тогда рендерит null, useBoardLayout
+                    для этого случая не резервирует под него высоту вообще (см.
+                    reservedArrowsH там). На широком окне (панель слева) этот блок —
+                    та же самая ArrowButton up/down, что и раньше была только в
+                    портретной раскладке — раньше здесь стояла отдельная колонка
+                    RoadNavButton влево/вправо (`navBtnColumn`, удалена вместе с
+                    отдельной "альбомной" геометрией дороги). */}
+                {useMobileNavButtons ? null : (
                     <ArrowButton
                         direction="up"
                         size={arrowBtnSize}
                         handlers={forwardButtonProps}
                         style={styles.selfCenter}
                     />
-                ) : (
-                    // Альбомная раскладка (веб) — обе кнопки одной колонкой слева от
-                    // дороги (не по краям, как раньше), чтобы отдать освободившуюся
-                    // ширину сетке (по запросу пользователя) — см. useBoardLayout,
-                    // roadBudgetW теперь резервирует один arrowBtnSize, не два.
-                    // RoadNavButton (ассет пользователя) вместо кружочной ArrowButton —
-                    // тоже по прямому запросу; left/right — те же up/down-ассеты,
-                    // повёрнутые на 90° (см. компонент).
-                    <View style={styles.navBtnColumn}>
-                        <RoadNavButton direction="right" size={arrowBtnSize} handlers={forwardButtonProps} />
-                        <RoadNavButton direction="left" size={arrowBtnSize} handlers={backButtonProps} />
-                    </View>
                 )}
 
                 <View style={styles.roadFrameWrap}>
                     <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
-                        {isPortrait ? (
-                            // Полоса с именем фрагмента(ов) слева от сетки — доступна только
-                            // в портретной раскладке, где под неё зарезервирована ширина
-                            // (labelStripW, см. useBoardLayout) вместо того, чтобы центрировать
-                            // сетку и оставлять пустые поля по бокам.
-                            <View style={styles.roadRowPortrait}>
-                                <FragmentLabelStrip
-                                    bands={fragmentBands}
-                                    width={labelStripW}
-                                    segmentSize={segmentH}
-                                    totalHeight={roadContainerH}
-                                />
-                                {boardGridEl}
-                            </View>
-                        ) : (
-                            boardGridEl
-                        )}
+                        {/* Полоса с именем фрагмента(ов) слева от сетки — под неё
+                            зарезервирована ширина (labelStripW, см. useBoardLayout)
+                            вместо того, чтобы центрировать сетку и оставлять пустые
+                            поля по бокам. Раньше — только в портретной раскладке
+                            (там же жила отдельная геометрия дороги), теперь дорога
+                            везде вертикальная, так что и полоса везде. */}
+                        <View style={styles.roadRowPortrait}>
+                            <FragmentLabelStrip
+                                bands={fragmentBands}
+                                width={labelStripW}
+                                segmentSize={segmentH}
+                                totalHeight={roadContainerH}
+                            />
+                            {boardGridEl}
+                        </View>
                     </RoadArea>
                     {/* bleed.top закрывает И вырез/статус-бар (insets.top), плюс
                         небольшой запас — так рамка реально доходит до истинного верха
@@ -771,7 +772,7 @@ export default function GameBoardScreen({ route }) {
                         а не внутри одной из них. */}
                 </View>
 
-                {!useMobileNavButtons && isPortrait && (
+                {!useMobileNavButtons && (
                     <ArrowButton
                         direction="down"
                         size={arrowBtnSize}
@@ -886,20 +887,18 @@ const styles = StyleSheet.create({
         zIndex: 30,
         elevation: 30,
     },
-    roadZone: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-    // БЕЗ alignItems:'center' (было раньше) — roadFrameWrap должен СТРЕТЧИТЬСЯ на
+    // Блок дороги (стрелка вверх/сетка/стрелка вниз) — ВСЕГДА колонка, дорога
+    // всегда вертикальная независимо от расположения панели (см. комментарий
+    // в JSX). БЕЗ alignItems:'center' — roadFrameWrap должен СТРЕТЧИТЬСЯ на
     // всю ширину (иначе рамка вокруг дороги сжималась бы до ширины самой сетки,
     // когда сегмент ограничен высотой, а не шириной, см. useBoardLayout — рамка
     // не доставала бы до боковых краёв экрана). Верхний спейсер/ArrowButton внутри
     // всё равно имеют явный width, стретч на них не влияет.
     roadZonePortrait: { flex: 1, flexDirection: 'column', justifyContent: 'space-between' },
-    // roadZonePortrait больше не центрирует детей по кросс-оси (см. выше) — этим
-    // двум ArrowButton (веб-портрет, useMobileNavButtons=false) нужно вернуть
-    // центрирование персонально, иначе они прилипнут к левому краю экрана.
+    // roadZonePortrait не центрирует детей по кросс-оси (см. выше) — обеим
+    // ArrowButton (useMobileNavButtons=false) нужно вернуть центрирование
+    // персонально, иначе они прилипнут к левому краю экрана.
     selfCenter: { alignSelf: 'center' },
-    // Альбомная раскладка (веб) — обе кнопки навигации одной колонкой слева
-    // от дороги (см. комментарий в JSX и useBoardLayout.roadBudgetW).
-    navBtnColumn: { flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: spacing.md },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
     collisionBanner: {

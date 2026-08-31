@@ -26,14 +26,22 @@ import { forwardNeighbors } from './hexDirection';
  * лечение) → gotShot, а если конечный статус — destroyed → сразу terminal
  * 'destroyed' (с fromStatus = статус ДО удара, для выбора healthy/damaged
  * набора анимации, см. constants/runnerAnimations#getRunnerAnimationImage).
+ *
+ * Каждый trigger() тут передаёт `toPosition` (кроме damage/destroy — они
+ * позицию не меняют) — useRunnerAnimations ставит шаг в очередь ЭТОГО
+ * бегуна и проигрывает по одному, а не перезаписывает предыдущий (2026-08-31,
+ * второй заход) — иначе каскад из нескольких runner_save подряд (отскок от
+ * столкновения → аномалия → отлёт из неё) схлопывался бы в одну финальную
+ * анимацию, минуя промежуточные шаги (см. подробности в useRunnerAnimations).
  */
 export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
     if (e.event === 'runner_save') {
         const patch = e.runnerId;
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
+        const toPosition = { segment: patch.segment, positionX: patch.positionX, positionY: patch.positionY };
 
         if (!prev || prev.segment == null) {
-            if (patch.segment != null) trigger(patch.id, 'move', { direction: 'UP' }); // первый выход на трассу
+            if (patch.segment != null) trigger(patch.id, 'move', { direction: 'UP', toPosition }); // первый выход на трассу
             return;
         }
         if (patch.segment == null) return; // снят с трассы — не наш случай сейчас
@@ -44,7 +52,7 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         const neighbor = forwardNeighbors(prev).find(
             (n) => n.segment === patch.segment && n.positionX === patch.positionX && n.positionY === patch.positionY,
         );
-        trigger(patch.id, neighbor ? 'move' : 'fly', neighbor ? { direction: neighbor.direction } : undefined);
+        trigger(patch.id, neighbor ? 'move' : 'fly', neighbor ? { direction: neighbor.direction, toPosition } : { toPosition });
         return;
     }
 
@@ -67,7 +75,13 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
 export function handleTransientRunnerAnimEvent(e, gameRef, trigger) {
     switch (e.event) {
         case 'step_move':
-            trigger(e.activeRunner, 'move', { direction: e.direction ?? 'UP' }); // без direction — первый выход на трассу
+            // pending: true — заготовка, не самостоятельный шаг очереди. Даёт
+            // направление раньше, чем придёт реальная позиция, но описывает
+            // ТУ ЖЕ передвижку, что последующий 'runner_save' — если его не
+            // пометить, очередь (см. useRunnerAnimations) сыграла бы одно и
+            // то же перемещение дважды подряд (двойная длительность на самый
+            // частый случай — обычный шаг без каскада).
+            trigger(e.activeRunner, 'move', { direction: e.direction ?? 'UP', pending: true }); // без direction — первый выход на трассу
             return;
         case 'step_shoot':
             if (e.accept) trigger(e.activeRunner, 'attack', { direction: e.direction });

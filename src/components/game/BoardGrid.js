@@ -69,23 +69,41 @@ export default function BoardGrid({
     selectedRunnerId = null,
     highlightedCells = null,
     runnerAnims = null,
+    runnerVisualPositions = null,
     currentTurnPlayerId = null,
     onCellPress,
 }) {
-    const runnersByCell = useMemo(() => indexRunnersByCell(runners), [runners]);
+    // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
+    // доска рисует его в позиции ТЕКУЩЕГО шага очереди, а не в реальной
+    // (game-стейт уже применил её целиком) — иначе промежуточные "остановки"
+    // каскада (отскок/аномалия/...) не отрисовались бы ни одним кадром, см.
+    // подробный разбор в useRunnerAnimations. Как только очередь опустеет,
+    // runnerVisualPositions[id] пропадает, и клетка снова берётся из runner
+    // напрямую (к этому моменту она уже совпадает с последним шагом очереди).
+    const effectiveRunners = useMemo(() => {
+        if (!runnerVisualPositions || Object.keys(runnerVisualPositions).length === 0) return runners;
+        return runners.map((r) => {
+            const pos = runnerVisualPositions[r.id];
+            return pos ? { ...r, ...pos } : r;
+        });
+    }, [runners, runnerVisualPositions]);
+    const runnersByCell = useMemo(() => indexRunnersByCell(effectiveRunners), [effectiveRunners]);
     // Кольцо-токен — размер как ИЗНАЧАЛЬНО (0.72 от слота), пользователь
     // попросил вернуть после первой попытки увеличить весь токен целиком
     // (×1.5, откачено). Заметность персонажа теперь решает ТОЛЬКО картинка
     // внутри кольца — см. BOARD_TOKEN_IMAGE_SCALE ниже (RunnerToken.imageScale),
     // кольцо она не трогает.
     const tokenSize = Math.floor(Math.min(segmentW, segmentH) * 0.72);
-    // Картинка внутри кольца — по умолчанию 0.68*size (RunnerToken). По
-    // прямому запросу пользователя, 2026-08-31: сначала весь токен ×1.5
-    // ("почти не видно"), затем ещё +20% ("окружность не увеличивай" — то
-    // есть рост только картинки, не кольца) → 0.68 × 1.5 × 1.2 = 0.68×1.8.
-    // Картинка теперь БОЛЬШЕ самого кольца (1.224×size) — осознанно, персонаж
-    // выходит за рамку кольца, это и есть требуемый эффект.
-    const BOARD_TOKEN_IMAGE_SCALE = 0.68 * 1.8;
+    // Картинка внутри кольца — по умолчанию 0.68*size (RunnerToken). Несколько
+    // раундов увеличения по прямому запросу пользователя (0.68 → ×1.8 → ×1.15
+    // → ×1.15, картинка нарочно больше кольца) в итоге дали персонажа ЗАМЕТНО
+    // больше самого сегмента дороги (~1.34×segmentSize) — на живом скриншоте,
+    // 2026-08-31, это читалось как "персонаж вне клетки", а не "крупный
+    // персонаж". Пересчитано от обратного: картинка должна остаться немного
+    // БОЛЬШЕ кольца (0.72×segmentSize) — эффект "выходит за кольцо" сохранён,
+    // — но сама итоговая картинка должна быть чуть МЕНЬШЕ сегмента, а не
+    // больше него. 0.9×segmentSize / (0.72×segmentSize) = 1.25.
+    const BOARD_TOKEN_IMAGE_SCALE = 1.25;
     const isPortrait = orientation === 'portrait';
     // По запросу пользователя: только в веб-браузере, только в альбомной
     // (горизонтальной) раскладке, и только для road/sand/mud (не
@@ -122,7 +140,16 @@ export default function BoardGrid({
             const [segStr, rowStr, colStr] = key.split('-');
             const segment = Number(segStr);
             const row = Number(rowStr);
-            const globalCol = segment * cols + Number(colStr);
+            // BOARD_LAYOUT.COLS (всегда 8 — реальных колонок в сегменте
+            // данных с бэка), НЕ проп cols (viewportCols — сколько колонок
+            // видно на экране прямо сейчас, динамическая величина в
+            // портретной раскладке). Раньше тут стоял cols — совпадало с
+            // BOARD_LAYOUT.COLS только пока viewportCols случайно был = 8,
+            // и токены уезжали в сторону, как только видно меньше/больше 8
+            // колонок (жалоба пользователя, 2026-08-31 — "персонажи вне
+            // сегментов дороги"). colStr (positionX бегуна) — локальная
+            // колонка ВНУТРИ сегмента данных, а не внутри вьюпорта.
+            const globalCol = segment * BOARD_LAYOUT.COLS + Number(colStr);
             if (globalCol < windowStart || globalCol >= windowEnd) continue;
             const localCol = globalCol - windowStart;
             const x = isPortrait
@@ -337,9 +364,13 @@ export default function BoardGrid({
                     {tokenOverlay.map((item) => {
                         if (item.type === 'pair') {
                             // Два бегуна рядом, лицом друг к другу (collision_east/west,
-                            // см. комментарий у tokenOverlay выше) — размер меньше обычного
+                            // см. комментарий у tokenOverlay выше) — кольцо меньше обычного
                             // токена (иначе не поместятся вдвоём в одну клетку), делят
                             // клетку по горизонтали через её середину с небольшим зазором.
+                            // imageScale — тот же BOARD_TOKEN_IMAGE_SCALE, что у одиночного
+                            // токена (жалоба пользователя, 2026-08-31, второй заход: без
+                            // него тут действовал дефолт RunnerToken 0.68, персонажи в паре
+                            // выглядели заметно мельче, чем при обычном движении).
                             const pairGap = 2;
                             const pairSize = Math.floor(Math.min(segmentW, segmentH) * 0.46);
                             const midX = item.x + segmentW / 2;
@@ -357,6 +388,8 @@ export default function BoardGrid({
                                             status={item.leftRunner.status}
                                             color={playerColorById[item.leftRunner.playerId]}
                                             size={pairSize}
+                                            imageScale={BOARD_TOKEN_IMAGE_SCALE}
+                                            showRing={false}
                                             anim={{ kind: 'collision', side: 'east' }}
                                         />
                                     </View>
@@ -371,6 +404,8 @@ export default function BoardGrid({
                                             status={item.rightRunner.status}
                                             color={playerColorById[item.rightRunner.playerId]}
                                             size={pairSize}
+                                            imageScale={BOARD_TOKEN_IMAGE_SCALE}
+                                            showRing={false}
                                             anim={{ kind: 'collision', side: 'west' }}
                                         />
                                     </View>
@@ -398,6 +433,7 @@ export default function BoardGrid({
                                     color={playerColorById[topRunner.playerId]}
                                     size={tokenSize}
                                     imageScale={BOARD_TOKEN_IMAGE_SCALE}
+                                    showRing={false}
                                     selected={topRunner.id === selectedRunnerId}
                                     anim={runnerAnims?.[topRunner.id] ?? null}
                                 />
