@@ -1,5 +1,5 @@
 // src/screens/GameBoardScreen.js
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -18,11 +18,13 @@ import Button from '../components/ui/Button';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
+import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, computeFragmentBands } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, rawEventFallback } from '../lib/eventLog';
+import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
@@ -129,6 +131,22 @@ export default function GameBoardScreen({ route }) {
         setEventLog((log) => (log.length >= 200 ? [...log.slice(1), entry] : [...log, entry]));
     }, []);
 
+    // Анимации бегунов (пока только Скаут — см. constants/runnerAnimations) —
+    // транзиентный стейт "что сейчас играется" по runnerId, отдельно от
+    // самого game. handleVersionedRunnerAnimEvent/handleTransientRunnerAnimEvent
+    // (lib/runnerAnimTriggers) — чистые функции "событие → что триггернуть",
+    // сам стейт трогает только runnerAnim.trigger.
+    const runnerAnim = useRunnerAnimations();
+    // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен только
+    // для anomaly, у которой нет activeRunner в самом событии, см.
+    // lib/runnerAnimTriggers). Обычный `game` из замыкания тут не годится —
+    // onTransient коллбэк не должен пересоздаваться на каждый рендер (иначе
+    // useMercure видел бы это как повод переподключаться, см. его cb-ref).
+    const gameRef = useRef(null);
+    useEffect(() => {
+        gameRef.current = game;
+    });
+
     // Логируем И версионные события (через reduce — вызывается ровно по разу
     // на применённое событие, дубли уже отфильтрованы useMercure), И
     // транзиентные (step_*/orchestrator без version) — теперь они хоть куда-то
@@ -136,16 +154,25 @@ export default function GameBoardScreen({ route }) {
     const reduceAndLog = useCallback(
         (state, e) => {
             pushLog(e);
+            handleVersionedRunnerAnimEvent(state, e, runnerAnim.trigger);
             return runnerGameReducer(state, e);
         },
-        [pushLog],
+        [pushLog, runnerAnim.trigger],
+    );
+
+    const onTransient = useCallback(
+        (e) => {
+            pushLog(e);
+            handleTransientRunnerAnimEvent(e, gameRef, runnerAnim.trigger);
+        },
+        [pushLog, runnerAnim.trigger],
     );
 
     const { state: game, status, resync } = useMercure({
         topic: gameId ? `runner_game_${gameId}` : null,
         fetchSnapshot,
         reduce: reduceAndLog,
-        onTransient: pushLog,
+        onTransient,
     });
 
     const {
@@ -573,6 +600,30 @@ export default function GameBoardScreen({ route }) {
         <Text style={styles.turnTitle}>Ход игрока: {currentTurnPlayer?.user?.username ?? '—'}</Text>
     );
 
+    // Общий элемент для обеих раскладок (было продублировано дважды —
+    // вынесено в переменную, чтобы новые пропы не пришлось синхронизировать
+    // руками в двух местах, см. runnerAnims/currentTurnPlayerId ниже).
+    const boardGridEl = (
+        <BoardGrid
+            gridData={gridData}
+            rows={rows}
+            cols={viewportCols}
+            segmentW={segmentW}
+            segmentH={segmentH}
+            windowStart={windowStart}
+            orientation={orientation}
+            containerWidth={roadContainerW}
+            containerHeight={roadContainerH}
+            runners={runners}
+            playerColorById={playerColorById}
+            selectedRunnerId={activeRunner?.id ?? null}
+            highlightedCells={highlightedCells}
+            runnerAnims={runnerAnim.anims}
+            currentTurnPlayerId={game.playerOrder}
+            onCellPress={handleCellPress}
+        />
+    );
+
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
             <ParallaxBackground />
@@ -686,40 +737,10 @@ export default function GameBoardScreen({ route }) {
                                     segmentSize={segmentH}
                                     totalHeight={roadContainerH}
                                 />
-                                <BoardGrid
-                                    gridData={gridData}
-                                    rows={rows}
-                                    cols={viewportCols}
-                                    segmentW={segmentW}
-                                    segmentH={segmentH}
-                                    windowStart={windowStart}
-                                    orientation={orientation}
-                                    containerWidth={roadContainerW}
-                                    containerHeight={roadContainerH}
-                                    runners={runners}
-                                    playerColorById={playerColorById}
-                                    selectedRunnerId={activeRunner?.id ?? null}
-                                    highlightedCells={highlightedCells}
-                                    onCellPress={handleCellPress}
-                                />
+                                {boardGridEl}
                             </View>
                         ) : (
-                            <BoardGrid
-                                gridData={gridData}
-                                rows={rows}
-                                cols={viewportCols}
-                                segmentW={segmentW}
-                                segmentH={segmentH}
-                                windowStart={windowStart}
-                                orientation={orientation}
-                                containerWidth={roadContainerW}
-                                containerHeight={roadContainerH}
-                                runners={runners}
-                                playerColorById={playerColorById}
-                                selectedRunnerId={activeRunner?.id ?? null}
-                                highlightedCells={highlightedCells}
-                                onCellPress={handleCellPress}
-                            />
+                            boardGridEl
                         )}
                     </RoadArea>
                     {/* bleed.top закрывает И вырез/статус-бар (insets.top), плюс

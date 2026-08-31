@@ -132,7 +132,14 @@ export default function RunnerCard({
             <View style={styles.cardRow}>
                 <View style={styles.leftArea}>
                     <View style={styles.headRow}>
-                        <RunnerToken type={runner.type} color={color} size={compact ? 30 : 36} selected={active} />
+                        <RunnerToken
+                            type={runner.type}
+                            status={runner.status}
+                            avatar
+                            color={color}
+                            size={compact ? 30 : 36}
+                            selected={active}
+                        />
 
                         <View style={styles.info}>
                             <Text style={[styles.name, compact && styles.nameCompact]} numberOfLines={1}>
