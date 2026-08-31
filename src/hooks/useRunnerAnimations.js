@@ -9,8 +9,12 @@ import { useCallback, useRef, useState } from 'react';
 // пользователя, 2026-08-31, после первого живого теста. См. также
 // RunnerTokenSlide.SLIDE_DURATION_MS — держим её в паре с ANIM_DURATION_MS.move,
 // чтобы скольжение между клетками не расходилось по времени с самой
-// pose-анимацией (шагами).
-const ANIM_DURATION_MS = { move: 1800, attack: 1800, gotShot: 1400, fly: 2200 };
+// pose-анимацией (шагами). move — ещё на 20% быстрее (2026-09-02, по прямому
+// запросу пользователя, "анимацию передвижений с сегмента на сегмент можно
+// сделать процентов на 20 быстрее") — 1800×0.8, в паре с SLIDE_DURATION_MS
+// там же (1700×0.8). attack/gotShot/fly не трогал — запрос был именно про
+// движение между клетками.
+const ANIM_DURATION_MS = { move: 1440, attack: 1800, gotShot: 1400, fly: 2200 };
 
 /**
  * Стейт-стор транзиентных анимаций бегунов (move/attack/gotShot/fly/destroyed)

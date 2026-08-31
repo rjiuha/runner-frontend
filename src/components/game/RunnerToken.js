@@ -1,8 +1,17 @@
 // src/components/game/RunnerToken.js
-import React from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Image, Platform, StyleSheet, View } from 'react-native';
 import { RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
+
+// Только Android/iOS — на вебе смена gif происходит без видимой задержки
+// декодирования, кроссфейд там просто не нужен (жалоба пользователя,
+// 2026-09-02: "анимации нормально работают в браузерной версии, но в
+// андроиде всё ещё какие-то блики между анимациями"). Короткий — маскирует
+// именно decode-паузу нового gif, не должен ощущаться как "анимация теперь
+// не сразу стартует".
+const IS_NATIVE = Platform.OS !== 'web';
+const CROSSFADE_MS = 120;
 
 /**
  * Иконка бегуна в цветном кольце владельца. Один и тот же компонент рисует
@@ -56,19 +65,31 @@ import { getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/r
  * низу своего родителя — за это отвечает ВНЕШНИЙ контейнер (см.
  * BoardGrid#styles.tokenLayerBottom), этот проп красит только внутреннее
  * позиционирование картинки относительно кольца.
+ *
+ * **Кроссфейд между анимациями, ТОЛЬКО native** (2026-09-02): прошлый фикс
+ * мигания (см. animKey ниже) убрал ПРИНУДИТЕЛЬНЫЙ remount на повторе одной
+ * анимации — но живой тест показал, что "блики, персонаж исчезает" остаются
+ * на Android даже между РАЗНЫМИ анимациями (idle→move, move→attack и т.п.),
+ * где `source` меняется на ДЕЙСТВИТЕЛЬНО другой файл. На вебе того же не
+ * видно (жалоба пользователя это прямо подтвердила) — то есть дело не в
+ * key/remount (уже проверено, тот путь чист), а в самой Android-декодировке
+ * НОВОГО gif (Fresco): между "старый кадр ушёл" и "новый готов" есть
+ * короткая пауза, в которую нативный <Image> держит пустой кадр. Починить
+ * САМУ декодировку из JS нельзя — вместо этого держим ПРЕДЫДУЩИЙ source
+ * видимым НЕПРОЗРАЧНЫМ слоем ПОД новым, пока новый набирает opacity
+ * 0→1 (CROSSFADE_MS) — старый кадр прикрывает паузу декодирования нового.
  */
 export default function RunnerToken({
     type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
     showRing = true, imageAlign = 'center', style,
 }) {
     const display = RUNNER_DISPLAY[type];
-    if (!display) return null;
 
-    const raw = avatar ? getRunnerAvatarImage(type, status) : getRunnerAnimationImage(type, status, anim);
+    const raw = display ? (avatar ? getRunnerAvatarImage(type, status) : getRunnerAnimationImage(type, status, anim)) : null;
     // {base, mask} — объект, а не обычный require-ассет (тот на вебе тоже
     // объект вида {uri,width,height}, поэтому проверяем именно свои поля).
     const isDualLayer = raw != null && typeof raw === 'object' && 'base' in raw && 'mask' in raw;
-    const source = isDualLayer ? raw : (raw ?? display.icon);
+    const source = display ? (isDualLayer ? raw : (raw ?? display.icon)) : null;
 
     // `key` у <Image> ниже — ВСЕГДА одна и та же строка ('base'/'mask'/'img'),
     // никогда не меняется. Раньше (до 2026-08-31, девятый заход) key нарочно
@@ -84,6 +105,28 @@ export default function RunnerToken({
     // одного и того же шага подряд — но это гораздо менее заметно, чем
     // видимое мигание.
     const animKey = avatar ? 'avatar' : 'stable';
+
+    // Кроссфейд — см. доку выше. Хуки вызываются БЕЗУСЛОВНО (до раннего
+    // return ниже) — правила хуков требуют одинакового порядка на каждый
+    // рендер, а display может оказаться пустым.
+    const prevRef = useRef(null); // { source, isDualLayer } последнего РЕАЛЬНО отрисованного слоя
+    const fade = useRef(new Animated.Value(1)).current;
+    const [fadingLayer, setFadingLayer] = useState(null); // предыдущий слой, пока играет кроссфейд
+
+    useEffect(() => {
+        if (!IS_NATIVE || !display) return;
+        const prev = prevRef.current;
+        if (prev && prev.source !== source) {
+            setFadingLayer(prev);
+            fade.setValue(0);
+            Animated.timing(fade, { toValue: 1, duration: CROSSFADE_MS, useNativeDriver: true }).start(() => {
+                setFadingLayer(null);
+            });
+        }
+        prevRef.current = { source, isDualLayer };
+    }, [source, isDualLayer, display, fade]);
+
+    if (!display) return null;
 
     const imgBoxStyle = { width: size * imageScale, height: size * imageScale };
     // НЕ StyleSheet.absoluteFillObject (top/left/right/bottom:0, без явных
@@ -111,27 +154,62 @@ export default function RunnerToken({
                 style,
             ]}
         >
-            {isDualLayer ? (
-                <View style={imgBoxStyle}>
-                    <Image
-                        key={`${animKey}-base`}
-                        source={source.base}
-                        style={imgLayerStyle}
-                        resizeMode="contain"
+            {/* Внешняя обёртка — ОБЫЧНЫЙ (не absolute) дочерний элемент кольца,
+                поэтому центрирование/прижатие к низу (imageAlign) работает
+                как и раньше, без изменений — сама рамка (imgBoxStyle) при
+                кроссфейде не меняется, только то, что внутри нее. Уходящий
+                кадр рисуется обычным потоком (задаёт размер рамки, как и
+                раньше без кроссфейда), новый — absolute-наложением ровно
+                той же формулой top:0/left:0 + явные width/height, что уже
+                используется для base/mask (imgLayerStyle) — НЕ
+                StyleSheet.absoluteFillObject, см. коммент у imgLayerStyle
+                выше про баг на вебе (тут неважно — кроссфейд только native). */}
+            <View style={imgBoxStyle}>
+                {fadingLayer && (
+                    // Предыдущий кадр — НЕПРОЗРАЧНЫЙ, лежит ПОД новым, пока тот
+                    // декодируется на Android. imgKey тут не важен (слой
+                    // статичен, сам себя размонтирует по завершении кроссфейда).
+                    <TokenImageLayer
+                        source={fadingLayer.source}
+                        isDualLayer={fadingLayer.isDualLayer}
+                        imgBoxStyle={imgBoxStyle}
+                        imgLayerStyle={imgLayerStyle}
+                        color={color}
+                        imgKey="fading"
                     />
-                    <Image
-                        key={`${animKey}-mask`}
-                        source={source.mask}
-                        style={imgLayerStyle}
-                        tintColor={color}
-                        resizeMode="contain"
+                )}
+                <Animated.View style={fadingLayer ? [imgLayerStyle, { opacity: fade }] : undefined}>
+                    <TokenImageLayer
+                        source={source}
+                        isDualLayer={isDualLayer}
+                        imgBoxStyle={imgBoxStyle}
+                        imgLayerStyle={imgLayerStyle}
+                        color={color}
+                        imgKey={animKey}
                     />
-                </View>
-            ) : (
-                <Image key={animKey} source={source} style={imgBoxStyle} resizeMode="contain" />
-            )}
+                </Animated.View>
+            </View>
         </View>
     );
+}
+
+/** Один слой картинки (dual-layer base+mask или одиночный) — вынесен, чтобы переиспользовать для текущего и уходящего (fade-out) кадра при кроссфейде. */
+function TokenImageLayer({ source, isDualLayer, imgBoxStyle, imgLayerStyle, color, imgKey }) {
+    if (isDualLayer) {
+        return (
+            <View style={imgBoxStyle}>
+                <Image key={`${imgKey}-base`} source={source.base} style={imgLayerStyle} resizeMode="contain" />
+                <Image
+                    key={`${imgKey}-mask`}
+                    source={source.mask}
+                    style={imgLayerStyle}
+                    tintColor={color}
+                    resizeMode="contain"
+                />
+            </View>
+        );
+    }
+    return <Image key={imgKey} source={source} style={imgBoxStyle} resizeMode="contain" />;
 }
 
 const styles = StyleSheet.create({
