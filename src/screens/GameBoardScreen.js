@@ -18,12 +18,14 @@ import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
+import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, computeFragmentBands } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
+import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
@@ -136,11 +138,24 @@ export default function GameBoardScreen({ route }) {
     // (lib/runnerAnimTriggers) — чистые функции "событие → что триггернуть",
     // сам стейт трогает только runnerAnim.trigger.
     const runnerAnim = useRunnerAnimations();
-    // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен только
-    // для anomaly, у которой нет activeRunner в самом событии, см.
-    // lib/runnerAnimTriggers). Обычный `game` из замыкания тут не годится —
-    // onTransient коллбэк не должен пересоздаваться на каждый рендер (иначе
-    // useMercure видел бы это как повод переподключаться, см. его cb-ref).
+    // Локальный стор жетонов повреждений (см. lib/runnerDamageTokens.js) —
+    // бэк не отдаёт ТИП жетона (Runner::toArray() только status), фронт сам
+    // копит его из потока событий — иначе кружки повреждений на RunnerCard
+    // всегда пустые (жалоба пользователя, 2026-08-31). Двухшаговая
+    // корреляция (см. reduceAndLog/onTransient ниже): транзиентное событие
+    // с типом жетона (damage/ricochet/rocket/stupor/anomaly) только
+    // ЗАПОМИНАЕТ тип, реальный жетон пишется лишь когда следом ПРИДЁТ
+    // версионный runner_damage — живьём поймано, что 'anomaly' сама по себе
+    // может означать чистый редирект без урона (см. подробный разбор в
+    // lib/runnerDamageTokens.js).
+    const runnerDamageTokens = useRunnerDamageTokens();
+    // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен для
+    // anomaly и для жетонов повреждений — оба берут activeRunner текущего
+    // ходящего игрока, ни то ни другое событие не несёт id бегуна само по
+    // себе, см. lib/runnerAnimTriggers и lib/runnerDamageTokens). Обычный
+    // `game` из замыкания тут не годится — onTransient коллбэк не должен
+    // пересоздаваться на каждый рендер (иначе useMercure видел бы это как
+    // повод переподключаться, см. его cb-ref).
     const gameRef = useRef(null);
     useEffect(() => {
         gameRef.current = game;
@@ -154,17 +169,40 @@ export default function GameBoardScreen({ route }) {
         (state, e) => {
             pushLog(e);
             handleVersionedRunnerAnimEvent(state, e, runnerAnim.trigger);
+            // Лечение возвращает бегуна к healthy — стираем локально
+            // накопленные жетоны повреждений, иначе кружки останутся
+            // закрашенными вопреки уже здоровому статусу.
+            if (e.event === 'ability_heal' && e.runner?.id != null) {
+                runnerDamageTokens.clearRunner(e.runner.id);
+            }
+            // Жетон повреждения записываем ТОЛЬКО здесь, на реальном
+            // ухудшении статуса — не на самом транзиентном событии с типом
+            // (см. lib/runnerDamageTokens.js: 'anomaly' в частности может
+            // означать чистый редирект без урона, живьём поймано, что
+            // считать его жетоном напрямую — ошибка).
+            const worsenedRunnerId = getWorsenedDamageRunnerId(state, e);
+            if (worsenedRunnerId != null) {
+                const type = runnerDamageTokens.consumePendingType(worsenedRunnerId);
+                if (type) runnerDamageTokens.recordToken(worsenedRunnerId, type);
+            }
             return runnerGameReducer(state, e);
         },
-        [pushLog, runnerAnim.trigger],
+        // Зависим от конкретных мемоизированных функций, не от всего объекта
+        // runnerDamageTokens — тот пересоздаётся на каждый рендер хука
+        // (новый литерал {tokensByRunner,...}), это пересоздавало бы
+        // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
+        // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
+        [pushLog, runnerAnim.trigger, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken],
     );
 
     const onTransient = useCallback(
         (e) => {
             pushLog(e);
             handleTransientRunnerAnimEvent(e, gameRef, runnerAnim.trigger);
+            const pending = identifyPendingDamageType(e, gameRef);
+            if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
         },
-        [pushLog, runnerAnim.trigger],
+        [pushLog, runnerAnim.trigger, runnerDamageTokens.notePendingType],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -293,9 +331,17 @@ export default function GameBoardScreen({ route }) {
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 ability: p.ability,
                 activeRunnerId: p.activeRunner ?? null,
-                runners: runners.filter((r) => r.playerId === p.id),
+                // damageTokens — с бэка НЕ приходит (см. hooks/useRunnerDamageTokens),
+                // подставляем из локального стора по String(id); дефолт [null,null]
+                // на случай, если локально ещё ничего не накопилось (свежий коннект).
+                runners: runners
+                    .filter((r) => r.playerId === p.id)
+                    .map((r) => ({
+                        ...r,
+                        damageTokens: runnerDamageTokens.tokensByRunner[String(r.id)] ?? r.damageTokens ?? [null, null],
+                    })),
             })),
-        [gamePlayers, runners],
+        [gamePlayers, runners, runnerDamageTokens.tokensByRunner],
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
