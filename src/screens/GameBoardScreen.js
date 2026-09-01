@@ -417,10 +417,16 @@ export default function GameBoardScreen({ route }) {
         }
 
         if (myStep === PLAYER_STEP.SHOOT && activeRunner) {
-            const targets = forwardNeighbors(activeRunner).filter((pos) => {
-                const occupant = findRunnerAt(runners, pos);
-                return occupant && occupant.type !== RUNNER_TYPES.REAPER && !DEAD_STATUSES.includes(occupant.status);
-            });
+            // Стрелять можно СТРОГО по прямой (UP) — по прямому запросу
+            // пользователя, 2026-09-02: диагонали (LEFT_UP/RIGHT_UP), даже
+            // визуально "передние" (см. hexDirection.js), для выстрела не
+            // считаются — только тот, кто прямо впереди.
+            const targets = forwardNeighbors(activeRunner)
+                .filter((pos) => pos.direction === 'UP')
+                .filter((pos) => {
+                    const occupant = findRunnerAt(runners, pos);
+                    return occupant && occupant.type !== RUNNER_TYPES.REAPER && !DEAD_STATUSES.includes(occupant.status);
+                });
             return { highlightedCells: new Set(targets.map(cellKey)), tapMode: 'shoot' };
         }
 
@@ -504,7 +510,10 @@ export default function GameBoardScreen({ route }) {
             }
             if (tapMode === 'shoot') {
                 const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
-                const neighbor = forwardNeighbors(activeRunner).find((n) => cellKey(n) === cellKey(target));
+                // Только UP — см. highlightedCells выше, диагонали для выстрела не считаются.
+                const neighbor = forwardNeighbors(activeRunner).find(
+                    (n) => n.direction === 'UP' && cellKey(n) === cellKey(target),
+                );
                 if (!neighbor) return;
                 runAction(() => runnerGameApi.shoot(true, neighbor.direction));
                 return;
