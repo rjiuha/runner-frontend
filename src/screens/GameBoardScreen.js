@@ -46,6 +46,14 @@ const STATUS_LABEL = {
 // коллизии (game.extraTurnPlayer) долго не отвечает — бэк это сам не разруливает.
 const COLLISION_STUCK_TIMEOUT = 18000;
 
+// Задержка перед показом кнопок "Использовать/Перебросить" (и перед авто-
+// разрешением "мяча", см. myBallCollision) — чтобы игрок сначала УВИДЕЛ
+// анимацию столкновения, а не решал вслепую в момент, когда extraTurnPlayer
+// только что появился. С запасом на слайд+move-позу приезжающего бегуна
+// (SLIDE_DURATION_MS/ANIM_DURATION_MS.move, ~1400мс) плюс минимальный показ
+// самой позы столкновения (COLLISION_MIN_HOLD_MS в BoardGrid, 1000мс).
+const COLLISION_ANIM_DELAY_MS = 2200;
+
 const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
 const SEGMENT_KEYS = ['trackBegin', 'trackMiddle', 'trackEnd'];
 
@@ -271,6 +279,22 @@ export default function GameBoardScreen({ route }) {
     const myStep = myPlayer?.step;
     const myCollision = !!myPlayer && game?.extraTurnPlayer != null
         && String(game.extraTurnPlayer) === String(myPlayer.id);
+
+    // "Мяч" (RUNNER_TYPES.BALL) — неконтролируемая коллизия (побочный эффект
+    // вскрытия danger-клетки, RunnerBallInitService на бэке), в отличие от
+    // контролируемой (игрок сам зашёл на клетку с чужим бегуном). Бэк гонит
+    // ОБЕ через один и тот же Collision::handle() и ОДИНАКОВО выставляет
+    // extraTurnPlayer текущему игроку — отличить их можно только по наличию
+    // в game.runners ничейного бегуна type==='ball' (playerId==null, бэк
+    // никогда не вызывает setPlayer() на нём). Прямого id, КАКОЙ именно мяч
+    // относится к текущей коллизии, бэк не отдаёт — но раз мяч создаётся
+    // непосредственно перед коллизией и потребляется её разрешением, сам
+    // факт присутствия ЛЮБОГО мяча, пока висит extraTurnPlayer, уже
+    // достаточно надёжный сигнал. По прямому запросу пользователя,
+    // 2026-09-02: у "мяча" выбора "принять/перебросить" быть не должно
+    // вообще — см. handleCollision-эффект ниже.
+    const myBallCollision = myCollision
+        && runners.some((r) => r.type === RUNNER_TYPES.BALL && r.playerId == null);
 
     // Можно ли сейчас выбрать этого бегуна дропом кубика — и обычным способом
     // (dice==null), и накатом (dice===0, уже полностью проехал в этом раунде).
@@ -607,6 +631,43 @@ export default function GameBoardScreen({ route }) {
         return () => clearTimeout(t);
     }, [game?.extraTurnPlayer]);
 
+    // Кнопки "Использовать/Перебросить" не должны появляться РАНЬШЕ, чем
+    // игрок увидит саму анимацию столкновения (жалоба пользователя,
+    // 2026-09-02: банер с решением всплывал мгновенно вместе с
+    // extraTurnPlayer, пока приезжающий бегун ещё визуально скользил к
+    // клетке — решение приходилось принимать "вслепую"). См.
+    // COLLISION_ANIM_DELAY_MS выше — не завязано на реальное состояние
+    // очереди анимаций (GameBoardScreen её не видит на уровне конкретной
+    // пары бегунов), простой таймер с запасом.
+    const [collisionDecisionReady, setCollisionDecisionReady] = useState(false);
+    useEffect(() => {
+        setCollisionDecisionReady(false);
+        if (game?.extraTurnPlayer == null) return undefined;
+        const t = setTimeout(() => setCollisionDecisionReady(true), COLLISION_ANIM_DELAY_MS);
+        return () => clearTimeout(t);
+    }, [game?.extraTurnPlayer]);
+
+    // "Мяч" (см. myBallCollision выше) — неконтролируемая коллизия, у игрока
+    // не должно быть выбора вообще (прямой запрос пользователя, 2026-09-02).
+    // Бэк всё равно требует явный вызов /collision, чтобы снять
+    // extraTurnPlayer и применить уже брошенный результат — форсируем
+    // accept=true САМИ, без участия игрока, как только анимация столкновения
+    // успела показаться (тот же collisionDecisionReady, что и у ручного
+    // баннера). ballAutoResolvedRef — защита от повторного вызова: после
+    // runAction busy на мгновение снова станет false, а СЕРВЕРНОЕ
+    // extraTurnPlayer=null может прийти через Mercure с задержкой — без
+    // этой защиты эффект успел бы выстрелить второй раз в этом окне.
+    const ballAutoResolvedRef = useRef(false);
+    useEffect(() => {
+        if (game?.extraTurnPlayer == null) ballAutoResolvedRef.current = false;
+    }, [game?.extraTurnPlayer]);
+    useEffect(() => {
+        if (myBallCollision && collisionDecisionReady && !busy && !ballAutoResolvedRef.current) {
+            ballAutoResolvedRef.current = true;
+            handleCollision(true);
+        }
+    }, [myBallCollision, collisionDecisionReady, busy, handleCollision]);
+
     if (!game) {
         return (
             <View style={styles.wrapper}>
@@ -711,12 +772,25 @@ export default function GameBoardScreen({ route }) {
             {game.extraTurnPlayer != null && (
                 <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]}>
                     <Text style={styles.collisionText}>
-                        {myCollision ? 'Столкновение! Принять?' : 'Ожидаем реакцию игрока на столкновение…'}
+                        {/* Столкновение происходит в любом случае — отказаться от него
+                            нельзя (по правилам выбор есть только у более крупного бегуна
+                            при столкновении разных размеров, см. myCollision выше). Выбор
+                            здесь — использовать уже брошенный кубик или перебросить его
+                            заново, а не "принять/отклонить само столкновение" — прежняя
+                            формулировка вводила в заблуждение (жалоба пользователя,
+                            2026-09-02). Для "мяча" (myBallCollision) выбора нет вообще —
+                            это неконтролируемая коллизия (danger-клетка), не столкновение
+                            с чужим бегуном, разрешается сама (см. эффект выше). */}
+                        {myBallCollision
+                            ? 'Столкновение с препятствием…'
+                            : myCollision
+                                ? 'Столкновение! Использовать бросок или перебросить?'
+                                : 'Ожидаем реакцию игрока на столкновение…'}
                     </Text>
-                    {myCollision && !busy && (
+                    {myCollision && !myBallCollision && !busy && collisionDecisionReady && (
                         <>
-                            <Button title="Принять" variant="success" onPress={() => handleCollision(true)} style={styles.collisionBtn} />
-                            <Button title="Отклонить" variant="danger" onPress={() => handleCollision(false)} style={styles.collisionBtn} />
+                            <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.collisionBtn} />
+                            <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.collisionBtn} />
                         </>
                     )}
                     {!myCollision && showStuckRefresh && (

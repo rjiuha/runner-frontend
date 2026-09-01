@@ -410,8 +410,17 @@ export const DAMAGE_TOKENS = {
   anomaly: { label: 'Аномалия', short: 'АНМ', color: colors.primary },
 };
 
+// Отдельный "настоящий синий" (indigo) для игрока-blue — НЕ colors.info
+// (тот делит смысл с обычным UI: спиннеры, инфо-кнопки и т.п., трогать его
+// ради одного игрового цвета нельзя). Заменён по прямому запросу
+// пользователя, 2026-09-02: старый colors.info (#3498db) визуально сливался
+// с голубоватыми тайлами дороги на доске. Первая замена (royalBlue #1f51ff)
+// всё ещё казалась "голубоватой" — indigo взят из уже подготовленных
+// кандидатов (см. scratchpad-превью того же захода).
+const PLAYER_BLUE = '#2e3192';
+
 /** Цвета для визуального различения бегунов разных игроков на общей доске (фолбэк по индексу) */
-export const PLAYER_COLORS = [colors.danger, colors.info, colors.success, colors.warning];
+export const PLAYER_COLORS = [colors.danger, PLAYER_BLUE, colors.success, colors.warning];
 
 /**
  * Цвет игрока — зеркалит PlayerColor (бэк, Service/Game/RunnerGame/Enum/PlayerColor.php).
@@ -421,7 +430,7 @@ export const PLAYER_COLORS = [colors.danger, colors.info, colors.success, colors
  */
 export const PLAYER_COLOR_HEX = {
   red: colors.danger,
-  blue: colors.info,
+  blue: PLAYER_BLUE,
   yellow: colors.warning,
   green: colors.success,
 };

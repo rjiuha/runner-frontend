@@ -283,9 +283,9 @@ export default function BoardGrid({
             const localCol = globalCol - windowStart;
             const x = isPortrait
                 ? row * segmentW
-                : localCol * segmentW + (row % 2 !== 0 ? segmentW / 2 : 0);
+                : localCol * segmentW + (row % 2 === 0 ? segmentW / 2 : 0);
             const y = isPortrait
-                ? (cols - 1 - localCol) * segmentH + (row % 2 !== 0 ? segmentH / 2 : 0)
+                ? (cols - 1 - localCol) * segmentH + (row % 2 === 0 ? segmentH / 2 : 0)
                 : row * segmentH;
 
             if (visible.length === 2) {
@@ -380,7 +380,7 @@ export default function BoardGrid({
                 // Нижний край клетки localCol в дорожке lane — та же формула, что
                 // у tokenOverlay.y (верх клетки), + segmentH.
                 const edgeY = (lane) =>
-                    (cols - 1 - localCol) * segmentH + (lane % 2 !== 0 ? segmentH / 2 : 0) + segmentH;
+                    (cols - 1 - localCol) * segmentH + (lane % 2 === 0 ? segmentH / 2 : 0) + segmentH;
                 for (let lane = 0; lane < rows; lane++) {
                     const y = edgeY(lane);
                     segments.push({
@@ -407,7 +407,7 @@ export default function BoardGrid({
                 // Левый край клетки localCol в дорожке lane — та же формула, что
                 // у tokenOverlay.x (альбомная ветка не реверснута, левый край и
                 // так граничит с предыдущей клеткой, доп. смещения не нужно).
-                const edgeX = (lane) => localCol * segmentW + (lane % 2 !== 0 ? segmentW / 2 : 0);
+                const edgeX = (lane) => localCol * segmentW + (lane % 2 === 0 ? segmentW / 2 : 0);
                 for (let lane = 0; lane < rows; lane++) {
                     const x = edgeX(lane);
                     segments.push({
@@ -454,7 +454,7 @@ export default function BoardGrid({
                             style={[
                                 isPortrait ? styles.laneColumn : styles.row,
                                 isPortrait && { height: cols * segmentH },
-                                laneIdx % 2 !== 0 &&
+                                laneIdx % 2 === 0 &&
                                     (isPortrait ? { marginTop: segmentH / 2 } : { marginLeft: segmentW / 2 }),
                             ]}
                         >

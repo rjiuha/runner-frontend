@@ -21,7 +21,7 @@ import { forwardNeighbors, neighborPosition } from './hexDirection';
  *     движения, см. CLAUDE.md про то, что один /move может дать несколько
  *     Action::TYPE_MOVE подряд — у каждого своя пара старая/новая позиция,
  *     каждая тут своя forwardNeighbors-проверка). Вместе с направлением —
- *     depthChanged/targetLaneOdd, нужны constants/runnerAnimations
+ *     depthChanged/targetLaneShifted, нужны constants/runnerAnimations
  *     #resolveMoveAssetDirection, чтобы отличить чисто боковой шаг на
  *     "отставшую" (смещённую на пол-сегмента назад) дорожку от диагонали
  *     вперёд — первое визуально идёт south-*, не north-*.
@@ -68,14 +68,15 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
             (n) => n.segment === patch.segment && n.positionX === patch.positionX && n.positionY === patch.positionY,
         );
         if (neighbor) {
-            // depthChanged/targetLaneOdd — для resolveMoveAssetDirection
+            // depthChanged/targetLaneShifted — для resolveMoveAssetDirection
             // (constants/runnerAnimations): чисто боковой шаг (глубина не
-            // изменилась) на дорожку со сдвигом "назад" (нечётный индекс)
-            // визуально идёт south-*, не north-*, см. комментарий там же.
+            // изменилась) на дорожку со сдвигом "назад" (чётный индекс, см.
+            // BoardGrid — 2026-09-02, сдвиг переключён с нечётных дорожек на
+            // чётные) визуально идёт south-*, не north-*, см. комментарий там же.
             trigger(patch.id, 'move', {
                 direction: neighbor.direction,
                 depthChanged: patch.positionX !== prev.positionX,
-                targetLaneOdd: patch.positionY % 2 !== 0,
+                targetLaneShifted: patch.positionY % 2 === 0,
                 toPosition,
             });
         } else {
@@ -129,15 +130,15 @@ export function handleTransientRunnerAnimEvent(e, gameRef, trigger) {
             const game = gameRef.current;
             const shooter = game?.runners?.find((r) => r.id === e.activeRunner);
             let depthChanged = false;
-            let targetLaneOdd = false;
+            let targetLaneShifted = false;
             if (shooter?.segment != null) {
                 const target = neighborPosition(shooter, direction);
                 if (target) {
                     depthChanged = target.positionX !== shooter.positionX;
-                    targetLaneOdd = target.positionY % 2 !== 0;
+                    targetLaneShifted = target.positionY % 2 === 0;
                 }
             }
-            trigger(e.activeRunner, 'attack', { direction, depthChanged, targetLaneOdd });
+            trigger(e.activeRunner, 'attack', { direction, depthChanged, targetLaneShifted });
             return;
         }
         case 'anomaly': {
