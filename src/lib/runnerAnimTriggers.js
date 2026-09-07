@@ -3,6 +3,37 @@ import { statusWorsened } from '../constants/runnerAnimations';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
 import { RUNNER_TYPES } from '../constants/GameConstants';
 
+// Сколько мс держим "недавно получил выстрел" по runnerId (2026-09-07, живой
+// прогон — "вместо fly отработала move при отбросе выстрелом"). Эвристика
+// move/fly для runner_save (см. ниже) считает knockback по расстоянию —
+// forwardNeighbors(prev).find(...) — но случайное направление отброса от
+// выстрела иногда СОВПАДАЕТ с одним из 3 forward-соседей старой позиции,
+// и тогда знакомая эвристика ошибочно классифицирует явный отброс как
+// обычный шаг (move). Раз мы точно знаем, что этого бегуна только что
+// подстрелили (runner_damage с ухудшением статуса, см. ниже), последующее
+// перемещение того же бегуна форсируем как 'fly', не полагаясь на эвристику
+// расстояния. TTL — на случай, если urner_damage без последующего
+// перемещения (просто урон без отброса) никогда не "заберёт" метку сам —
+// не должна протухать бесконечно.
+const RECENTLY_SHOT_TTL_MS = 4000;
+const recentlyShotRunners = new Map(); // runnerId -> timestamp
+
+function markRecentlyShot(runnerId) {
+    // Заодно чистим протухшие записи — карта живёт весь сеанс модуля,
+    // не хотим копить мусор за долгую партию.
+    for (const [id, ts] of recentlyShotRunners) {
+        if (Date.now() - ts > RECENTLY_SHOT_TTL_MS) recentlyShotRunners.delete(id);
+    }
+    recentlyShotRunners.set(runnerId, Date.now());
+}
+
+function consumeRecentlyShot(runnerId) {
+    const ts = recentlyShotRunners.get(runnerId);
+    if (ts == null) return false;
+    recentlyShotRunners.delete(runnerId);
+    return Date.now() - ts <= RECENTLY_SHOT_TTL_MS;
+}
+
 /**
  * Смотрит на versioned-событие ДО того, как его применит runnerGameReducer
  * (нужно старое состояние бегуна для сравнения), и решает, нужно ли завести
@@ -91,7 +122,13 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         const neighbor = forwardNeighbors(prev).find(
             (n) => n.segment === patch.segment && n.positionX === patch.positionX && n.positionY === patch.positionY,
         );
-        if (neighbor) {
+        // Если бегуна только что подстрелили (см. RECENTLY_SHOT_TTL_MS выше),
+        // это ВСЕГДА отброс, даже если он случайно приземлился на клетку,
+        // которая формально является forward-соседом старой позиции —
+        // эвристика расстояния тут заведомо ошибается (жалоба пользователя,
+        // 2026-09-07: "вместо fly отработала move при отбросе выстрелом").
+        const wasJustShot = consumeRecentlyShot(patch.id);
+        if (neighbor && !wasJustShot) {
             // depthChanged/targetLaneShifted — для resolveMoveAssetDirection
             // (constants/runnerAnimations): чисто боковой шаг (глубина не
             // изменилась) на дорожку со сдвигом "назад" (чётный индекс, см.
@@ -104,6 +141,39 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
                 toPosition,
             });
         } else {
+            // Отскок/телепорт (столкновение, выстрел, аномалия, ракета…).
+            // Коллизионный частный случай (жалоба пользователя, 2026-09-07,
+            // "скаут-vs-скаут"/"скаут наступил на danger с Мячом внутри" —
+            // коллизионная поза ни разу не показалась, сразу finalное
+            // состояние): если СТАРАЯ клетка ЭТОГО бегуна (та, что он сейчас
+            // покидает) в prevGame уже занята ДРУГИМ бегуном — значит именно
+            // ОН только что туда заехал и вытолкнул текущего. Раз оба
+            // события (заезд победителя + отброс проигравшего) почти всегда
+            // приходят одним и тем же тиком (React 18/19 авто-батчинг —
+            // см. разбор в CLAUDE.md), сам факт "оба на одной клетке" мог бы
+            // никогда не отрендериться, и BoardGrid#pushPair (коллизионная
+            // поза) не успевала сработать. Фикс — НЕ телепортируем сразу:
+            // сперва проигрываем синтетический шаг 'wait' (тихо стоим на
+            // СТАРОЙ, уже общей клетке — getRunnerAnimationImage откатывается
+            // на idle для незнакомого kind) длительностью с запасом больше
+            // ANIM_DURATION_MS.move победителя — за это время он успевает
+            // доиграть СВОЮ 'move'-позу и "осесть" (перестать быть isArriving
+            // в BoardGrid), и тогда оба settled на одной клетке хотя бы один
+            // рендер — ровно момент, когда пара покажется. Только ПОТОМ
+            // реальный 'fly' уводит проигравшего в его новую клетку.
+            // Не 100%-надёжная синхронизация (если у победителя была ДЛИННАЯ
+            // очередь предыдущих шагов multi-hop — см. известные оговорки в
+            // CLAUDE.md про очередь по runnerId), но покрывает типовой случай
+            // одного хопа, который и описал пользователь.
+            const occupant = prevGame?.runners?.find(
+                (r) => r.id !== patch.id
+                    && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
+            );
+            if (occupant) {
+                trigger(patch.id, 'wait', {
+                    toPosition: { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY },
+                });
+            }
             trigger(patch.id, 'fly', { toPosition });
         }
         return;
@@ -134,6 +204,10 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
             if (reaperHere) trigger(reaperHere.id, 'bomb', {});
         } else {
             trigger(patch.id, 'gotShot');
+            // Метим — см. RECENTLY_SHOT_TTL_MS/consumeRecentlyShot выше:
+            // следующий runner_save ЭТОГО бегуна (если он ещё придёт) должен
+            // безусловно считаться отбросом (fly), не обычным шагом.
+            markRecentlyShot(patch.id);
         }
         return;
     }

@@ -1,7 +1,7 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR } from '../../constants/GameConstants';
+import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import RunnerToken from './RunnerToken';
 import RunnerTokenSlide from './RunnerTokenSlide';
@@ -75,6 +75,9 @@ export default function BoardGrid({
     runnerAnims = null,
     runnerVisualPositions = null,
     currentTurnPlayerId = null,
+    hiddenRunnerIds = null,
+    onCollisionPoseStart = null,
+    reaperPreview = null,
     onCellPress,
 }) {
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
@@ -84,13 +87,22 @@ export default function BoardGrid({
     // подробный разбор в useRunnerAnimations. Как только очередь опустеет,
     // runnerVisualPositions[id] пропадает, и клетка снова берётся из runner
     // напрямую (к этому моменту она уже совпадает с последним шагом очереди).
+    // Бегуны, чья 'destroyed'-анимация уже доиграла (см.
+    // useRunnerAnimations#hiddenIds) — исключаем ИЗ ВСЕГО (индексации по
+    // клеткам, коллизионных пар и т.п.), не только из финального рендера, по
+    // прямому запросу пользователя, 2026-09-07: уничтоженный бегун должен
+    // полностью выбыть с доски, а не висеть в позе уничтожения вечно.
+    const liveRunners = useMemo(
+        () => (hiddenRunnerIds && hiddenRunnerIds.size ? runners.filter((r) => !hiddenRunnerIds.has(r.id)) : runners),
+        [runners, hiddenRunnerIds],
+    );
     const effectiveRunners = useMemo(() => {
-        if (!runnerVisualPositions || Object.keys(runnerVisualPositions).length === 0) return runners;
-        return runners.map((r) => {
+        if (!runnerVisualPositions || Object.keys(runnerVisualPositions).length === 0) return liveRunners;
+        return liveRunners.map((r) => {
             const pos = runnerVisualPositions[r.id];
             return pos ? { ...r, ...pos } : r;
         });
-    }, [runners, runnerVisualPositions]);
+    }, [liveRunners, runnerVisualPositions]);
     const runnersByCell = useMemo(() => indexRunnersByCell(effectiveRunners), [effectiveRunners]);
     // Кольцо-токен — увеличено с 0.72 до 0.82 от слота (2026-08-31, девятый
     // заход) по прямому запросу пользователя: одиночный персонаж должен быть
@@ -317,6 +329,18 @@ export default function BoardGrid({
                     hold = { until: now + COLLISION_MIN_HOLD_MS, x, y, leftRunner, rightRunner };
                     collisionHoldsRef.current[pairKey] = hold;
                     setTimeout(() => setHoldTick((t) => t + 1), COLLISION_MIN_HOLD_MS + 30);
+                    // Сигнал наружу "поза столкновения только что появилась"
+                    // — GameBoardScreen играет звук столкновения РОВНО в этот
+                    // момент (жалоба пользователя, 2026-09-07: раньше звук
+                    // стоял на game.extraTurnPlayer, что совпадало с началом
+                    // движения заезжающего бегуна, а не с самой позой).
+                    // setTimeout(...,0) — не дёргаем колбэк родителя ПРЯМО во
+                    // время рендера (эта useMemo уже мутирует collisionHoldsRef
+                    // как задокументированное исключение, но вызов чужого
+                    // setState-триггерящего колбэка прямо в рендере — другой,
+                    // более рискованный случай) — откладываем на следующий
+                    // тик, как и holdTick парой строк выше.
+                    if (onCollisionPoseStart) setTimeout(() => onCollisionPoseStart(pairKey), 0);
                 } else {
                     hold.x = x; hold.y = y; // пока реально вместе — держим позицию свежей
                 }
@@ -353,7 +377,37 @@ export default function BoardGrid({
     }, [
         runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait,
         currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims, isNativeToken, holdTick,
+        onCollisionPoseStart,
     ]);
+
+    // Локальное превью "прилёта" Жнеца ИЗ-ЗА КРАЯ карты (2026-09-07, по
+    // прямому запросу пользователя) — НЕ настоящий бегун из `runners` (у него
+    // ещё нет реального runnerId, бэк узнает о размещении только вызовом
+    // /ability, который отправляется ПОСЛЕ выбора направления, см.
+    // GameBoardScreen#handleReaperShoot), а чисто визуальный элемент,
+    // построенный ТОЙ ЖЕ формулой x/y, что и обычные токены (см. цикл по
+    // runnersByCell выше). `enterFrom` — точка ЗА пределами видимой доски по
+    // боковой оси (row*segmentW), в ту же сторону, что и сама pose-анимация
+    // 'start'/move[side] (see RUNNER_ANIMATION_SETS.reaper) — на первом же
+    // рендере RunnerTokenSlide проигрывает слайд оттуда (см. её enterFrom
+    // проп). Пока не reaperPreview.settled — держим анимацию 'start' (ходьба),
+    // после — просто idle (осел на месте, ждём выбора направления). Не
+    // проверено живьём (нет доступа к устройству в этой сессии) — направление
+    // "откуда приезжает" (east=слева, west=справа) выбрано по аналогии с
+    // компасом, не подтверждено на реальном ассете.
+    const reaperPreviewItem = useMemo(() => {
+        if (!reaperPreview) return null;
+        const { segment, positionX, positionY, side } = reaperPreview;
+        const globalCol = segment * BOARD_LAYOUT.COLS + positionX;
+        if (globalCol < windowStart || globalCol >= windowEnd) return null;
+        const localCol = globalCol - windowStart;
+        const row = positionY;
+        const x = isPortrait ? row * segmentW : localCol * segmentW + (row % 2 === 0 ? segmentW / 2 : 0);
+        const y = isPortrait ? (cols - 1 - localCol) * segmentH + (row % 2 === 0 ? segmentH / 2 : 0) : row * segmentH;
+        const enterOffset = segmentW * 3;
+        const enterFrom = { x: side === 'east' ? x - enterOffset : x + enterOffset, y };
+        return { x, y, enterFrom };
+    }, [reaperPreview, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
 
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
     // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
@@ -573,6 +627,29 @@ export default function BoardGrid({
                             )}
                         </RunnerTokenSlide>
                     ))}
+                    {reaperPreviewItem && (
+                        <RunnerTokenSlide
+                            key="__reaperPreview__"
+                            x={reaperPreviewItem.x}
+                            y={reaperPreviewItem.y}
+                            width={segmentW}
+                            height={segmentH}
+                            style={isNativeToken ? styles.tokenLayerBottom : styles.tokenLayer}
+                            windowStart={windowStart}
+                            enterFrom={reaperPreviewItem.enterFrom}
+                        >
+                            <RunnerToken
+                                type={RUNNER_TYPES.REAPER}
+                                status={RUNNER_STATUS.HEALTHY}
+                                color={reaperPreview.color}
+                                size={tokenSize}
+                                imageScale={BOARD_TOKEN_IMAGE_SCALE}
+                                showRing={false}
+                                imageAlign={isNativeToken ? 'bottom' : 'center'}
+                                anim={reaperPreview.settled ? null : { kind: 'start', side: reaperPreview.side }}
+                            />
+                        </RunnerTokenSlide>
+                    )}
                 </View>
 
                 <View

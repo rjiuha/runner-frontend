@@ -780,26 +780,29 @@ const droneYellow = {
 
 // Мяч (RUNNER_TYPES.BALL) — ничейный обструкт-хазард (RunnerBallInitService
 // на бэке, playerId всегда null), НЕ игрок, поэтому НЕТ per-player тонировки
-// — один фиксированный вид на всю игру. Цвет выбран пользователем живым
-// перебором 10 кандидатов (crimson, см. CLAUDE.md) — сгенерированы ВСЕ 10 на
-// диске (obstacle_*_{crimson,orange,gold,lime,teal,indigo,violet,magenta,
-// silver,white}.gif), если понадобится сменить — только поменять суффикс
-// ниже, картинки уже готовы, перегенерировать не нужно. Нет move/attack —
-// мяч не двигается и не стреляет сам, только idle/fly (перелёт при
-// столкновении)/collision (пара при столкновении с бегуном)/destroyed
-// (после разрешения)/start (момент появления из danger-клетки). Один и тот
-// же набор во ВСЕХ 4 цветовых слотах — RunnerToken всё равно резолвит
-// colorKeyForHex(color) для КАКОГО-ТО ключа (ball token красится в hex,
-// который не совпадает ни с одним PLAYER_COLOR_HEX, colorKeyForHex упадёт в
-// дефолтный 'blue' — не важно, все 4 слота отдают один и тот же файл).
+// — один фиксированный вид на всю игру. Цвет — white (2026-09-07, живой
+// прогон выявил, что исходный crimson визуально путался с игроком red);
+// выбран пользователем из 10 предложенных вариантов, специально избегая
+// сходства со всеми 4 цветами игроков (red/indigo-blue/yellow/green).
+// Сгенерированы ВСЕ 10 кандидатов на диске (obstacle_*_{crimson,orange,gold,
+// lime,teal,indigo,violet,magenta,silver,white}.gif) — если понадобится
+// сменить ещё раз, достаточно поменять суффикс ниже, картинки уже готовы,
+// перегенерировать не нужно. Нет move/attack — мяч не двигается и не
+// стреляет сам, только idle/fly (перелёт при столкновении)/collision (пара
+// при столкновении с бегуном)/destroyed (после разрешения)/start (момент
+// появления из danger-клетки). Один и тот же набор во ВСЕХ 4 цветовых слотах
+// — RunnerToken всё равно резолвит colorKeyForHex(color) для КАКОГО-ТО ключа
+// (ball token красится в hex, который не совпадает ни с одним
+// PLAYER_COLOR_HEX, colorKeyForHex упадёт в дефолтный 'blue' — не важно, все
+// 4 слота отдают один и тот же файл).
 const ballFixed = {
-    idle: require('../assets/images/runners/obstacle/obstacle_idle_crimson.gif'),
-    fly: require('../assets/images/runners/obstacle/obstacle_fly_crimson.gif'),
-    destroyed: require('../assets/images/runners/obstacle/obstacle_destroyed_crimson.gif'),
-    start: require('../assets/images/runners/obstacle/obstacle_start_crimson.gif'),
+    idle: require('../assets/images/runners/obstacle/obstacle_idle_white.gif'),
+    fly: require('../assets/images/runners/obstacle/obstacle_fly_white.gif'),
+    destroyed: require('../assets/images/runners/obstacle/obstacle_destroyed_white.gif'),
+    start: require('../assets/images/runners/obstacle/obstacle_start_white.gif'),
     collision: {
-        east: require('../assets/images/runners/obstacle/obstacle_collision_east_crimson.gif'),
-        west: require('../assets/images/runners/obstacle/obstacle_collision_west_crimson.gif'),
+        east: require('../assets/images/runners/obstacle/obstacle_collision_east_white.gif'),
+        west: require('../assets/images/runners/obstacle/obstacle_collision_west_white.gif'),
     },
 };
 

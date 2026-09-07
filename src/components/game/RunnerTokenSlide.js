@@ -54,8 +54,15 @@ const SLIDE_DURATION_MS = 1360;
  * МГНОВЕННО (сброс translate в 0 без Animated.timing), не дожидаясь
  * следующего реального перемещения бегуна, которое уже будет анимировано
  * как обычно.
+ *
+ * `enterFrom` (2026-09-07, Жнец — см. GameBoardScreen#reaperPreview) —
+ * необязательные {x,y}, ОТКУДА должен приехать элемент на своём первом же
+ * рендере (обычно точка за краем видимой доски), вместо обычного правила
+ * "первый рендер — ехать неоткуда, ставим сразу". Не влияет на поведение,
+ * если не передан — существующие токены первый раз появляются мгновенно,
+ * как и раньше.
  */
-export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart }) {
+export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart, enterFrom }) {
     const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
     const prevPos = useRef(null);
     const prevWindowStart = useRef(windowStart);
@@ -67,16 +74,17 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
         const resized = prevSize.current.width !== width || prevSize.current.height !== height;
         prevSize.current = { width, height };
 
-        if (prevPos.current == null) {
-            prevPos.current = { x, y };
-            return; // первый рендер — ехать неоткуда
-        }
-        const dx = prevPos.current.x - x;
-        const dy = prevPos.current.y - y;
+        const isFirstRender = prevPos.current == null;
+        const fromPos = isFirstRender ? (enterFrom ?? { x, y }) : prevPos.current;
         prevPos.current = { x, y };
+
+        if (isFirstRender && !enterFrom) return; // обычный первый рендер — ехать неоткуда
+
+        const dx = fromPos.x - x;
+        const dy = fromPos.y - y;
         if (dx === 0 && dy === 0) return;
 
-        if (scrolled || resized) {
+        if (!isFirstRender && (scrolled || resized)) {
             translate.setValue({ x: 0, y: 0 }); // мгновенно, как и сами сегменты сетки
             return;
         }
@@ -87,7 +95,7 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
             duration: SLIDE_DURATION_MS,
             useNativeDriver: true,
         }).start();
-    }, [x, y, width, height, windowStart, translate]);
+    }, [x, y, width, height, windowStart, translate, enterFrom]);
 
     return (
         <Animated.View

@@ -16,6 +16,23 @@ import { useCallback, useRef, useState } from 'react';
 // движение между клетками.
 const ANIM_DURATION_MS = { move: 1440, attack: 1800, gotShot: 1400, fly: 2200, start: 2200, bomb: 1800 };
 
+// 'wait' — синтетический шаг очереди (не приходит с бэка), см.
+// lib/runnerAnimTriggers.js: держит проигравшего коллизию на общей клетке,
+// пока победитель доигрывает СВОЮ 'move'-позу, чтобы BoardGrid успел
+// отрендерить коллизионную позу хотя бы один кадр, прежде чем проигравший
+// реально улетит (fly). Длительность — с запасом больше ANIM_DURATION_MS.move
+// (1440мс), не тютелька-в-тютельку, чтобы victim гарантированно "осел"
+// позже победителя, а не одновременно/раньше (2026-09-07).
+const KNOCKBACK_WAIT_MS = 1650;
+
+// 'destroyed' сознательно НЕ имеет записи здесь (терминальный шаг, не идёт
+// через обычный setTimeout ниже — см. advanceQueue) — DESTROYED_HIDE_DELAY_MS
+// ниже управляет ОТДЕЛЬНЫМ таймером, который прячет токен с доски после того,
+// как анимация уничтожения успела показаться (по прямому запросу
+// пользователя, 2026-09-07 — "хочется, чтобы персонаж исчез с дороги", а не
+// висел там вечно в позе уничтожения).
+const DESTROYED_HIDE_DELAY_MS = 1800;
+
 /**
  * Стейт-стор транзиентных анимаций бегунов (move/attack/gotShot/fly/destroyed)
  * по runnerId — см. lib/runnerAnimTriggers про то, ЧТО именно триггерит каждую
@@ -61,6 +78,10 @@ const ANIM_DURATION_MS = { move: 1440, attack: 1800, gotShot: 1400, fly: 2200, s
 export function useRunnerAnimations() {
     const [anims, setAnims] = useState({});
     const [visualPositions, setVisualPositions] = useState({});
+    // Бегуны, чья 'destroyed'-анимация уже доиграла — токен на доске должен
+    // полностью исчезнуть (см. DESTROYED_HIDE_DELAY_MS), а не висеть вечно
+    // в позе уничтожения. Персистентно до reset() (полный ресинк стейта).
+    const [hiddenIds, setHiddenIds] = useState(() => new Set());
     const queues = useRef({}); // { [runnerId]: Array<{ kind, extra }> }
     const active = useRef({}); // { [runnerId]: {kind, extra} | null } — текущий играемый шаг
     const timers = useRef({});
@@ -101,10 +122,27 @@ export function useRunnerAnimations() {
 
         if (kind === 'destroyed') {
             queues.current[runnerId] = []; // терминально — остальная очередь неважна
+            // Не оставляем бегуна вечно висеть в позе уничтожения — после
+            // того, как анимация успела показаться, прячем токен с доски
+            // насовсем (см. hiddenIds выше). 'anims' запись тоже стираем —
+            // не то чтобы это было важно (бегун скрыт), но иначе она бы
+            // висела в стейте бесполезным мусором до конца партии.
+            timers.current[runnerId] = setTimeout(() => {
+                setAnims((prev) => {
+                    if (!(runnerId in prev)) return prev;
+                    const next = { ...prev };
+                    delete next[runnerId];
+                    return next;
+                });
+                setHiddenIds((prev) => (prev.has(runnerId) ? prev : new Set(prev).add(runnerId)));
+            }, DESTROYED_HIDE_DELAY_MS);
             return;
         }
 
-        timers.current[runnerId] = setTimeout(() => advanceQueue(runnerId), ANIM_DURATION_MS[kind] ?? 900);
+        timers.current[runnerId] = setTimeout(
+            () => advanceQueue(runnerId),
+            kind === 'wait' ? KNOCKBACK_WAIT_MS : (ANIM_DURATION_MS[kind] ?? 900),
+        );
     }, []);
 
     const trigger = useCallback(
@@ -148,7 +186,8 @@ export function useRunnerAnimations() {
         active.current = {};
         setAnims({});
         setVisualPositions({});
+        setHiddenIds(new Set());
     }, []);
 
-    return { anims, visualPositions, trigger, reset };
+    return { anims, visualPositions, hiddenIds, trigger, reset };
 }

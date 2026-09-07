@@ -48,6 +48,13 @@ const STATUS_LABEL = {
 // коллизии (game.extraTurnPlayer) долго не отвечает — бэк это сам не разруливает.
 const COLLISION_STUCK_TIMEOUT = 18000;
 
+// Через сколько после УСПЕШНОГО собственного действия (SELECT/ability/move/
+// ...) считать ход "зависшим", если myStep за это время так и не сдвинулся —
+// см. watchdog у runAction ниже. Короче COLLISION_STUCK_TIMEOUT — тут ждём
+// обычное живое событие в рамках СВОЕГО хода (обычно доли секунды), не
+// решения другого игрока.
+const STUCK_ACTION_TIMEOUT = 8000;
+
 // Задержка перед показом кнопок "Использовать/Перебросить" (и перед авто-
 // разрешением "мяча", см. myBallCollision) — чтобы игрок сначала УВИДЕЛ
 // анимацию столкновения, а не решал вслепую в момент, когда extraTurnPlayer
@@ -74,9 +81,14 @@ function rawCellType(game, segment, positionX, positionY) {
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
-function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain, pendingReaperPlacement) {
+function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain, pendingReaperPlacement, reaperPreviewReady) {
     if (pendingReaperPlacement) {
-        return 'Жнец установлен — выбери направление выстрела или пропусти';
+        // До того, как "прилёт" из-за края карты успел доиграть
+        // (reaperPreviewReady), подсветки на доске ещё нет — тапать некуда,
+        // текст объясняет паузу, а не намекает на несуществующие клетки.
+        return reaperPreviewReady
+            ? 'Жнец на месте — тапни подсвеченную клетку для выстрела или нажми «Без выстрела»'
+            : 'Жнец приближается…';
     }
     if (pendingSelect) {
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
@@ -95,10 +107,20 @@ function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pend
             if (pendingAbility?.ability === 'reaper') return 'Тапни подсвеченную клетку, чтобы поставить Жнеца';
             return 'Перетащи кубик на усиление или нажми «Пропустить усиление»';
         case PLAYER_STEP.MOVE:
-            return activeRunner?.segment == null
+            // activeRunner может быть неизвестен клиенту сразу после
+            // reconnect/резинка — RunnerPlayer::toArray() на бэке не отдаёт
+            // это поле в снапшоте вообще (только события его выставляют, см.
+            // CLAUDE.md), так что даже ручной resync() тут не поможет — ждём
+            // следующего события. Без этого текста подсказка ошибочно
+            // намекала на подсвеченные клетки, которых физически нет
+            // (жалоба пользователя, 2026-09-07 — "не подсвечена доступная
+            // клетка... но диалог пропуска вижу").
+            if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — дождись следующего события или обнови соединение';
+            return activeRunner.segment == null
                 ? 'Тапни подсвеченную клетку в заднем ряду — это выход на трассу'
                 : 'Тапни подсвеченную клетку, чтобы переместиться';
         case PLAYER_STEP.SHOOT:
+            if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — доступно только «Пропустить выстрел»';
             return 'Тапни подсвеченную цель или нажми «Пропустить выстрел»';
         case PLAYER_STEP.ROAD_BONUS:
             return `Бегун не покидал дорогу — использовать бонус кубика дороги (+${trackGain ?? '?'} очков) или пропустить?`;
@@ -237,15 +259,20 @@ export default function GameBoardScreen({ route }) {
                 if (type) runnerDamageTokens.recordToken(worsenedRunnerId, type);
             }
             const nextState = runnerGameReducer(state, e);
-            // Voice-реплика при выборе бегуна активным — диффим
-            // player.activeRunner ДО/ПОСЛЕ применения события (само поле
-            // приходит в разных типах событий — player_step/step_selection/
-            // ability_*, см. CLAUDE.md, — проще сравнить состояние целиком,
-            // чем перечислять их все). Играем для ЛЮБОГО игрока (не только
+            // Voice-реплика — НЕ в момент выбора бегуна (SELECT), а когда для
+            // него РЕАЛЬНО появляются зелёные клетки хода, то есть шаг игрока
+            // становится MOVE (по прямому запросу пользователя, 2026-09-07:
+            // раньше играла сразу на SELECT, пока игрок ещё мог проходить
+            // ABILITY — ощущалось преждевременно, до того как вообще стало
+            // ясно, что делать). Диффим player.step ДО/ПОСЛЕ применения
+            // события — тот же приём, что раньше был у activeRunner (поле
+            // приходит в разных типах событий, см. CLAUDE.md). Условие на
+            // activeRunner != null остаётся — без него ссылка на бегуна ниже
+            // могла бы не найтись. Играем для ЛЮБОГО игрока (не только
             // "своего") — все клиенты партии слышат один и тот же выбор.
             for (const player of nextState.gamePlayers ?? []) {
                 const prevPlayer = state.gamePlayers?.find((p) => p.id === player.id);
-                if (player.activeRunner != null && String(player.activeRunner) !== String(prevPlayer?.activeRunner)) {
+                if (player.step === PLAYER_STEP.MOVE && prevPlayer?.step !== PLAYER_STEP.MOVE && player.activeRunner != null) {
                     const runner = nextState.runners?.find((r) => String(r.id) === String(player.activeRunner));
                     if (runner) playOneShot(voiceSound, pickActiveSoundSource(runner.type, runner.status));
                 }
@@ -331,6 +358,23 @@ export default function GameBoardScreen({ route }) {
     // ниже). pendingAbility к этому моменту уже сброшен в null.
     const [pendingReaperPlacement, setPendingReaperPlacement] = useState(null);
     const [busy, setBusy] = useState(false);
+
+    // Совпадает с ANIM_DURATION_MS.start обычных бегунов (useRunnerAnimations)
+    // — пока идёт "прилёт" Жнеца ИЗ-ЗА КРАЯ карты (см. reaperPreview ниже),
+    // выбор направления выстрела ещё не показываем (по прямому запросу
+    // пользователя, 2026-09-07: сперва красивое появление, ПОТОМ выбор
+    // направления, а не одновременно). reaperPreviewReady переключается
+    // ровно ОДИН раз на каждое новое размещение — эффект зависит от самого
+    // объекта pendingReaperPlacement (новый объект на каждый тап, см.
+    // handleCellPress), не от отдельного счётчика.
+    const REAPER_PREVIEW_MS = 2200;
+    const [reaperPreviewReady, setReaperPreviewReady] = useState(false);
+    useEffect(() => {
+        setReaperPreviewReady(false);
+        if (!pendingReaperPlacement) return undefined;
+        const t = setTimeout(() => setReaperPreviewReady(true), REAPER_PREVIEW_MS);
+        return () => clearTimeout(t);
+    }, [pendingReaperPlacement]);
 
     // По умолчанию — свой игрок, как только придут данные. Один раз (пока не выбран вручную).
     useEffect(() => {
@@ -465,6 +509,18 @@ export default function GameBoardScreen({ route }) {
     const { highlightedCells, tapMode } = useMemo(() => {
         if (!myTurn || busy) return { highlightedCells: new Set(), tapMode: null };
 
+        if (pendingReaperPlacement && reaperPreviewReady) {
+            // Направление выстрела Жнеца сразу при размещении — ТЕ ЖЕ 3
+            // клетки, что раньше показывали кнопки ↖/↑/↗, теперь подсветкой
+            // на доске (единообразно с обычным MOVE/SHOOT, по прямому
+            // запросу пользователя, 2026-09-07). Появляется только ПОСЛЕ
+            // того, как "прилёт" Жнеца успел доиграть (см. reaperPreviewReady
+            // выше) — до этого highlightedCells пуст, тапать некуда. БЕЗ
+            // фильтра по занятости клетки — кнопки тоже не проверяли занятость.
+            const cells = forwardNeighbors(pendingReaperPlacement).map(cellKey);
+            return { highlightedCells: new Set(cells), tapMode: 'reaperShoot' };
+        }
+
         if (myStep === PLAYER_STEP.MOVE && activeRunner) {
             if (activeRunner.segment == null) {
                 // Ещё не на трассе — любая клетка заднего края trackBegin (positionX=0)
@@ -515,7 +571,7 @@ export default function GameBoardScreen({ route }) {
         }
 
         return { highlightedCells: new Set(), tapMode: null };
-    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game]);
+    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady]);
 
     // Звук шага СИНХРОННО с анимацией перемещения — по прямому запросу
     // пользователя, 2026-09-01: играет, пока у ХОТЬ ОДНОГО бегуна сейчас
@@ -548,16 +604,68 @@ export default function GameBoardScreen({ route }) {
         }
     }, [movingRunnerType, moveSound]);
 
+    // Watchdog "мой ход завис после успешного действия" (2026-09-07, живая
+    // жалоба — "иногда после выбора персонажа ход не продолжается, помогает
+    // только рестарт приложения на Android"). Бэковый баг, из-за которого
+    // событие смены хода вообще не публиковалось, по данным бэкенд-агента
+    // уже исправлен (TurnService::nextTurn теперь шлёт PlayerStepEvent на
+    // КАЖДОМ переходе) — но это не исключает обычный сетевой пропуск события
+    // конкретно на Android (см. исторические жалобы про Mercure в CLAUDE.md).
+    // REST-вызов (select/ability/move/...) сам по себе УСПЕШЕН (200 OK), даже
+    // если следующее live-событие, которое обычно двигает myStep дальше, до
+    // этого клиента не долетело — busy корректно снимается, но шаг замирает.
+    // myStepRef/myTurnRef — свежие значения на момент срабатывания таймера
+    // (замыкание внутри runAction иначе видело бы их состояние на момент
+    // ВЫЗОВА действия, не на момент проверки).
+    const myStepRef = useRef(myStep);
+    useEffect(() => { myStepRef.current = myStep; });
+    const myTurnRef = useRef(myTurn);
+    useEffect(() => { myTurnRef.current = myTurn; });
+    const [showActionStuckRefresh, setShowActionStuckRefresh] = useState(false);
+    const actionStuckTimerRef = useRef(null);
+    // Шаг реально сдвинулся (или ход ушёл другому) — снимаем предупреждение и
+    // таймер, если он ещё тикал (проверка сама себя опровергла раньше срока).
+    useEffect(() => {
+        if (actionStuckTimerRef.current) clearTimeout(actionStuckTimerRef.current);
+        setShowActionStuckRefresh(false);
+    }, [myStep, myTurn]);
+
     const runAction = useCallback(async (fn) => {
         setBusy(true);
         try {
             await fn();
+            const stepAtAction = myStepRef.current;
+            if (actionStuckTimerRef.current) clearTimeout(actionStuckTimerRef.current);
+            actionStuckTimerRef.current = setTimeout(() => {
+                if (myTurnRef.current && myStepRef.current === stepAtAction) setShowActionStuckRefresh(true);
+            }, STUCK_ACTION_TIMEOUT);
         } catch (e) {
             notify('Не удалось выполнить действие', e.userMessage ?? e.message);
         } finally {
             setBusy(false);
         }
     }, []);
+
+    // Второй шаг размещения Жнеца — направление выстрела (или пропуск).
+    // direction === undefined → JSON.stringify выкидывает поле из тела
+    // запроса (см. api/runnerGame.js#ability) — бэк трактует отсутствие
+    // direction как "без выстрела", тот же путь, что уже был раньше.
+    // Определена ДО handleCellPress (который её вызывает из ветки
+    // 'reaperShoot', см. ниже) — порядок объявления имеет значение для
+    // читаемости, хотя обе это useCallback с деп-массивами, не влияет на
+    // работоспособность саму по себе.
+    const handleReaperShoot = useCallback(
+        (direction) => {
+            if (!pendingReaperPlacement) return;
+            const { diceIndex, positionX, positionY, segment } = pendingReaperPlacement;
+            runAction(() =>
+                runnerGameApi
+                    .ability(true, { ability: 'reaper', dice: diceIndex + 1, positionX, positionY, segment, direction })
+                    .then(() => setPendingReaperPlacement(null)),
+            );
+        },
+        [pendingReaperPlacement, runAction],
+    );
 
     const handleCellPress = useCallback(
         (cell) => {
@@ -586,37 +694,35 @@ export default function GameBoardScreen({ route }) {
                 runAction(() => runnerGameApi.shoot(true, neighbor.direction));
                 return;
             }
+            if (tapMode === 'reaperShoot') {
+                // Выбор направления выстрела Жнеца ТАПОМ по подсвеченной
+                // клетке (см. highlightedCells выше) вместо кнопок ↖/↑/↗ —
+                // по прямому запросу пользователя, 2026-09-07. pendingReaperPlacement
+                // уже несёт координаты только что поставленного Жнеца.
+                const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
+                const neighbor = forwardNeighbors(pendingReaperPlacement).find((n) => cellKey(n) === cellKey(target));
+                if (!neighbor) return;
+                handleReaperShoot(neighbor.direction);
+                return;
+            }
             if (tapMode === 'reaper' && pendingAbility) {
                 // Не вызываем /ability сразу — по прямому запросу пользователя,
                 // 2026-09-03, размещение и выбор направления выстрела теперь
                 // два отдельных шага (см. pendingReaperPlacement выше и
-                // handleReaperShoot ниже): сама клетка уже выбрана, ждём,
-                // будет ли выстрел и куда.
+                // handleReaperShoot выше): сама клетка уже выбрана, ждём,
+                // будет ли выстрел и куда. `side` — случайная сторона
+                // "прилёта" (см. reaperPreview в BoardGrid), выбирается ОДИН
+                // раз тут и держится неизменной всё время ожидания выбора
+                // направления (2026-09-07).
                 const { diceIndex } = pendingAbility;
                 const positionX = cell.col - cell.blockIndex * cols;
                 const positionY = cell.row;
-                setPendingReaperPlacement({ diceIndex, positionX, positionY, segment: cell.blockIndex });
+                const side = Math.random() < 0.5 ? 'east' : 'west';
+                setPendingReaperPlacement({ diceIndex, positionX, positionY, segment: cell.blockIndex, side });
                 setPendingAbility(null);
             }
         },
-        [tapMode, highlightedCells, activeRunner, cols, pendingAbility, runAction],
-    );
-
-    // Второй шаг размещения Жнеца — направление выстрела (или пропуск).
-    // direction === undefined → JSON.stringify выкидывает поле из тела
-    // запроса (см. api/runnerGame.js#ability) — бэк трактует отсутствие
-    // direction как "без выстрела", тот же путь, что уже был раньше.
-    const handleReaperShoot = useCallback(
-        (direction) => {
-            if (!pendingReaperPlacement) return;
-            const { diceIndex, positionX, positionY, segment } = pendingReaperPlacement;
-            runAction(() =>
-                runnerGameApi
-                    .ability(true, { ability: 'reaper', dice: diceIndex + 1, positionX, positionY, segment, direction })
-                    .then(() => setPendingReaperPlacement(null)),
-            );
-        },
-        [pendingReaperPlacement, runAction],
+        [tapMode, highlightedCells, activeRunner, cols, pendingAbility, pendingReaperPlacement, handleReaperShoot, runAction],
     );
 
     // Дроп кубика на карточку бегуна — шаг SELECT. Реальный /select уходит не
@@ -733,16 +839,24 @@ export default function GameBoardScreen({ route }) {
     useEffect(() => {
         setCollisionDecisionReady(false);
         if (game?.extraTurnPlayer == null) return undefined;
-        // Общий звук столкновения — играет ВСЕМ клиентам партии сразу, как
-        // только extraTurnPlayer появился (не только тому, у кого решение) —
-        // game.extraTurnPlayer это разделяемое состояние, видимое всем.
-        // collisionSound — фиксированный источник (не .replace(), в отличие
-        // от voice/shoot/start-каналов), не нужно указывать источник заново.
-        collisionSound.seekTo(0);
-        collisionSound.play();
         const t = setTimeout(() => setCollisionDecisionReady(true), COLLISION_ANIM_DELAY_MS);
         return () => clearTimeout(t);
-    }, [game?.extraTurnPlayer, collisionSound]);
+    }, [game?.extraTurnPlayer]);
+
+    // Звук столкновения — играет ВСЕМ клиентам партии сразу, как только
+    // BoardGrid реально показывает коллизионную позу (не когда
+    // game.extraTurnPlayer только появился, см. COLLISION_ANIM_DELAY_MS
+    // выше — тот момент совпадает с НАЧАЛОМ движения заезжающего бегуна, а
+    // не с самой позой столкновения, жалоба пользователя, 2026-09-07).
+    // onCollisionPoseStart — колбэк из BoardGrid (вызывается ровно один раз
+    // на каждую новую коллизионную пару, см. компонент), работает и для
+    // "ручных" коллизий (extraTurnPlayer, разные размеры), и для
+    // автоматически разрешённых (одинаковый размер/Мяч) — оба идут через
+    // ОДИН и тот же механизм пары в BoardGrid.
+    const handleCollisionPoseStart = useCallback(() => {
+        collisionSound.seekTo(0);
+        collisionSound.play();
+    }, [collisionSound]);
 
     // "Мяч" (см. myBallCollision выше) — неконтролируемая коллизия, у игрока
     // не должно быть выбора вообще (прямой запрос пользователя, 2026-09-02).
@@ -803,13 +917,29 @@ export default function GameBoardScreen({ route }) {
         <>
             <Text style={styles.turnTitleMine}>Твой ход</Text>
             <Text style={styles.turnHint}>
-                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain, pendingReaperPlacement)}
+                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain, pendingReaperPlacement, reaperPreviewReady)}
             </Text>
+            {showActionStuckRefresh && !busy && (
+                <Button
+                    title="Обновить состояние"
+                    variant="info"
+                    onPress={() => {
+                        setShowActionStuckRefresh(false);
+                        runnerAnim.reset();
+                        resync();
+                    }}
+                    style={styles.turnSkipBtn}
+                />
+            )}
+            {/* Направление выстрела Жнеца — теперь тап по подсвеченной клетке
+                (см. highlightedCells/handleCellPress выше), а не кнопки
+                ↖/↑/↗ (по прямому запросу пользователя, 2026-09-07, "такое же
+                отображение, как для обычных бегунов"). "Без выстрела"
+                остаётся кнопкой — это не клетка на доске. Доступна сразу
+                (не ждёт reaperPreviewReady) — пропустить выстрел можно и не
+                дожидаясь, пока доиграет анимация прилёта. */}
             {pendingReaperPlacement && !busy && (
                 <View style={styles.turnBtnRow}>
-                    <Button title="↖" variant="success" onPress={() => handleReaperShoot('LEFT_UP')} style={styles.turnSkipBtn} />
-                    <Button title="↑" variant="success" onPress={() => handleReaperShoot('UP')} style={styles.turnSkipBtn} />
-                    <Button title="↗" variant="success" onPress={() => handleReaperShoot('RIGHT_UP')} style={styles.turnSkipBtn} />
                     <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtn} />
                 </View>
             )}
@@ -864,6 +994,20 @@ export default function GameBoardScreen({ route }) {
             runnerAnims={runnerAnim.anims}
             runnerVisualPositions={runnerAnim.visualPositions}
             currentTurnPlayerId={game.playerOrder}
+            hiddenRunnerIds={runnerAnim.hiddenIds}
+            onCollisionPoseStart={handleCollisionPoseStart}
+            reaperPreview={
+                pendingReaperPlacement
+                    ? {
+                        segment: pendingReaperPlacement.segment,
+                        positionX: pendingReaperPlacement.positionX,
+                        positionY: pendingReaperPlacement.positionY,
+                        side: pendingReaperPlacement.side,
+                        settled: reaperPreviewReady,
+                        color: playerColorById[myPlayer?.id] ?? '#fff',
+                    }
+                    : null
+            }
             onCellPress={handleCellPress}
         />
     );
