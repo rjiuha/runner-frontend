@@ -355,6 +355,16 @@ export const RUNNER_DISPLAY = {
   [RUNNER_TYPES.ATHLETE]: { label: 'Солдат', icon: require('../assets/images/runner/trooper.png'), size: 2 },
   [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', icon: require('../assets/images/runner/scout.png'), size: 1 },
   [RUNNER_TYPES.REAPER]: { label: 'Жнец', icon: require('../assets/images/runner/reaper.png'), size: 0 },
+  // "Мяч" — ничейный (playerId всегда null), никогда не показывается в
+  // панели игрока (RUNNER_ORDER его не перечисляет, а карточки и так
+  // фильтруются по runner.playerId === p.id) — запись тут нужна ТОЛЬКО
+  // чтобы RunnerToken (BoardGrid) не бэйлился на `!display` и рисовал токен
+  // на доске. icon — чисто синтаксический фолбэк для getRunnerAnimationImage
+  // (require() статический, вычисляется всегда, даже если ветка ?? не
+  // используется в рантайме) — реальный набор анимаций см.
+  // constants/runnerAnimations#RUNNER_ANIMATION_SETS[BALL], icon почти
+  // никогда фактически не отрисуется.
+  [RUNNER_TYPES.BALL]: { label: 'Мяч', icon: require('../assets/images/runners/obstacle/obstacle_idle.gif'), size: 1 },
 };
 
 /** Состояния бегуна — зеркалят RunnerStatus (бэк) */

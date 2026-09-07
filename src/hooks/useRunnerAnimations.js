@@ -14,7 +14,7 @@ import { useCallback, useRef, useState } from 'react';
 // сделать процентов на 20 быстрее") — 1800×0.8, в паре с SLIDE_DURATION_MS
 // там же (1700×0.8). attack/gotShot/fly не трогал — запрос был именно про
 // движение между клетками.
-const ANIM_DURATION_MS = { move: 1440, attack: 1800, gotShot: 1400, fly: 2200 };
+const ANIM_DURATION_MS = { move: 1440, attack: 1800, gotShot: 1400, fly: 2200, start: 2200, bomb: 1800 };
 
 /**
  * Стейт-стор транзиентных анимаций бегунов (move/attack/gotShot/fly/destroyed)

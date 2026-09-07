@@ -1,6 +1,7 @@
 // src/lib/runnerAnimTriggers.js
 import { statusWorsened } from '../constants/runnerAnimations';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
+import { RUNNER_TYPES } from '../constants/GameConstants';
 
 /**
  * Смотрит на versioned-событие ДО того, как его применит runnerGameReducer
@@ -50,13 +51,36 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
         const toPosition = { segment: patch.segment, positionX: patch.positionX, positionY: patch.positionY };
 
-        if (!prev || prev.segment == null) {
-            // Первый выход на трассу (из резерва) — бегуна ещё НИГДЕ не было
-            // нарисовано, скользить неоткуда. По прямому запросу пользователя,
-            // 2026-09-01, никакой анимации ходьбы тут не проигрываем — он
-            // просто появляется в клетке сразу в позе idle (RunnerTokenSlide
-            // на первом рендере и так не анимирует, см. компонент — trigger()
-            // тут был бы для чистой "ходьбы стоя на месте", лишний).
+        if (!prev) {
+            // Бегун вообще не найден в ПРЕДЫДУЩЕМ состоянии. Для обычных
+            // бегунов (и Жнеца) это значит "мы просто не видели предыдущего
+            // состояния" (холодный коннект/resync) — не можем отличить
+            // "только что появился" от "давно там стоит", молчим, как и
+            // раньше, просто idle. НО "мяч" (RUNNER_TYPES.BALL,
+            // RunnerBallInitService на бэке) — принципиально другой случай:
+            // это НАСТОЯЩАЯ первая персистентная запись, он физически не мог
+            // существовать раньше этого события (создаётся заново на каждой
+            // danger-коллизии) — !prev тут ВСЕГДА означает "только что
+            // появился", а не "мы его просто не видели". Играем его 'start'
+            // безусловно.
+            // runnerType в extra — чисто для звуковой системы
+            // (lib/runnerSoundTriggers.js): в момент этого триггера бегуна
+            // ещё нет ни в prevGame, ни (пока) в применённом game-стейте, по
+            // id его тип не найти — событие несёт его напрямую.
+            if (patch.type === 'ball') trigger(patch.id, 'start', { toPosition, runnerType: patch.type });
+            return;
+        }
+        if (prev.segment == null) {
+            // Первый выход на трассу (из резерва) — ЗНАЛИ бегуна раньше (был
+            // в резерве, segment==null), теперь у него реальный segment.
+            // Бегуна ещё нигде не было нарисовано на доске, скользить
+            // неоткуда (RunnerTokenSlide на первом рендере и так не анимирует
+            // позицию). ДО 2026-09-03 тут вообще не было анимации (по
+            // прямому запросу пользователя, 2026-09-01) — теперь добавлен
+            // отдельный gif "start" именно под этот момент (установка на
+            // стартовую клетку), играем его ОДИН раз на месте (toPosition —
+            // чтобы токен сразу отрисовался в правильной клетке, без слайда).
+            trigger(patch.id, 'start', { toPosition });
             return;
         }
         if (patch.segment == null) return; // снят с трассы — не наш случай сейчас
@@ -90,8 +114,56 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
         if (!prev || !statusWorsened(prev.status, patch.status)) return;
 
-        if (patch.status === 'destroyed') trigger(patch.id, 'destroyed', { fromStatus: prev.status });
-        else trigger(patch.id, 'gotShot');
+        if (patch.status === 'destroyed') {
+            trigger(patch.id, 'destroyed', { fromStatus: prev.status });
+            // Ловушка Жнеца: "по правилам игры Жнец должен убить того
+            // бегуна, который закончил ход на его клетке" (прямой запрос
+            // пользователя, 2026-09-03). Бэк это ЧАСТИЧНО умеет
+            // (Collision::reaperCollision — но публикует ОБЫЧНОЕ generic
+            // 'destroy'-событие без пометки причины, см. читанный бэкенд-код)
+            // — сигнала "это была именно бомба Жнеца" бэк не даёт вообще.
+            // Эвристика: если ПОСЛЕДНЯЯ ИЗВЕСТНАЯ (до уничтожения) позиция
+            // погибшего бегуна совпадает с текущей позицией какого-то
+            // Жнеца — считаем это ловушкой и играем Жнецу его 'bomb'
+            // отдельным шагом очереди (Жнец анимирует это у СЕБЯ, жертва —
+            // своим обычным 'destroyed', уже вызванным строкой выше).
+            const reaperHere = prevGame.runners.find(
+                (r) => r.type === RUNNER_TYPES.REAPER
+                    && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
+            );
+            if (reaperHere) trigger(reaperHere.id, 'bomb', {});
+        } else {
+            trigger(patch.id, 'gotShot');
+        }
+        return;
+    }
+
+    if (e.event === 'ability_reaper') {
+        // Первая (и единственная — бэк не даёт переставлять уже стоящего
+        // Жнеца, см. CLAUDE.md) установка Жнеца на трассу. По прямому
+        // запросу пользователя, 2026-09-03: Жнец не выходит из резерва как
+        // обычный бегун — он "прилетает" сбоку, из-за края трассы, случайно
+        // слева или справа (нет игровой логики, влияющей на сторону —
+        // чистая визуальная монетка). kind остаётся 'start' (тот же общий
+        // механизм отката в idle) — getRunnerAnimationImage сам подставит
+        // bucket.move[side] вместо bucket.start, которого у Жнеца нет
+        // (см. константы). Если игрок сразу выстрелил при размещении
+        // (e.attack — направление n/ne/nw) — вторым шагом очереди играем
+        // 'attack', геометрия направления считается ТАК ЖЕ, как у
+        // step_shoot ниже (Жнец не двигается, целится через ту же
+        // hex-клетку из СВОЕЙ свежепоставленной позиции).
+        const side = Math.random() < 0.5 ? 'east' : 'west';
+        const toPosition = { segment: e.reaper.segment, positionX: e.reaper.positionX, positionY: e.reaper.positionY };
+        // runnerType — см. коммент у 'ball' выше, та же причина (звуковой
+        // системе неоткуда иначе узнать тип в момент этого триггера).
+        trigger(e.reaper.id, 'start', { side, toPosition, runnerType: RUNNER_TYPES.REAPER });
+
+        if (e.attack) {
+            const target = neighborPosition(e.reaper, e.attack);
+            const depthChanged = target ? target.positionX !== e.reaper.positionX : false;
+            const targetLaneShifted = target ? target.positionY % 2 === 0 : false;
+            trigger(e.reaper.id, 'attack', { direction: e.attack, depthChanged, targetLaneShifted });
+        }
     }
 }
 

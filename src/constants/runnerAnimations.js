@@ -4,7 +4,7 @@ import { PLAYER_COLOR_HEX, RUNNER_STATUS, RUNNER_TYPES } from './GameConstants';
 /**
  * Ассеты анимаций бегунов — Скаут/Солдат/Атлет (RUNNER_TYPES.SPRINTER/
  * ATHLETE/TANK), добавлены пользователем в assets/images/runners/
- * {scout,trooper,athlet}/{healthy,damaged}/. Жнец пока без набора —
+ * {scout,athlet,tank}/{healthy,damaged}/. Жнец пока без набора —
  * getRunnerAnimationImage/getRunnerAvatarImage возвращают null, RunnerToken
  * откатывается на старую статичную иконку.
  *
@@ -39,6 +39,7 @@ const scoutHealthyRed = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_red.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_red.gif'),
+    start: require('../assets/images/runners/scout/healthy/scout_healthy_start_red.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_red.gif'),
         west: require('../assets/images/runners/scout/healthy/scout_healthy_collision_west_red.gif'),
@@ -65,6 +66,7 @@ const scoutHealthyBlue = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_blue.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_blue.gif'),
+    start: require('../assets/images/runners/scout/healthy/scout_healthy_start_blue.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_blue.gif'),
         west: require('../assets/images/runners/scout/healthy/scout_healthy_collision_west_blue.gif'),
@@ -91,6 +93,7 @@ const scoutHealthyGreen = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_green.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_green.gif'),
+    start: require('../assets/images/runners/scout/healthy/scout_healthy_start_green.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_green.gif'),
         west: require('../assets/images/runners/scout/healthy/scout_healthy_collision_west_green.gif'),
@@ -117,6 +120,7 @@ const scoutHealthyYellow = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_yellow.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_yellow.gif'),
+    start: require('../assets/images/runners/scout/healthy/scout_healthy_start_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_yellow.gif'),
         west: require('../assets/images/runners/scout/healthy/scout_healthy_collision_west_yellow.gif'),
@@ -242,218 +246,6 @@ const scoutDamagedYellow = {
     },
 };
 
-const trooperHealthyRed = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-east_red.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-west_red.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north_red.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-east_red.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-west_red.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/healthy/trooper_healthy_avatar_red.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_east_red.gif'),
-        west: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_west_red.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/healthy/trooper_healthy_destroyed_red.gif'),
-    fly: require('../assets/images/runners/trooper/healthy/trooper_healthy_fly_red.gif'),
-    gotShot: require('../assets/images/runners/trooper/healthy/trooper_healthy_got_shot_red.gif'),
-    idle: require('../assets/images/runners/trooper/healthy/trooper_healthy_idle_red.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-east_red.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-west_red.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north_red.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-east_red.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-west_red.gif'),
-    },
-};
-
-const trooperHealthyBlue = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-east_blue.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-west_blue.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north_blue.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-east_blue.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-west_blue.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/healthy/trooper_healthy_avatar_blue.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_east_blue.gif'),
-        west: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_west_blue.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/healthy/trooper_healthy_destroyed_blue.gif'),
-    fly: require('../assets/images/runners/trooper/healthy/trooper_healthy_fly_blue.gif'),
-    gotShot: require('../assets/images/runners/trooper/healthy/trooper_healthy_got_shot_blue.gif'),
-    idle: require('../assets/images/runners/trooper/healthy/trooper_healthy_idle_blue.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-east_blue.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-west_blue.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north_blue.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-east_blue.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-west_blue.gif'),
-    },
-};
-
-const trooperHealthyGreen = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-east_green.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-west_green.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north_green.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-east_green.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-west_green.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/healthy/trooper_healthy_avatar_green.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_east_green.gif'),
-        west: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_west_green.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/healthy/trooper_healthy_destroyed_green.gif'),
-    fly: require('../assets/images/runners/trooper/healthy/trooper_healthy_fly_green.gif'),
-    gotShot: require('../assets/images/runners/trooper/healthy/trooper_healthy_got_shot_green.gif'),
-    idle: require('../assets/images/runners/trooper/healthy/trooper_healthy_idle_green.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-east_green.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-west_green.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north_green.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-east_green.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-west_green.gif'),
-    },
-};
-
-const trooperHealthyYellow = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-east_yellow.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north-west_yellow.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_north_yellow.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-east_yellow.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_attack_south-west_yellow.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/healthy/trooper_healthy_avatar_yellow.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_east_yellow.gif'),
-        west: require('../assets/images/runners/trooper/healthy/trooper_healthy_collision_west_yellow.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/healthy/trooper_healthy_destroyed_yellow.gif'),
-    fly: require('../assets/images/runners/trooper/healthy/trooper_healthy_fly_yellow.gif'),
-    gotShot: require('../assets/images/runners/trooper/healthy/trooper_healthy_got_shot_yellow.gif'),
-    idle: require('../assets/images/runners/trooper/healthy/trooper_healthy_idle_yellow.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-east_yellow.gif'),
-        northWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north-west_yellow.gif'),
-        north: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_north_yellow.gif'),
-        southEast: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-east_yellow.gif'),
-        southWest: require('../assets/images/runners/trooper/healthy/trooper_healthy_move_south-west_yellow.gif'),
-    },
-};
-
-const trooperDamagedRed = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-east_red.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-west_red.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north_red.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-east_red.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-west_red.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/damaged/trooper_damaged_avatar_red.gif'),
-    broken: require('../assets/images/runners/trooper/damaged/trooper_damaged_broken_red.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_east_red.gif'),
-        west: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_west_red.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/damaged/trooper_damaged_destoyed_red.gif'),
-    fly: require('../assets/images/runners/trooper/damaged/trooper_damaged_fly_red.gif'),
-    gotShot: require('../assets/images/runners/trooper/damaged/trooper_damaged_got_shot_red.gif'),
-    idle: require('../assets/images/runners/trooper/damaged/trooper_damaged_idle_red.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-east_red.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-west_red.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north_red.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-east_red.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-west_red.gif'),
-    },
-};
-
-const trooperDamagedBlue = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-east_blue.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-west_blue.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north_blue.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-east_blue.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-west_blue.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/damaged/trooper_damaged_avatar_blue.gif'),
-    broken: require('../assets/images/runners/trooper/damaged/trooper_damaged_broken_blue.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_east_blue.gif'),
-        west: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_west_blue.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/damaged/trooper_damaged_destoyed_blue.gif'),
-    fly: require('../assets/images/runners/trooper/damaged/trooper_damaged_fly_blue.gif'),
-    gotShot: require('../assets/images/runners/trooper/damaged/trooper_damaged_got_shot_blue.gif'),
-    idle: require('../assets/images/runners/trooper/damaged/trooper_damaged_idle_blue.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-east_blue.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-west_blue.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north_blue.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-east_blue.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-west_blue.gif'),
-    },
-};
-
-const trooperDamagedGreen = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-east_green.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-west_green.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north_green.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-east_green.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-west_green.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/damaged/trooper_damaged_avatar_green.gif'),
-    broken: require('../assets/images/runners/trooper/damaged/trooper_damaged_broken_green.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_east_green.gif'),
-        west: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_west_green.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/damaged/trooper_damaged_destoyed_green.gif'),
-    fly: require('../assets/images/runners/trooper/damaged/trooper_damaged_fly_green.gif'),
-    gotShot: require('../assets/images/runners/trooper/damaged/trooper_damaged_got_shot_green.gif'),
-    idle: require('../assets/images/runners/trooper/damaged/trooper_damaged_idle_green.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-east_green.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-west_green.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north_green.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-east_green.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-west_green.gif'),
-    },
-};
-
-const trooperDamagedYellow = {
-    attack: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-east_yellow.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north-west_yellow.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_north_yellow.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-east_yellow.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_attack_south-west_yellow.gif'),
-    },
-    avatar: require('../assets/images/runners/trooper/damaged/trooper_damaged_avatar_yellow.gif'),
-    broken: require('../assets/images/runners/trooper/damaged/trooper_damaged_broken_yellow.gif'),
-    collision: {
-        east: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_east_yellow.gif'),
-        west: require('../assets/images/runners/trooper/damaged/trooper_damaged_collision_west_yellow.gif'),
-    },
-    destroyed: require('../assets/images/runners/trooper/damaged/trooper_damaged_destoyed_yellow.gif'),
-    fly: require('../assets/images/runners/trooper/damaged/trooper_damaged_fly_yellow.gif'),
-    gotShot: require('../assets/images/runners/trooper/damaged/trooper_damaged_got_shot_yellow.gif'),
-    idle: require('../assets/images/runners/trooper/damaged/trooper_damaged_idle_yellow.gif'),
-    move: {
-        northEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-east_yellow.gif'),
-        northWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north-west_yellow.gif'),
-        north: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_north_yellow.gif'),
-        southEast: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-east_yellow.gif'),
-        southWest: require('../assets/images/runners/trooper/damaged/trooper_damaged_move_south-west_yellow.gif'),
-    },
-};
-
 const athletHealthyRed = {
     attack: {
         northEast: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_north-east_red.gif'),
@@ -463,6 +255,7 @@ const athletHealthyRed = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_red.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_red.gif'),
+    start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_red.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_red.gif'),
         west: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_west_red.gif'),
@@ -489,6 +282,7 @@ const athletHealthyBlue = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_blue.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_blue.gif'),
+    start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_blue.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_blue.gif'),
         west: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_west_blue.gif'),
@@ -515,6 +309,7 @@ const athletHealthyGreen = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_green.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_green.gif'),
+    start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_green.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_green.gif'),
         west: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_west_green.gif'),
@@ -541,6 +336,7 @@ const athletHealthyYellow = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_yellow.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_yellow.gif'),
+    start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_yellow.gif'),
         west: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_west_yellow.gif'),
@@ -572,7 +368,7 @@ const athletDamagedRed = {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_red.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_red.gif'),
     },
-    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destroyed_red.gif'),
+    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destoyed_red.gif'),
     fly: require('../assets/images/runners/athlet/damaged/athlet_damaged_fly_red.gif'),
     gotShot: require('../assets/images/runners/athlet/damaged/athlet_damaged_got_shot_red.gif'),
     idle: require('../assets/images/runners/athlet/damaged/athlet_damaged_idle_red.gif'),
@@ -599,7 +395,7 @@ const athletDamagedBlue = {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_blue.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_blue.gif'),
     },
-    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destroyed_blue.gif'),
+    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destoyed_blue.gif'),
     fly: require('../assets/images/runners/athlet/damaged/athlet_damaged_fly_blue.gif'),
     gotShot: require('../assets/images/runners/athlet/damaged/athlet_damaged_got_shot_blue.gif'),
     idle: require('../assets/images/runners/athlet/damaged/athlet_damaged_idle_blue.gif'),
@@ -626,7 +422,7 @@ const athletDamagedGreen = {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_green.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_green.gif'),
     },
-    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destroyed_green.gif'),
+    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destoyed_green.gif'),
     fly: require('../assets/images/runners/athlet/damaged/athlet_damaged_fly_green.gif'),
     gotShot: require('../assets/images/runners/athlet/damaged/athlet_damaged_got_shot_green.gif'),
     idle: require('../assets/images/runners/athlet/damaged/athlet_damaged_idle_green.gif'),
@@ -653,7 +449,7 @@ const athletDamagedYellow = {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_yellow.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_yellow.gif'),
     },
-    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destroyed_yellow.gif'),
+    destroyed: require('../assets/images/runners/athlet/damaged/athlet_damaged_destoyed_yellow.gif'),
     fly: require('../assets/images/runners/athlet/damaged/athlet_damaged_fly_yellow.gif'),
     gotShot: require('../assets/images/runners/athlet/damaged/athlet_damaged_got_shot_yellow.gif'),
     idle: require('../assets/images/runners/athlet/damaged/athlet_damaged_idle_yellow.gif'),
@@ -666,7 +462,356 @@ const athletDamagedYellow = {
     },
 };
 
+const tankHealthyRed = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-east_red.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-west_red.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north_red.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-east_red.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_red.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_red.gif'),
+    start: require('../assets/images/runners/tank/healthy/tank_healthy_start_red.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_red.gif'),
+        west: require('../assets/images/runners/tank/healthy/tank_healthy_collision_west_red.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/healthy/tank_healthy_destroyed_red.gif'),
+    fly: require('../assets/images/runners/tank/healthy/tank_healthy_fly_red.gif'),
+    gotShot: require('../assets/images/runners/tank/healthy/tank_healthy_got_shot_red.gif'),
+    idle: require('../assets/images/runners/tank/healthy/tank_healthy_idle_red.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-east_red.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-west_red.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_move_north_red.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-east_red.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-west_red.gif'),
+    },
+};
+
+const tankHealthyBlue = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-east_blue.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-west_blue.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north_blue.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-east_blue.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_blue.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_blue.gif'),
+    start: require('../assets/images/runners/tank/healthy/tank_healthy_start_blue.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_blue.gif'),
+        west: require('../assets/images/runners/tank/healthy/tank_healthy_collision_west_blue.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/healthy/tank_healthy_destroyed_blue.gif'),
+    fly: require('../assets/images/runners/tank/healthy/tank_healthy_fly_blue.gif'),
+    gotShot: require('../assets/images/runners/tank/healthy/tank_healthy_got_shot_blue.gif'),
+    idle: require('../assets/images/runners/tank/healthy/tank_healthy_idle_blue.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-east_blue.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-west_blue.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_move_north_blue.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-east_blue.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-west_blue.gif'),
+    },
+};
+
+const tankHealthyGreen = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-east_green.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-west_green.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north_green.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-east_green.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_green.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_green.gif'),
+    start: require('../assets/images/runners/tank/healthy/tank_healthy_start_green.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_green.gif'),
+        west: require('../assets/images/runners/tank/healthy/tank_healthy_collision_west_green.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/healthy/tank_healthy_destroyed_green.gif'),
+    fly: require('../assets/images/runners/tank/healthy/tank_healthy_fly_green.gif'),
+    gotShot: require('../assets/images/runners/tank/healthy/tank_healthy_got_shot_green.gif'),
+    idle: require('../assets/images/runners/tank/healthy/tank_healthy_idle_green.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-east_green.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-west_green.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_move_north_green.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-east_green.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-west_green.gif'),
+    },
+};
+
+const tankHealthyYellow = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-east_yellow.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-west_yellow.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north_yellow.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-east_yellow.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_yellow.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_yellow.gif'),
+    start: require('../assets/images/runners/tank/healthy/tank_healthy_start_yellow.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_yellow.gif'),
+        west: require('../assets/images/runners/tank/healthy/tank_healthy_collision_west_yellow.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/healthy/tank_healthy_destroyed_yellow.gif'),
+    fly: require('../assets/images/runners/tank/healthy/tank_healthy_fly_yellow.gif'),
+    gotShot: require('../assets/images/runners/tank/healthy/tank_healthy_got_shot_yellow.gif'),
+    idle: require('../assets/images/runners/tank/healthy/tank_healthy_idle_yellow.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-east_yellow.gif'),
+        northWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_north-west_yellow.gif'),
+        north: require('../assets/images/runners/tank/healthy/tank_healthy_move_north_yellow.gif'),
+        southEast: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-east_yellow.gif'),
+        southWest: require('../assets/images/runners/tank/healthy/tank_healthy_move_south-west_yellow.gif'),
+    },
+};
+
+const tankDamagedRed = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-east_red.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-west_red.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north_red.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-east_red.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-west_red.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_red.gif'),
+    broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_red.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_red.gif'),
+        west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_red.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/damaged/tank_damaged_destroyed_red.gif'),
+    fly: require('../assets/images/runners/tank/damaged/tank_damaged_fly_red.gif'),
+    gotShot: require('../assets/images/runners/tank/damaged/tank_damaged_got_shot_red.gif'),
+    idle: require('../assets/images/runners/tank/damaged/tank_damaged_idle_red.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-east_red.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-west_red.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_move_north_red.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-east_red.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-west_red.gif'),
+    },
+};
+
+const tankDamagedBlue = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-east_blue.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-west_blue.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north_blue.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-east_blue.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-west_blue.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_blue.gif'),
+    broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_blue.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_blue.gif'),
+        west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_blue.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/damaged/tank_damaged_destroyed_blue.gif'),
+    fly: require('../assets/images/runners/tank/damaged/tank_damaged_fly_blue.gif'),
+    gotShot: require('../assets/images/runners/tank/damaged/tank_damaged_got_shot_blue.gif'),
+    idle: require('../assets/images/runners/tank/damaged/tank_damaged_idle_blue.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-east_blue.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-west_blue.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_move_north_blue.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-east_blue.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-west_blue.gif'),
+    },
+};
+
+const tankDamagedGreen = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-east_green.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-west_green.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north_green.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-east_green.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-west_green.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_green.gif'),
+    broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_green.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_green.gif'),
+        west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_green.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/damaged/tank_damaged_destroyed_green.gif'),
+    fly: require('../assets/images/runners/tank/damaged/tank_damaged_fly_green.gif'),
+    gotShot: require('../assets/images/runners/tank/damaged/tank_damaged_got_shot_green.gif'),
+    idle: require('../assets/images/runners/tank/damaged/tank_damaged_idle_green.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-east_green.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-west_green.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_move_north_green.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-east_green.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-west_green.gif'),
+    },
+};
+
+const tankDamagedYellow = {
+    attack: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-east_yellow.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-west_yellow.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north_yellow.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-east_yellow.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_south-west_yellow.gif'),
+    },
+    avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_yellow.gif'),
+    broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_yellow.gif'),
+    collision: {
+        east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_yellow.gif'),
+        west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_yellow.gif'),
+    },
+    destroyed: require('../assets/images/runners/tank/damaged/tank_damaged_destroyed_yellow.gif'),
+    fly: require('../assets/images/runners/tank/damaged/tank_damaged_fly_yellow.gif'),
+    gotShot: require('../assets/images/runners/tank/damaged/tank_damaged_got_shot_yellow.gif'),
+    idle: require('../assets/images/runners/tank/damaged/tank_damaged_idle_yellow.gif'),
+    move: {
+        northEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-east_yellow.gif'),
+        northWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_north-west_yellow.gif'),
+        north: require('../assets/images/runners/tank/damaged/tank_damaged_move_north_yellow.gif'),
+        southEast: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-east_yellow.gif'),
+        southWest: require('../assets/images/runners/tank/damaged/tank_damaged_move_south-west_yellow.gif'),
+    },
+};
+
+// Жнец (RUNNER_TYPES.REAPER) — папка ассетов "drone" (художественное имя,
+// как "scout" у Спринтера — не переименовывалось). У Жнеца НЕТ отдельного
+// повреждённого статуса (бэк не даёт по нему стрелять — StepShootValidator
+// блокирует Reaper как цель, — и своего "damaged"-набора ассетов
+// пользователь не добавлял), поэтому healthy/damaged ниже в
+// RUNNER_ANIMATION_SETS указывают на ОДИН и тот же набор — statusFolder()
+// не пришлось трогать. `move` содержит ВСЕ 8 направлений (не только 5, как у
+// обычных бегунов) — north/northEast/northWest/southEast/southWest используются
+// (потенциально, бэк пока не поддерживает повторное перемещение уже
+// стоящего Жнеца — см. CLAUDE.md) как обычный шаг, а east/west — под
+// "прилёт из-за края трассы" при ПЕРВОЙ установке (см. handleReaperPlacement
+// в lib/runnerAnimTriggers.js — там же решается, с какой стороны). `attack`
+// — только 3 "вперёд" направления (n/ne/nw), Жнец стреляет строго по ходу
+// дороги. `bomb` — ловушка: Жнец играет эту анимацию у СЕБЯ, когда другой
+// бегун заканчивает ход на его клетке (см. getWorsenedDamageRunnerId-подобная
+// эвристика в runnerAnimTriggers.js).
+const droneRed = {
+    attack: {
+        northEast: require('../assets/images/runners/drone/drone_attack_north-east_red.gif'),
+        northWest: require('../assets/images/runners/drone/drone_attack_north-west_red.gif'),
+        north: require('../assets/images/runners/drone/drone_attack_north_red.gif'),
+    },
+    avatar: require('../assets/images/runners/drone/drone_avatar_red.gif'),
+    bomb: require('../assets/images/runners/drone/drone_bomb_red.gif'),
+    idle: require('../assets/images/runners/drone/drone_idle_red.gif'),
+    move: {
+        east: require('../assets/images/runners/drone/drone_move_east_red.gif'),
+        northEast: require('../assets/images/runners/drone/drone_move_north-east_red.gif'),
+        northWest: require('../assets/images/runners/drone/drone_move_north-west_red.gif'),
+        north: require('../assets/images/runners/drone/drone_move_north_red.gif'),
+        southEast: require('../assets/images/runners/drone/drone_move_south-east_red.gif'),
+        southWest: require('../assets/images/runners/drone/drone_move_south-west_red.gif'),
+        south: require('../assets/images/runners/drone/drone_move_south_red.gif'),
+        west: require('../assets/images/runners/drone/drone_move_west_red.gif'),
+    },
+};
+
+const droneBlue = {
+    attack: {
+        northEast: require('../assets/images/runners/drone/drone_attack_north-east_blue.gif'),
+        northWest: require('../assets/images/runners/drone/drone_attack_north-west_blue.gif'),
+        north: require('../assets/images/runners/drone/drone_attack_north_blue.gif'),
+    },
+    avatar: require('../assets/images/runners/drone/drone_avatar_blue.gif'),
+    bomb: require('../assets/images/runners/drone/drone_bomb_blue.gif'),
+    idle: require('../assets/images/runners/drone/drone_idle_blue.gif'),
+    move: {
+        east: require('../assets/images/runners/drone/drone_move_east_blue.gif'),
+        northEast: require('../assets/images/runners/drone/drone_move_north-east_blue.gif'),
+        northWest: require('../assets/images/runners/drone/drone_move_north-west_blue.gif'),
+        north: require('../assets/images/runners/drone/drone_move_north_blue.gif'),
+        southEast: require('../assets/images/runners/drone/drone_move_south-east_blue.gif'),
+        southWest: require('../assets/images/runners/drone/drone_move_south-west_blue.gif'),
+        south: require('../assets/images/runners/drone/drone_move_south_blue.gif'),
+        west: require('../assets/images/runners/drone/drone_move_west_blue.gif'),
+    },
+};
+
+const droneGreen = {
+    attack: {
+        northEast: require('../assets/images/runners/drone/drone_attack_north-east_green.gif'),
+        northWest: require('../assets/images/runners/drone/drone_attack_north-west_green.gif'),
+        north: require('../assets/images/runners/drone/drone_attack_north_green.gif'),
+    },
+    avatar: require('../assets/images/runners/drone/drone_avatar_green.gif'),
+    bomb: require('../assets/images/runners/drone/drone_bomb_green.gif'),
+    idle: require('../assets/images/runners/drone/drone_idle_green.gif'),
+    move: {
+        east: require('../assets/images/runners/drone/drone_move_east_green.gif'),
+        northEast: require('../assets/images/runners/drone/drone_move_north-east_green.gif'),
+        northWest: require('../assets/images/runners/drone/drone_move_north-west_green.gif'),
+        north: require('../assets/images/runners/drone/drone_move_north_green.gif'),
+        southEast: require('../assets/images/runners/drone/drone_move_south-east_green.gif'),
+        southWest: require('../assets/images/runners/drone/drone_move_south-west_green.gif'),
+        south: require('../assets/images/runners/drone/drone_move_south_green.gif'),
+        west: require('../assets/images/runners/drone/drone_move_west_green.gif'),
+    },
+};
+
+const droneYellow = {
+    attack: {
+        northEast: require('../assets/images/runners/drone/drone_attack_north-east_yellow.gif'),
+        northWest: require('../assets/images/runners/drone/drone_attack_north-west_yellow.gif'),
+        north: require('../assets/images/runners/drone/drone_attack_north_yellow.gif'),
+    },
+    avatar: require('../assets/images/runners/drone/drone_avatar_yellow.gif'),
+    bomb: require('../assets/images/runners/drone/drone_bomb_yellow.gif'),
+    idle: require('../assets/images/runners/drone/drone_idle_yellow.gif'),
+    move: {
+        east: require('../assets/images/runners/drone/drone_move_east_yellow.gif'),
+        northEast: require('../assets/images/runners/drone/drone_move_north-east_yellow.gif'),
+        northWest: require('../assets/images/runners/drone/drone_move_north-west_yellow.gif'),
+        north: require('../assets/images/runners/drone/drone_move_north_yellow.gif'),
+        southEast: require('../assets/images/runners/drone/drone_move_south-east_yellow.gif'),
+        southWest: require('../assets/images/runners/drone/drone_move_south-west_yellow.gif'),
+        south: require('../assets/images/runners/drone/drone_move_south_yellow.gif'),
+        west: require('../assets/images/runners/drone/drone_move_west_yellow.gif'),
+    },
+};
+
+// Мяч (RUNNER_TYPES.BALL) — ничейный обструкт-хазард (RunnerBallInitService
+// на бэке, playerId всегда null), НЕ игрок, поэтому НЕТ per-player тонировки
+// — один фиксированный вид на всю игру. Цвет выбран пользователем живым
+// перебором 10 кандидатов (crimson, см. CLAUDE.md) — сгенерированы ВСЕ 10 на
+// диске (obstacle_*_{crimson,orange,gold,lime,teal,indigo,violet,magenta,
+// silver,white}.gif), если понадобится сменить — только поменять суффикс
+// ниже, картинки уже готовы, перегенерировать не нужно. Нет move/attack —
+// мяч не двигается и не стреляет сам, только idle/fly (перелёт при
+// столкновении)/collision (пара при столкновении с бегуном)/destroyed
+// (после разрешения)/start (момент появления из danger-клетки). Один и тот
+// же набор во ВСЕХ 4 цветовых слотах — RunnerToken всё равно резолвит
+// colorKeyForHex(color) для КАКОГО-ТО ключа (ball token красится в hex,
+// который не совпадает ни с одним PLAYER_COLOR_HEX, colorKeyForHex упадёт в
+// дефолтный 'blue' — не важно, все 4 слота отдают один и тот же файл).
+const ballFixed = {
+    idle: require('../assets/images/runners/obstacle/obstacle_idle_crimson.gif'),
+    fly: require('../assets/images/runners/obstacle/obstacle_fly_crimson.gif'),
+    destroyed: require('../assets/images/runners/obstacle/obstacle_destroyed_crimson.gif'),
+    start: require('../assets/images/runners/obstacle/obstacle_start_crimson.gif'),
+    collision: {
+        east: require('../assets/images/runners/obstacle/obstacle_collision_east_crimson.gif'),
+        west: require('../assets/images/runners/obstacle/obstacle_collision_west_crimson.gif'),
+    },
+};
+
 export const RUNNER_ANIMATION_SETS = {
+    [RUNNER_TYPES.BALL]: {
+        healthy: { red: ballFixed, blue: ballFixed, green: ballFixed, yellow: ballFixed },
+        damaged: { red: ballFixed, blue: ballFixed, green: ballFixed, yellow: ballFixed },
+    },
+    [RUNNER_TYPES.REAPER]: {
+        healthy: { red: droneRed, blue: droneBlue, green: droneGreen, yellow: droneYellow },
+        damaged: { red: droneRed, blue: droneBlue, green: droneGreen, yellow: droneYellow },
+    },
     [RUNNER_TYPES.SPRINTER]: {
         healthy: {
             red: scoutHealthyRed,
@@ -683,20 +828,6 @@ export const RUNNER_ANIMATION_SETS = {
     },
     [RUNNER_TYPES.ATHLETE]: {
         healthy: {
-            red: trooperHealthyRed,
-            blue: trooperHealthyBlue,
-            green: trooperHealthyGreen,
-            yellow: trooperHealthyYellow,
-        },
-        damaged: {
-            red: trooperDamagedRed,
-            blue: trooperDamagedBlue,
-            green: trooperDamagedGreen,
-            yellow: trooperDamagedYellow,
-        },
-    },
-    [RUNNER_TYPES.TANK]: {
-        healthy: {
             red: athletHealthyRed,
             blue: athletHealthyBlue,
             green: athletHealthyGreen,
@@ -707,6 +838,20 @@ export const RUNNER_ANIMATION_SETS = {
             blue: athletDamagedBlue,
             green: athletDamagedGreen,
             yellow: athletDamagedYellow,
+        },
+    },
+    [RUNNER_TYPES.TANK]: {
+        healthy: {
+            red: tankHealthyRed,
+            blue: tankHealthyBlue,
+            green: tankHealthyGreen,
+            yellow: tankHealthyYellow,
+        },
+        damaged: {
+            red: tankDamagedRed,
+            blue: tankDamagedBlue,
+            green: tankDamagedGreen,
+            yellow: tankDamagedYellow,
         },
     },
 };
@@ -783,9 +928,18 @@ export function getRunnerAnimationImage(type, status, anim, colorKey) {
         const dirKey = resolveMoveAssetDirection(anim.direction, anim.depthChanged, anim.targetLaneShifted);
         return bucket.attack?.[dirKey] ?? bucket.idle;
     }
-    if (anim.kind === 'fly') return bucket.fly;
-    if (anim.kind === 'gotShot') return bucket.gotShot;
+    if (anim.kind === 'fly') return bucket.fly ?? bucket.idle;
+    if (anim.kind === 'gotShot') return bucket.gotShot ?? bucket.idle;
     if (anim.kind === 'collision') return bucket.collision?.[anim.side] ?? bucket.idle;
+    // 'start' — для обычных бегунов (bucket.start, только healthy-статус —
+    // выход из резерва всегда со здоровым бегуном). У Жнеца своего start-ассета
+    // нет — первая установка вместо этого "прилетает" сбоку (anim.side —
+    // 'east'|'west', см. handleReaperPlacement в lib/runnerAnimTriggers.js),
+    // переиспользуем move.east/move.west из ЕГО набора направлений.
+    if (anim.kind === 'start') return bucket.start ?? bucket.move?.[anim.side] ?? bucket.idle;
+    // 'bomb' — ловушка Жнеца: он сам проигрывает эту анимацию у себя, когда
+    // другой бегун заканчивает ход на его клетке (см. lib/runnerAnimTriggers.js).
+    if (anim.kind === 'bomb') return bucket.bomb ?? bucket.idle;
     return bucket.idle;
 }
 

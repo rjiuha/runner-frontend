@@ -26,6 +26,8 @@ import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
+import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
+import { COLLISION_SOUND, FALLBACK_MOVE_SOUND } from '../constants/runnerSounds';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
@@ -72,7 +74,10 @@ function rawCellType(game, segment, positionX, positionY) {
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
-function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain) {
+function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain, pendingReaperPlacement) {
+    if (pendingReaperPlacement) {
+        return 'Жнец установлен — выбери направление выстрела или пропусти';
+    }
     if (pendingSelect) {
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
         // ("Бегун выбран"), и на карточках с одинаковой иконкой/цветом (или просто
@@ -169,6 +174,44 @@ export default function GameBoardScreen({ route }) {
         gameRef.current = game;
     });
 
+    // Озвучка бегунов (2026-09-03) — 3 "переиспользуемых канала"
+    // (.replace() на существующем плеере вместо создания нового на каждый
+    // звук, см. constants/runnerSounds за тем, какие файлы у каких типов
+    // есть) + отдельный фиксированный плеер под общий звук столкновения.
+    // moveSound (зацикленный, per-type) — см. отдельный useEffect ниже, тот
+    // же паттерн, что был раньше с общим lazer.mp3 для ВСЕХ типов.
+    const voiceSound = useAudioPlayer(null);
+    const shootSound = useAudioPlayer(null);
+    const startSound = useAudioPlayer(null);
+    const collisionSound = useAudioPlayer(COLLISION_SOUND);
+    const playOneShot = useCallback((player, source) => {
+        if (!source) return;
+        player.replace(source);
+        player.seekTo(0);
+        player.play();
+    }, []);
+
+    // Оборачивает runnerAnim.trigger — сам визуальный триггер не трогаем
+    // (lib/runnerAnimTriggers.js ничего не знает о звуке), тут ТОЛЬКО решаем,
+    // что доп. проиграть по kind. Тип бегуна для 'attack' ищем в текущем
+    // game.runners (бегун уже существует, просто стреляет) — для 'start' он
+    // может быть свежесозданным (Мяч) и его ещё нет в game.runners, поэтому
+    // предпочитаем extra.runnerType, если он есть (см. runnerAnimTriggers.js
+    // — прокинут явно именно для этого случая).
+    const triggerWithSound = useCallback(
+        (runnerId, kind, extra) => {
+            runnerAnim.trigger(runnerId, kind, extra);
+            if (kind === 'attack') {
+                const type = gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
+                playOneShot(shootSound, pickShootSoundSource(type));
+            } else if (kind === 'start') {
+                const type = extra?.runnerType ?? gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
+                playOneShot(startSound, pickStartSoundSource(type));
+            }
+        },
+        [runnerAnim.trigger, playOneShot, shootSound, startSound],
+    );
+
     // Логируем И версионные события (через reduce — вызывается ровно по разу
     // на применённое событие, дубли уже отфильтрованы useMercure), И
     // транзиентные (step_*/orchestrator без version) — теперь они хоть куда-то
@@ -176,7 +219,7 @@ export default function GameBoardScreen({ route }) {
     const reduceAndLog = useCallback(
         (state, e) => {
             pushLog(e);
-            handleVersionedRunnerAnimEvent(state, e, runnerAnim.trigger);
+            handleVersionedRunnerAnimEvent(state, e, triggerWithSound);
             // Лечение возвращает бегуна к healthy — стираем локально
             // накопленные жетоны повреждений, иначе кружки останутся
             // закрашенными вопреки уже здоровому статусу.
@@ -193,24 +236,38 @@ export default function GameBoardScreen({ route }) {
                 const type = runnerDamageTokens.consumePendingType(worsenedRunnerId);
                 if (type) runnerDamageTokens.recordToken(worsenedRunnerId, type);
             }
-            return runnerGameReducer(state, e);
+            const nextState = runnerGameReducer(state, e);
+            // Voice-реплика при выборе бегуна активным — диффим
+            // player.activeRunner ДО/ПОСЛЕ применения события (само поле
+            // приходит в разных типах событий — player_step/step_selection/
+            // ability_*, см. CLAUDE.md, — проще сравнить состояние целиком,
+            // чем перечислять их все). Играем для ЛЮБОГО игрока (не только
+            // "своего") — все клиенты партии слышат один и тот же выбор.
+            for (const player of nextState.gamePlayers ?? []) {
+                const prevPlayer = state.gamePlayers?.find((p) => p.id === player.id);
+                if (player.activeRunner != null && String(player.activeRunner) !== String(prevPlayer?.activeRunner)) {
+                    const runner = nextState.runners?.find((r) => String(r.id) === String(player.activeRunner));
+                    if (runner) playOneShot(voiceSound, pickActiveSoundSource(runner.type, runner.status));
+                }
+            }
+            return nextState;
         },
         // Зависим от конкретных мемоизированных функций, не от всего объекта
         // runnerDamageTokens — тот пересоздаётся на каждый рендер хука
         // (новый литерал {tokensByRunner,...}), это пересоздавало бы
         // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
         // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
-        [pushLog, runnerAnim.trigger, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken],
+        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound],
     );
 
     const onTransient = useCallback(
         (e) => {
             pushLog(e);
-            handleTransientRunnerAnimEvent(e, gameRef, runnerAnim.trigger);
+            handleTransientRunnerAnimEvent(e, gameRef, triggerWithSound);
             const pending = identifyPendingDamageType(e, gameRef);
             if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
         },
-        [pushLog, runnerAnim.trigger, runnerDamageTokens.notePendingType],
+        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -265,6 +322,14 @@ export default function GameBoardScreen({ route }) {
     const [pendingAbility, setPendingAbility] = useState(null);
     // { runnerId, diceIndex, type: 'DICE'|'ROLL' } — SELECT ждёт подтверждения, см. шапку файла
     const [pendingSelect, setPendingSelect] = useState(null);
+    // { diceIndex, positionX, positionY, segment } — клетка для Жнеца УЖЕ
+    // выбрана тапом (см. handleCellPress, tapMode==='reaper'), но вызов
+    // /ability ещё не ушёл — ждём выбор направления выстрела (по прямому
+    // запросу пользователя, 2026-09-03: "стрелять жнец может... только в тот
+    // момент, когда его переместили на сегмент" — бэк поддерживает
+    // опциональный direction в ТОМ ЖЕ вызове /ability, см. handleReaperShoot
+    // ниже). pendingAbility к этому моменту уже сброшен в null.
+    const [pendingReaperPlacement, setPendingReaperPlacement] = useState(null);
     const [busy, setBusy] = useState(false);
 
     // По умолчанию — свой игрок, как только придут данные. Один раз (пока не выбран вручную).
@@ -452,33 +517,36 @@ export default function GameBoardScreen({ route }) {
         return { highlightedCells: new Set(), tapMode: null };
     }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game]);
 
-    // Звук "лазера" СИНХРОННО с анимацией перемещения — по прямому запросу
+    // Звук шага СИНХРОННО с анимацией перемещения — по прямому запросу
     // пользователя, 2026-09-01: играет, пока у ХОТЬ ОДНОГО бегуна сейчас
     // проигрывается поза 'move' (см. hooks/useRunnerAnimations —
     // anims[runnerId].kind), останавливается и перематывается в начало, как
-    // только ни у кого больше нет активной 'move'-позы (обычная остановка
-    // ходьбы ИЛИ переход на другую позу — attack/fly/gotShot и т.п. — тоже
-    // гасит звук, он строго про саму ходьбу). Раньше тут ЕЩЁ был отдельный
-    // одноразовый "клик" (shotSound) на КАЖДЫЙ тап по клетке в
-    // handleCellPress ниже — убран целиком по прямому запросу пользователя,
-    // 2026-09-01, второй заход: он казался блокирующим (пока не доиграет —
-    // персонаж не шёл на вид), и вообще не должен был звучать сам по себе.
-    const moveSound = useAudioPlayer(require('../assets/sounds/lazer.mp3'));
+    // только ни у кого больше нет активной 'move'-позы. 2026-09-03: раньше
+    // тут всегда был общий lazer.mp3 для ВСЕХ типов — теперь свой звук на
+    // каждый тип (pickMoveSoundSource, см. lib/runnerSoundTriggers.js — для
+    // Солдата/ATHLETE, у которого своего move.wav нет, функция сама вернёт
+    // тот же lazer.mp3 как фолбэк). movingRunnerType — тип ПЕРВОГО найденного
+    // бегуна с kind==='move' (на практике почти всегда ровно один — если
+    // когда-нибудь окажется больше одного одновременно, играем звук только
+    // за первого, не накладываем несколько циклов друг на друга).
+    const movingRunnerType = useMemo(() => {
+        const movingId = Object.entries(runnerAnim.anims).find(([, a]) => a?.kind === 'move')?.[0];
+        if (movingId == null) return null;
+        return runners.find((r) => String(r.id) === String(movingId))?.type ?? null;
+    }, [runnerAnim.anims, runners]);
+    const moveSound = useAudioPlayer(FALLBACK_MOVE_SOUND);
     useEffect(() => {
         moveSound.loop = true;
     }, [moveSound]);
-    const anyRunnerMoving = useMemo(
-        () => Object.values(runnerAnim.anims).some((a) => a?.kind === 'move'),
-        [runnerAnim.anims],
-    );
     useEffect(() => {
-        if (anyRunnerMoving) {
+        if (movingRunnerType) {
+            moveSound.replace(pickMoveSoundSource(movingRunnerType));
             moveSound.play();
         } else {
             moveSound.pause();
             moveSound.seekTo(0);
         }
-    }, [anyRunnerMoving, moveSound]);
+    }, [movingRunnerType, moveSound]);
 
     const runAction = useCallback(async (fn) => {
         setBusy(true);
@@ -519,23 +587,36 @@ export default function GameBoardScreen({ route }) {
                 return;
             }
             if (tapMode === 'reaper' && pendingAbility) {
+                // Не вызываем /ability сразу — по прямому запросу пользователя,
+                // 2026-09-03, размещение и выбор направления выстрела теперь
+                // два отдельных шага (см. pendingReaperPlacement выше и
+                // handleReaperShoot ниже): сама клетка уже выбрана, ждём,
+                // будет ли выстрел и куда.
                 const { diceIndex } = pendingAbility;
                 const positionX = cell.col - cell.blockIndex * cols;
                 const positionY = cell.row;
-                runAction(() =>
-                    runnerGameApi
-                        .ability(true, {
-                            ability: 'reaper',
-                            dice: diceIndex + 1,
-                            positionX,
-                            positionY,
-                            segment: cell.blockIndex,
-                        })
-                        .then(() => setPendingAbility(null)),
-                );
+                setPendingReaperPlacement({ diceIndex, positionX, positionY, segment: cell.blockIndex });
+                setPendingAbility(null);
             }
         },
         [tapMode, highlightedCells, activeRunner, cols, pendingAbility, runAction],
+    );
+
+    // Второй шаг размещения Жнеца — направление выстрела (или пропуск).
+    // direction === undefined → JSON.stringify выкидывает поле из тела
+    // запроса (см. api/runnerGame.js#ability) — бэк трактует отсутствие
+    // direction как "без выстрела", тот же путь, что уже был раньше.
+    const handleReaperShoot = useCallback(
+        (direction) => {
+            if (!pendingReaperPlacement) return;
+            const { diceIndex, positionX, positionY, segment } = pendingReaperPlacement;
+            runAction(() =>
+                runnerGameApi
+                    .ability(true, { ability: 'reaper', dice: diceIndex + 1, positionX, positionY, segment, direction })
+                    .then(() => setPendingReaperPlacement(null)),
+            );
+        },
+        [pendingReaperPlacement, runAction],
     );
 
     // Дроп кубика на карточку бегуна — шаг SELECT. Реальный /select уходит не
@@ -652,9 +733,16 @@ export default function GameBoardScreen({ route }) {
     useEffect(() => {
         setCollisionDecisionReady(false);
         if (game?.extraTurnPlayer == null) return undefined;
+        // Общий звук столкновения — играет ВСЕМ клиентам партии сразу, как
+        // только extraTurnPlayer появился (не только тому, у кого решение) —
+        // game.extraTurnPlayer это разделяемое состояние, видимое всем.
+        // collisionSound — фиксированный источник (не .replace(), в отличие
+        // от voice/shoot/start-каналов), не нужно указывать источник заново.
+        collisionSound.seekTo(0);
+        collisionSound.play();
         const t = setTimeout(() => setCollisionDecisionReady(true), COLLISION_ANIM_DELAY_MS);
         return () => clearTimeout(t);
-    }, [game?.extraTurnPlayer]);
+    }, [game?.extraTurnPlayer, collisionSound]);
 
     // "Мяч" (см. myBallCollision выше) — неконтролируемая коллизия, у игрока
     // не должно быть выбора вообще (прямой запрос пользователя, 2026-09-02).
@@ -700,7 +788,7 @@ export default function GameBoardScreen({ route }) {
     }
 
     const showShootSkip = myTurn && myStep === PLAYER_STEP.SHOOT && !busy;
-    const showAbilitySkip = myTurn && myStep === PLAYER_STEP.ABILITY && !busy && !pendingAbility;
+    const showAbilitySkip = myTurn && myStep === PLAYER_STEP.ABILITY && !busy && !pendingAbility && !pendingReaperPlacement;
     const showRoadBonusChoice = myTurn && myStep === PLAYER_STEP.ROAD_BONUS && !busy;
 
     // Раньше на экране не было видно вообще, чей ход и что делать дальше — см.
@@ -715,15 +803,23 @@ export default function GameBoardScreen({ route }) {
         <>
             <Text style={styles.turnTitleMine}>Твой ход</Text>
             <Text style={styles.turnHint}>
-                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain)}
+                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain, pendingReaperPlacement)}
             </Text>
-            {pendingSelect && !busy && (
+            {pendingReaperPlacement && !busy && (
+                <View style={styles.turnBtnRow}>
+                    <Button title="↖" variant="success" onPress={() => handleReaperShoot('LEFT_UP')} style={styles.turnSkipBtn} />
+                    <Button title="↑" variant="success" onPress={() => handleReaperShoot('UP')} style={styles.turnSkipBtn} />
+                    <Button title="↗" variant="success" onPress={() => handleReaperShoot('RIGHT_UP')} style={styles.turnSkipBtn} />
+                    <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtn} />
+                </View>
+            )}
+            {!pendingReaperPlacement && pendingSelect && !busy && (
                 <View style={styles.turnBtnRow}>
                     <Button title="Подтвердить" variant="success" onPress={handleConfirmSelect} style={styles.turnSkipBtn} />
                     <Button title="Отмена" variant="muted" onPress={handleCancelSelect} style={styles.turnSkipBtn} />
                 </View>
             )}
-            {!pendingSelect && showRoadBonusChoice && (
+            {!pendingReaperPlacement && !pendingSelect && showRoadBonusChoice && (
                 <View style={styles.turnBtnRow}>
                     <Button
                         title={`Бонус +${game.trackGain ?? ''}`}
