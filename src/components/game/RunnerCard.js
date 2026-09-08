@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import RunnerDiceSlot from './RunnerDiceSlot';
-import { DAMAGE_TOKENS, RUNNER_DISPLAY } from '../../constants/GameConstants';
+import { DAMAGE_TOKENS, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_STATUS_LABEL } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
@@ -72,6 +72,17 @@ export default function RunnerCard({
     const display = RUNNER_DISPLAY[runner.type];
     const slots = runner.damageTokens ?? [null, null];
     const placed = runner.segment != null;
+    // Уничтоженный бегун (RunnerDestroyService на бэке обнуляет segment —
+    // тот же null, что и у ещё НЕ размещённого в резерве бегуна) раньше был
+    // визуально НЕОТЛИЧИМ от "в резерве" — карточка молча показывала "в
+    // резерве" вместо "уничтожен" (текст) и вообще НИКАК не отмечала это в
+    // compact-раскладке (там текста-подписи нет вовсе, только кружки
+    // повреждений, а те про накопленный ТИП урона, не про сам факт смерти).
+    // Живая жалоба пользователя, 2026-09-08: "статус в плитке не поменялся"
+    // после того, как персонажа унесло столкновением за пределы карты и
+    // уничтожило — на деле ИЗМЕНИЛСЯ (на "в резерве"), просто ошибочно, не
+    // на "уничтожен". Добавлено explicit-состояние, не завязанное на segment.
+    const destroyed = runner.status === RUNNER_STATUS.DESTROYED;
     const zoneKey = `move:${runner.id}`;
     const cardRef = useRef(null);
     // Двойной тап по карточке — переносит видимое окно дороги к бегуну (см.
@@ -150,6 +161,9 @@ export default function RunnerCard({
                 pending && styles.cardPending,
                 hoverState === 'valid' && styles.cardHoverValid,
                 hoverState === 'invalid' && styles.cardHoverInvalid,
+                // Приглушаем ВСЮ карточку — единственный признак, видный и в
+                // compact-раскладке (там текстовой подписи ниже нет вообще).
+                destroyed && styles.cardDestroyed,
             ]}
             onPress={handlePress}
             activeOpacity={0.8}
@@ -173,10 +187,17 @@ export default function RunnerCard({
                             {/* Статус текстом ("Исправен"/"Повреждён"...) убран — кружки
                                 повреждений ниже уже однозначно показывают то же самое
                                 (0/1/2 занятых кружка), отдельная строка избыточна (по
-                                прямому запросу пользователя). */}
+                                прямому запросу пользователя). Исключение — "уничтожен":
+                                RunnerDestroyService на бэке обнуляет segment точно так
+                                же, как у ещё не размещённого бегуна, так что "в резерве"/
+                                "на поле" (на основе segment) не может отличить одно от
+                                другого — без явной проверки статуса уничтоженный бегун
+                                молча показывался бы как "в резерве". */}
                             {!compact && (
                                 <Text style={styles.placement}>
-                                    {pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
+                                    {destroyed
+                                        ? RUNNER_STATUS_LABEL[RUNNER_STATUS.DESTROYED]
+                                        : pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
                                 </Text>
                             )}
                         </View>
@@ -214,6 +235,9 @@ const styles = StyleSheet.create({
     // карточки, не квадратов внутри (см. шапку файла).
     cardHoverValid: { borderColor: colors.success, borderStyle: 'solid' },
     cardHoverInvalid: { borderColor: colors.danger, borderStyle: 'solid' },
+    // Единственный визуальный признак "уничтожен", видный и в compact-
+    // раскладке (там текстовой подписи нет вовсе, см. placement выше).
+    cardDestroyed: { opacity: 0.45 },
     // compact — портретная раскладка, двухколоночная (бегуны слева, усиления
     // справа), карточки должны все поместиться без прокрутки (см. запрос
     // пользователя) — меньше отступы, мельче иконка/шрифты/зоны, чем в

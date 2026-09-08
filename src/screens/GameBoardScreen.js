@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -27,6 +27,7 @@ import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
+import { getRunnerAnimationImage, colorKeyForHex } from '../constants/runnerAnimations';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND } from '../constants/runnerSounds';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
@@ -59,10 +60,12 @@ const STUCK_ACTION_TIMEOUT = 8000;
 // Задержка перед показом кнопок "Использовать/Перебросить" (и перед авто-
 // разрешением "мяча", см. myBallCollision) — чтобы игрок сначала УВИДЕЛ
 // анимацию столкновения, а не решал вслепую в момент, когда extraTurnPlayer
-// только что появился. С запасом на слайд+move-позу приезжающего бегуна
-// (SLIDE_DURATION_MS/ANIM_DURATION_MS.move, ~1400мс) плюс минимальный показ
-// самой позы столкновения (COLLISION_MIN_HOLD_MS в BoardGrid, 1000мс).
-const COLLISION_ANIM_DELAY_MS = 2200;
+// только что появился. Раньше 2200мс (с большим запасом сверх
+// SLIDE_DURATION_MS/ANIM_DURATION_MS.move ~1400мс + COLLISION_MIN_HOLD_MS в
+// BoardGrid) — по прямому запросу пользователя, 2026-09-08, сокращено:
+// 1400мс всё ещё покрывает приезд победителя (~1360-1440мс), просто без
+// лишнего запаса поверх минимального показа самой позы.
+const COLLISION_ANIM_DELAY_MS = 1400;
 
 // Плавность смены фрагментов трассы (game_track_updated, см. эффект у
 // gridData ниже) — длительность fade-out старого (удаляемого) фрагмента №1,
@@ -87,14 +90,23 @@ function rawCellType(game, segment, positionX, positionY) {
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
-function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain, pendingReaperPlacement, reaperPreviewReady) {
+function stepInstruction(
+    step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain,
+    pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
+) {
     if (pendingReaperPlacement) {
         // До того, как "прилёт" из-за края карты успел доиграть
         // (reaperPreviewReady), подсветки на доске ещё нет — тапать некуда,
         // текст объясняет паузу, а не намекает на несуществующие клетки.
-        return reaperPreviewReady
+        // canReaperShoot (см. highlightedCells выше) — стрелять реально
+        // можно, только если раунд>0 И на клетке впереди есть бегун (бэк
+        // молча игнорирует выстрел в обоих остальных случаях, см.
+        // ReaperService::run(), read-only) — если нельзя, не намекаем на
+        // несуществующий выбор, остаётся только "Без выстрела".
+        if (!reaperPreviewReady) return 'Жнец приближается…';
+        return canReaperShoot
             ? 'Жнец на месте — тапни подсвеченную клетку для выстрела или нажми «Без выстрела»'
-            : 'Жнец приближается…';
+            : 'Жнец на месте — нажми «Без выстрела»';
     }
     if (pendingSelect) {
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
@@ -540,6 +552,31 @@ export default function GameBoardScreen({ route, navigation }) {
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
 
+    // Точечный "прогрев" декодера ОДНОГО ассета — атака Жнеца (всегда
+    // direction UP → resolveMoveAssetDirection возвращает 'north' безусловно,
+    // см. constants/runnerAnimations, так что вариант ровно один, не 3) — по
+    // прямому запросу пользователя, 2026-09-08: "дрон, когда нажимаешь на
+    // выстрел, исчезает почему-то на полсекунды". Похоже на ту же Android
+    // decode-паузу первого показа РЕДКО используемого gif, что уже частично
+    // решалась для обычных бегунов (fadeDuration=0, см. RunnerToken.js) — но
+    // тут сам fadeDuration=0 играет ПРОТИВ: раньше платформенный кросс-фейд
+    // (~300мс) маскировал паузу декодирования как плавный переход, теперь
+    // паузу НЕЧЕМ прикрыть, и она видна как явный пробел. НЕ повторяем
+    // "Track 1" (см. CLAUDE.md, 2026-09-02, откачен целиком) — там
+    // одновременно держались смонтированными ~240 анимаций разом, что само по
+    // себе зацикленно проигрывало и убивало производительность на Android.
+    // Здесь — РОВНО ОДИН скрытый (1×1, opacity 0) `<Image>`, смонтированный
+    // только на время, пока Жнец ждёт решения "стрелять/пропустить"
+    // (pendingReaperPlacement) — этого времени (≥REAPER_PREVIEW_MS=2200мс до
+    // того, как подсветка вообще появляется) с большим запасом хватает,
+    // чтобы декодер успел подготовить кадры ДО того, как игрок реально
+    // сможет нажать «выстрелить».
+    const reaperAttackPreloadSource = useMemo(() => {
+        if (!pendingReaperPlacement) return null;
+        const colorKey = colorKeyForHex(playerColorById[myPlayer?.id] ?? '#fff');
+        return getRunnerAnimationImage(RUNNER_TYPES.REAPER, RUNNER_STATUS.HEALTHY, { kind: 'attack', direction: 'UP' }, colorKey);
+    }, [pendingReaperPlacement, playerColorById, myPlayer?.id]);
+
     // Чей сейчас ход — на экране раньше не было видно вообще (см. CLAUDE.md,
     // живой прогон). game.playerOrder хранит RunnerPlayer.id как строку.
     const currentTurnPlayer = useMemo(
@@ -688,11 +725,26 @@ export default function GameBoardScreen({ route, navigation }) {
             // вперёд (UP) — по прямому уточнению пользователя, 2026-09-08:
             // "стрелять строго по прямой должен только Жнец", остальные типы
             // (см. SHOOT-ветку ниже) стреляют по всем 3 направлениям, как
-            // обычный MOVE. БЕЗ фильтра по занятости клетки — кнопки тоже не
-            // проверяли занятость.
-            const cells = forwardNeighbors(pendingReaperPlacement)
-                .filter((pos) => pos.direction === 'UP')
-                .map(cellKey);
+            // обычный MOVE.
+            //
+            // Раньше клетка подсвечивалась БЕЗ проверки раунда/занятости —
+            // жалоба пользователя, 2026-09-08: диалог "выстрелить?" появлялся,
+            // даже когда бэк заведомо проигнорирует выстрел. Перечитал
+            // ReaperService::run() (read-only): сам выстрел применяется
+            // ТОЛЬКО если `$player->getGame()->getRound() > 0` (в первом
+            // раунде игры, round===0, блок с attackResolver вообще не
+            // выполняется — направление в событие ВСЁ РАВНО попадает,
+            // ReaperEvent публикуется ДО этой проверки, так что фронт видел
+            // e.attack и играл анимацию атаки, хотя урона не было) И только
+            // если `$target = $cell->getRunner()` не пуст (пустая клетка —
+            // молчаливый no-op). Теперь клетка подсвечивается (и тапабельна)
+            // ТОЛЬКО когда оба условия реально выполнены — иначе игроку
+            // остаётся только «Без выстрела» (см. stepInstruction/canReaperShoot).
+            const cells = game.round > 0
+                ? forwardNeighbors(pendingReaperPlacement)
+                    .filter((pos) => pos.direction === 'UP' && findRunnerAt(runners, pos))
+                    .map(cellKey)
+                : [];
             return { highlightedCells: new Set(cells), tapMode: 'reaperShoot' };
         }
 
@@ -1192,7 +1244,10 @@ export default function GameBoardScreen({ route, navigation }) {
         <>
             <Text style={styles.turnTitleMine}>Твой ход</Text>
             <Text style={styles.turnHint}>
-                {stepInstruction(myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain, pendingReaperPlacement, reaperPreviewReady)}
+                {stepInstruction(
+                    myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain,
+                    pendingReaperPlacement, reaperPreviewReady, tapMode === 'reaperShoot' && highlightedCells.size > 0,
+                )}
             </Text>
             {showActionStuckRefresh && !busy && (
                 <Button
@@ -1329,6 +1384,11 @@ export default function GameBoardScreen({ route, navigation }) {
                 winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
                 onExit={goToMainMenu}
             />
+
+            {/* Скрытый прогрев декодера для атаки Жнеца — см. reaperAttackPreloadSource выше. */}
+            {reaperAttackPreloadSource && (
+                <Image source={reaperAttackPreloadSource} style={styles.hiddenPreload} pointerEvents="none" />
+            )}
 
             {!isPortrait && <View style={styles.turnBanner}>{turnBannerInner}</View>}
 
@@ -1567,6 +1627,11 @@ const styles = StyleSheet.create({
     // поверх боевого BoardGrid, см. game_track_updated эффект у gridData).
     boardGridStack: { position: 'relative' },
     boardGridFadeOverlay: { position: 'absolute', top: 0, left: 0 },
+    // Полностью невидимый (opacity:0, 1×1) — см. reaperAttackPreloadSource
+    // выше, единственная задача этого элемента — заставить Android
+    // декодировать gif заранее, сам он никогда не должен быть виден/мешать
+    // раскладке.
+    hiddenPreload: { position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0 },
     panelFrameWrap: { position: 'relative' },
     // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
     // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому

@@ -53,10 +53,11 @@ const HIGHLIGHT_BORDER_WIDTH = 1.5;
 // пользователя, 2026-08-30, тот же цвет, что FragmentLabelStrip использует
 // для полосы этого фрагмента (FRAGMENT_COLORS[blockIndex]).
 const FRAGMENT_BOUNDARY_LINE_PX = 3;
-// Минимальное время показа коллизионной позы (2026-09-01, по прямому запросу
-// пользователя — "коллизия слишком быстро отыгрывает") — см. подробный
-// разбор у tokenOverlay ниже.
-const COLLISION_MIN_HOLD_MS = 1000;
+// Минимальное время показа коллизионной позы — было 1000мс (2026-09-01, по
+// прямому запросу пользователя — "коллизия слишком быстро отыгрывает"),
+// сокращено до 600мс по ОБРАТНОМУ запросу, 2026-09-08 ("сделай, чтобы
+// коллизия длилась поменьше") — см. подробный разбор у tokenOverlay ниже.
+const COLLISION_MIN_HOLD_MS = 600;
 
 export default function BoardGrid({
     gridData,
@@ -150,7 +151,8 @@ export default function BoardGrid({
         [gridData, windowStart, windowEnd],
     );
 
-    // Ключ карты — "segment-row-localCol" (см. lib/board#indexRunnersByCell).
+    // Ключ карты — "segment|row|localCol" (см. lib/board#indexRunnersByCell —
+    // разделитель `|`, не `-`, значения могут быть отрицательными).
     // segment*cols+localCol даёт тот же globalCol, что и cell.col — только
     // бегуны из видимого сейчас окна попадают в оверлей.
     //
@@ -216,12 +218,19 @@ export default function BoardGrid({
         const items = [];
         const now = Date.now();
 
-        const pushSolo = (runner, sx, sy) => {
+        // onTop — доп. явный zIndex (не только порядок в массиве, см.
+        // reaperOnTop ниже) — у этого проекта долгая история именно Android-
+        // специфичных багов с порядком отрисовки токенов на доске (см.
+        // CLAUDE.md — "токен под сегментом"/"квадрат вместо кружка"/
+        // "персонажи прорисовываются под полосой", всё лечилось явным
+        // zIndex/elevation, порядок в дереве сам по себе не всегда уважался).
+        const pushSolo = (runner, sx, sy, onTop = false) => {
             items.push({
                 runnerId: runner.id, runner, x: sx, y: sy,
                 boxW: segmentW, boxH: segmentH, tokenSize,
                 anim: runnerAnims?.[runner.id] ?? null,
                 anchorBottom: isNativeToken,
+                onTop,
             });
         };
         // Бокс пары — ТОТ ЖЕ segmentW×segmentH, что у соло-токена, НИКОГДА
@@ -278,7 +287,10 @@ export default function BoardGrid({
             const visible = cellRunners.filter((r) => !heldRunnerIds.has(r.id));
             if (visible.length === 0) continue; // оба тут заморожены — их рисует второй проход
 
-            const [segStr, rowStr, colStr] = key.split('-');
+            // `|`, не `-` — см. lib/board#indexRunnersByCell: значения могут
+            // быть отрицательными (бегуна унесло за боковой край трассы), с
+            // дефисом-разделителем разбор ключа съезжал по индексам.
+            const [segStr, rowStr, colStr] = key.split('|');
             const segment = Number(segStr);
             const row = Number(rowStr);
             // BOARD_LAYOUT.COLS (всегда 8 — реальных колонок в сегменте
@@ -311,8 +323,20 @@ export default function BoardGrid({
                 // жертва — 'destroyed' (с задержкой после bomb, см. triggers),
                 // затем скрывается через hiddenRunnerIds.
                 if (a.type === RUNNER_TYPES.REAPER || b.type === RUNNER_TYPES.REAPER) {
-                    pushSolo(a, x, y);
-                    pushSolo(b, x, y);
+                    // Жнец — ВСЕГДА поверх (по прямому запросу пользователя,
+                    // 2026-09-08: "заходит кто-то на его клетку — загораживает
+                    // его") — оба рисуются одним и тем же соло-токеном на
+                    // одинаковых x/y (см. комментарий выше). Раньше порядок
+                    // пуша был "как лежат в visible" (порядок бегунов в самом
+                    // game.runners) — чисто случайный, кто из двух окажется
+                    // сверху. Явный `onTop` (см. pushSolo) — не только
+                    // порядок в массиве (жертва пушится первой, Жнец вторым),
+                    // но и zIndex, на случай если сам Android не уважает
+                    // порядок в дереве для двух соседних абсолютных View
+                    // (см. комментарий у pushSolo).
+                    const [victim, reaper] = a.type === RUNNER_TYPES.REAPER ? [b, a] : [a, b];
+                    pushSolo(victim, x, y);
+                    pushSolo(reaper, x, y, true);
                     continue;
                 }
                 const isArriving = (r) => {
@@ -618,7 +642,10 @@ export default function BoardGrid({
                             y={item.y}
                             width={item.boxW}
                             height={item.boxH}
-                            style={item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer}
+                            style={[
+                                item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer,
+                                item.onTop && styles.tokenOnTop,
+                            ]}
                             windowStart={windowStart}
                         >
                             <RunnerToken
@@ -736,6 +763,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'flex-end',
     },
+    // Жнец поверх бегуна, зашедшего на его клетку (см. onTop у pushSolo) —
+    // выше базового zIndex/elevation слоя tokenOverlayLayer (4), явный
+    // zIndex/elevation НАДЁЖНЕЕ порядка в дереве конкретно на Android (та же
+    // причина, что и у самого tokenOverlayLayer — см. его комментарий).
+    tokenOnTop: { zIndex: 10, elevation: 10 },
     stackBadge: {
         position: 'absolute',
         top: 2,

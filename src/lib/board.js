@@ -152,15 +152,29 @@ export function computeFragmentBands(windowStart, viewportCols, fragmentCols, se
 }
 
 /**
- * Индекс "бегунов по ячейке" — ключ совпадает с id ячейки из flattenTrackSegments
- * (segment-row-col = segment-positionY-positionX), поэтому BoardGrid может отдать
- * O(1)-поиск токенов для каждой отрисованной клетки вместо перебора на каждый рендер.
+ * Индекс "бегунов по ячейке" — группирует бегунов по (segment, positionY,
+ * positionX), см. BoardGrid#tokenOverlay (единственный потребитель — там
+ * только ИТЕРАЦИЯ по записям, не точечный `.get()` по чужому ключу, так что
+ * формат ключа не обязан совпадать с cell.id из flattenTrackSegments, только
+ * сам с собой).
+ *
+ * Разделитель — `|`, НЕ `-`: значения могут быть ОТРИЦАТЕЛЬНЫМИ. Бегуна может
+ * унести за пределы дорожек (positionY<0 или >5) отбросом от урона (Rocket/
+ * Stupor на бэке, read-only — многоклеточный "выстрел ракетой" может
+ * отправить бегуна за боковой край трассы, `TrackSegment::isWithinBounds()`
+ * на бэке пропускает такое значение как есть, без клэмпа). С разделителем
+ * `-` ключ для, например, positionY=-1 выглядел бы "2--1-7" — двойной дефис,
+ * `key.split('-')` в BoardGrid съезжал по индексам (жалоба пользователя,
+ * 2026-09-08: "мгновенно телепортировало... не было перемещения плавного" —
+ * токен рендерился в мусорном месте вместо честного слайда за край доски).
+ * `|` не может появиться в строковом представлении числа ни при каких
+ * условиях — разбор `split('|')` однозначен для любого знака.
  */
 export function indexRunnersByCell(runners) {
     const map = new Map();
     for (const runner of runners) {
         if (runner.segment == null || runner.positionX == null || runner.positionY == null) continue;
-        const key = `${runner.segment}-${runner.positionY}-${runner.positionX}`;
+        const key = `${runner.segment}|${runner.positionY}|${runner.positionX}`;
         const list = map.get(key);
         if (list) list.push(runner);
         else map.set(key, [runner]);
