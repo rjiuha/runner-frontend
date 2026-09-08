@@ -67,20 +67,15 @@ export function useBoardScroll({ cols }) {
         [maxStart, cols, stopRepeat],
     );
 
-    // Сдвиг окна на произвольную ЗНАКОВУЮ дельту без остановки на границах
-    // одним нажатием (в отличие от step ±1) — нужен для game_track_updated
-    // (см. GameBoardScreen): когда сервер "сдвигает" фрагменты трассы
-    // (begin удаляется, middle->begin, end->middle, новый->end), нумерация
-    // cell.col у ВСЕХ клеток сбрасывается на -COLS относительно прежней (см.
-    // lib/board#flattenTrackSegments — col всегда 0..TOTAL_COLS-1 от ТЕКУЩИХ
-    // trackBegin/Middle/End, blockIndex всегда 0,1,2). Чтобы камера
-    // продолжала "смотреть" на то же самое место трассы, а не на случайно
-    // подменившийся кусок, windowStart должен сдвинуться на ту же дельту
-    // синхронно с этим событием. Клэмп — как и у step/jumpTo.
-    const shiftWindowBy = useCallback(
-        (delta) => {
+    // Левый край окна СТРОГО на заданной колонке, БЕЗ центрирования — нужно,
+    // когда сама вызывающая сторона хочет показать РОВНО определённый
+    // диапазон [globalCol, globalCol+cols) целиком (например, ровно один
+    // фрагмент трассы целиком, см. GameBoardScreen — хореография сдвига
+    // фрагментов), а не бегуна где-то посередине окна.
+    const jumpToStart = useCallback(
+        (globalCol) => {
             stopRepeat();
-            setWindowStart((s) => Math.max(0, Math.min(maxStart, s + delta)));
+            setWindowStart(Math.max(0, Math.min(maxStart, globalCol)));
         },
         [maxStart, stopRepeat],
     );
@@ -90,6 +85,6 @@ export function useBoardScroll({ cols }) {
         backButtonProps: { onPressIn: () => startRepeat(-1), onPressOut: stopRepeat },
         forwardButtonProps: { onPressIn: () => startRepeat(1), onPressOut: stopRepeat },
         jumpTo,
-        shiftWindowBy,
+        jumpToStart,
     };
 }

@@ -1,8 +1,9 @@
 // src/components/game/BoardGrid.js
 import React, { useMemo, useRef, useState } from 'react';
-import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
+import { colors } from '../../theme';
 import RunnerToken from './RunnerToken';
 import RunnerTokenSlide from './RunnerTokenSlide';
 
@@ -79,6 +80,10 @@ export default function BoardGrid({
     hiddenRunnerIds = null,
     onCollisionPoseStart = null,
     reaperPreview = null,
+    wipeGridData = null,
+    wipeColumnOpacities = null,
+    revealCols = null,
+    revealColumnOpacities = null,
     onCellPress,
 }) {
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
@@ -526,6 +531,86 @@ export default function BoardGrid({
         return segments;
     }, [windowStart, cols, rows, segmentW, segmentH, isPortrait]);
 
+    // "Волна" исчезновения удаляемого фрагмента №1 (game_track_updated, см.
+    // GameBoardScreen — по прямому запросу пользователя, 2026-09-08: камера
+    // ВСЕХ игроков принудительно на фрагменте 1, там доигрывают destroy/fly
+    // анимации, ПОТОМ 8 колонок фрагмента гаснут одна за другой волной по
+    // направлению движения). `wipeGridData` — замороженный снимок СТАРОГО
+    // фрагмента 1 (см. flattenTrackSegments — тот же формат, что у обычных
+    // ячеек, `cell.col` тут ВСЕГДА локальная колонка 0..COLS-1, поскольку
+    // снимок берётся из массива с ОДНИМ сегментом). Рисуется ОТДЕЛЬНЫМ
+    // абсолютным слоем поверх обычной сетки (не переиспользует flex-раскладку
+    // самих ячеек — та рассчитана на ПОЛНЫЙ набор колонок подряд, кусок из
+    // одной колонки в ней просто "прижался" бы не туда) — та же формула
+    // x/y, что уже проверена на tokenOverlay/fragmentBoundarySegments выше.
+    // Опэсити на колонку — `wipeColumnOpacities[cell.col]`, отдельный
+    // Animated.Value на каждую из 8 колонок, управляется снаружи
+    // (GameBoardScreen, Animated.stagger).
+    const wipeOverlayCells = useMemo(() => {
+        if (!wipeGridData) return [];
+        // Та же фильтрация по видимому окну, что и у обычных ячеек
+        // (visibleCells выше) — wipeGridData несёт ВСЕ 8 колонок старого
+        // фрагмента 1 целиком, но если viewportCols < 8 (узкий портретный
+        // экран), должны попасть в кадр только те, что реально видны СЕЙЧАС
+        // (windowStart=0 на время волны, см. GameBoardScreen) — без фильтра
+        // localCol для "лишних" колонок ушёл бы в отрицательные Y/X.
+        return wipeGridData
+            .filter((cell) => cell.col >= windowStart && cell.col < windowEnd)
+            .map((cell) => {
+                const localCol = cell.col - windowStart;
+                return {
+                    ...cell,
+                    x: isPortrait ? cell.row * segmentW : localCol * segmentW + (cell.row % 2 === 0 ? segmentW / 2 : 0),
+                    y: isPortrait
+                        ? (cols - 1 - localCol) * segmentH + (cell.row % 2 === 0 ? segmentH / 2 : 0)
+                        : cell.row * segmentH,
+                };
+            });
+    }, [wipeGridData, isPortrait, segmentW, segmentH, cols, windowStart, windowEnd]);
+
+    // Обратная сторона той же волны — появление НОВОГО фрагмента 3 (был пик,
+    // теперь полный сегмент), по прямому запросу пользователя, 2026-09-08
+    // (уточнение): "плавное возникновение новых сегментов... аналогично
+    // затуханию того, который уничтожился, только наоборот" — то есть НЕ
+    // общий opacity-фейд всей доски разом (это была первая, неверная версия —
+    // видно было и по демо-виджету, и по игре одинаково), а ТОТ ЖЕ приём, что
+    // и у wipeOverlayCells: отдельный абсолютный слой, по колонке своя
+    // Animated.Value, управляется снаружи (GameBoardScreen). Разница только в
+    // содержимом слоя — здесь не картинки старой клетки (нечего показывать
+    // "старого" для только что раскрытого фрагмента), а сплошная маска цвета
+    // фона экрана (colors.bg — тот же фолбэк-цвет, что у GameBoardScreen
+    // wrapper), которая гаснет (1→0) колонка за колонкой, обнажая уже
+    // отрисованную РЕАЛЬНУЮ сетку под собой. `revealCols` — фиксированный
+    // список ГЛОБАЛЬНЫХ колонок нового фрагмента (не зависит от windowStart —
+    // просто те 8 колонок, что физически являются "новым" сегментом),
+    // `revealColumnOpacities` ключуется ТЕМ ЖЕ числом (cell.col), что и
+    // wipeColumnOpacities, для единообразия с уже проверенным паттерном.
+    const revealOverlayCells = useMemo(() => {
+        if (!revealCols || !revealCols.length) return [];
+        const cells = [];
+        // idx — позиция колонки внутри revealCols (0..revealCols.length-1),
+        // НЕ глобальный номер колонки — revealColumnOpacities приходит
+        // снаружи компактным массивом (по одному Animated.Value на каждую из
+        // 8 колонок нового фрагмента), индексировать по абсолютному cell.col
+        // потребовало бы разреженного массива на TOTAL_COLS элементов ради
+        // 8 занятых слотов, эта форма проще для вызывающей стороны.
+        revealCols.forEach((col, idx) => {
+            if (col < windowStart || col >= windowEnd) return;
+            const localCol = col - windowStart;
+            for (let row = 0; row < rows; row++) {
+                cells.push({
+                    key: `${col}-${row}`,
+                    idx,
+                    x: isPortrait ? row * segmentW : localCol * segmentW + (row % 2 === 0 ? segmentW / 2 : 0),
+                    y: isPortrait
+                        ? (cols - 1 - localCol) * segmentH + (row % 2 === 0 ? segmentH / 2 : 0)
+                        : row * segmentH,
+                });
+            }
+        });
+        return cells;
+    }, [revealCols, isPortrait, segmentW, segmentH, cols, rows, windowStart, windowEnd]);
+
     return (
         <View
             style={[
@@ -705,6 +790,81 @@ export default function BoardGrid({
                         <View key={seg.key} style={[styles.fragmentBoundarySegment, seg.style]} />
                     ))}
                 </View>
+
+                {wipeGridData && (
+                    <View
+                        style={[
+                            styles.wipeOverlayLayer,
+                            isPortrait
+                                ? { width: rows * segmentW, height: cols * segmentH }
+                                : { width: cols * segmentW, height: rows * segmentH },
+                        ]}
+                        pointerEvents="none"
+                    >
+                        {wipeOverlayCells.map((cell) => (
+                            <Animated.View
+                                key={cell.id}
+                                style={{
+                                    position: 'absolute',
+                                    left: cell.x,
+                                    top: cell.y,
+                                    width: segmentW,
+                                    height: segmentH,
+                                    opacity: wipeColumnOpacities?.[cell.col] ?? 1,
+                                }}
+                            >
+                                {cell.baseImage && (
+                                    <Image
+                                        source={cell.baseImage}
+                                        style={{
+                                            position: 'absolute', left: 0, top: 0, width: segmentW, height: segmentH,
+                                            resizeMode: 'stretch',
+                                        }}
+                                    />
+                                )}
+                                <Image
+                                    source={cell.image}
+                                    style={{
+                                        position: 'absolute',
+                                        left: segmentW * (SEGMENT_INSET / 2),
+                                        top: segmentH * (SEGMENT_INSET / 2),
+                                        width: segmentW * (1 - SEGMENT_INSET),
+                                        height: segmentH * (1 - SEGMENT_INSET),
+                                        resizeMode: 'stretch',
+                                        opacity: CELL_OPACITY[cell.type] ?? 0.9,
+                                    }}
+                                />
+                            </Animated.View>
+                        ))}
+                    </View>
+                )}
+
+                {revealCols && revealCols.length > 0 && (
+                    <View
+                        style={[
+                            styles.revealMaskLayer,
+                            isPortrait
+                                ? { width: rows * segmentW, height: cols * segmentH }
+                                : { width: cols * segmentW, height: rows * segmentH },
+                        ]}
+                        pointerEvents="none"
+                    >
+                        {revealOverlayCells.map((cell) => (
+                            <Animated.View
+                                key={cell.key}
+                                style={{
+                                    position: 'absolute',
+                                    left: cell.x,
+                                    top: cell.y,
+                                    width: segmentW,
+                                    height: segmentH,
+                                    backgroundColor: colors.bg,
+                                    opacity: revealColumnOpacities?.[cell.idx] ?? 0,
+                                }}
+                            />
+                        ))}
+                    </View>
+                )}
             </View>
         </View>
     );
@@ -750,6 +910,18 @@ const styles = StyleSheet.create({
     // абсолютных слоёв этого компонента.
     fragmentBoundaryLayer: { position: 'absolute', top: 0, left: 0, zIndex: 2, elevation: 2 },
     fragmentBoundarySegment: { position: 'absolute' },
+    // Волна исчезновения удаляемого фрагмента (см. wipeGridData/
+    // wipeOverlayCells выше) — ниже токенов (обычно там уже никого нет к
+    // моменту wipe, см. GameBoardScreen), выше обычной сетки/линии стыка,
+    // чтобы полностью перекрыть её замороженным снимком.
+    wipeOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 3, elevation: 3 },
+    // Маска появления нового фрагмента (см. revealOverlayCells) — ВЫШЕ вообще
+    // всего остального в этом слое, включая tokenOnTop (10): пока волна не
+    // догасла ровно до этой колонки, под маской может быть уже отрисован
+    // реальный контент (в т.ч. только что появившийся токен бегуна на новом
+    // фрагменте) — маска обязана перекрывать его целиком, не только обычные
+    // клетки/линию стыка.
+    revealMaskLayer: { position: 'absolute', top: 0, left: 0, zIndex: 12, elevation: 12 },
     tokenLayer: {
         position: 'absolute',
         alignItems: 'center',

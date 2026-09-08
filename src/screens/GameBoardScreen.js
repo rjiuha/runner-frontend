@@ -67,10 +67,43 @@ const STUCK_ACTION_TIMEOUT = 8000;
 // лишнего запаса поверх минимального показа самой позы.
 const COLLISION_ANIM_DELAY_MS = 1400;
 
-// Плавность смены фрагментов трассы (game_track_updated, см. эффект у
-// gridData ниже) — длительность fade-out старого (удаляемого) фрагмента №1,
-// нарисованного overlay-слоем поверх уже подменённой сетки.
-const TRACK_FADE_MS = 550;
+// Хореография сдвига фрагментов трассы (game_track_updated) — по прямому
+// запросу пользователя, 2026-09-08: заход на "пик" 4-го фрагмента (см.
+// lib/board#flattenPeekColumn) должен переключать ВСЕХ игроков на фрагмент 1,
+// показать там destroy/fly у тех, кто на нём стоял, дать фрагменту исчезнуть
+// волной по колонкам, затем прыгнуть камерой к бегуну, который вызвал сдвиг,
+// и плавно проявить новый вид. См. подробный разбор у эффекта ниже.
+const TRACK_SHIFT_SETTLE_MS = 2200; // время доиграть destroy/fly тем, кто был на фрагменте 1
+const TRACK_SHIFT_WIPE_MS = 2800;   // волна исчезновения 8 колонок (SETTLE+WIPE ≈ 5с по просьбе пользователя)
+const TRACK_SHIFT_REVEAL_MS = 3000; // волна ПОЯВЛЕНИЯ 8 колонок нового фрагмента (см. ниже)
+
+// Новый (только что раскрытый) фрагмент 3 после сдвига — ВСЕГДА один и тот же
+// фиксированный диапазон глобальных колонок, не зависящий от того, где именно
+// внутри него оказался бегун-инициатор: при TOTAL_COLS=25/COLS=8 фрагменты
+// занимают 0-7/8-15/16-23, пик — колонка 24; после сдвига старый пик
+// (col 24, только 1 колонка данных) становится ПОЛНЫМ третьим фрагментом
+// (segment 2 = cols 16-23). Считать это заранее (а не искать позицию мовера
+// в game.runners ПОСЛЕ волны, как было в первой версии) устраняет гонку:
+// раньше жёстко зависело от того, успел ли собственный runner_save мовера
+// прийти раньше конца анимации — теперь не нужно вообще, окно появления
+// известно по построению.
+const TRACK_SHIFT_NEW_FRAGMENT_SEGMENT = Math.floor(BOARD_LAYOUT.TOTAL_COLS / BOARD_LAYOUT.COLS) - 1;
+const TRACK_SHIFT_REVEAL_WINDOW_START = TRACK_SHIFT_NEW_FRAGMENT_SEGMENT * BOARD_LAYOUT.COLS;
+// Кусочек НОВОГО 4-го сегмента (новый пик, всегда последняя колонка —
+// TOTAL_COLS-1) — по прямому запросу пользователя, 2026-09-08: должен
+// проявиться САМЫМ ПОСЛЕДНИМ, отдельным шагом ПОСЛЕ того, как весь новый
+// фрагмент 3 уже полностью показался волной, а не одновременно с ним в общей
+// анимации. Добавлен ДЕВЯТЫМ элементом в конец TRACK_SHIFT_REVEAL_COLS (сам
+// список сохраняет порядок "8 колонок фрагмента 3, потом пик") — BoardGrid
+// индексирует revealColumnOpacities позицией В ЭТОМ массиве (см.
+// revealOverlayCells#idx), не абсолютным номером колонки, так что расширение
+// списка не требует никаких правок в BoardGrid.js.
+const TRACK_SHIFT_PEEK_COL = BOARD_LAYOUT.TOTAL_COLS - 1;
+const TRACK_SHIFT_PEEK_REVEAL_MS = 500;
+const TRACK_SHIFT_REVEAL_COLS = [
+    ...Array.from({ length: BOARD_LAYOUT.COLS }, (_, i) => TRACK_SHIFT_REVEAL_WINDOW_START + i),
+    TRACK_SHIFT_PEEK_COL,
+];
 
 const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
 const SEGMENT_KEYS = ['trackBegin', 'trackMiddle', 'trackEnd'];
@@ -379,7 +412,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // arrowBtnSize остаётся только для mobileNav-кнопок в seamRow — те
     // привязаны к толщине декоративной рамки, не к сегменту.
 
-    const { windowStart, backButtonProps, forwardButtonProps, jumpTo, shiftWindowBy } = useBoardScroll({ cols: viewportCols });
+    const { windowStart, backButtonProps, forwardButtonProps, jumpTo, jumpToStart } = useBoardScroll({ cols: viewportCols });
 
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
@@ -613,19 +646,33 @@ export default function GameBoardScreen({ route, navigation }) {
     }, [game?.trackBegin, game?.trackMiddle, game?.trackEnd, game?.trackNext, rows, cols]);
 
     // game_track_updated (см. runnerGameReducer#'game_track_updated' и
-    // TrackService::shift()/Move.php:41 на бэке, read-only) — сервер удаляет
-    // фрагмент №1 (trackBegin), сдвигает №2→№1/№3→№2 и добавляет новый №3.
-    // Реакция на это событие раньше отсутствовала ВООБЩЕ: `game.trackBegin/
-    // Middle/End` (и, соответственно, `gridData`) уже применялись реducer'ом
-    // мгновенно (плоское слияние полей), но (1) `cell.col`/`windowStart`
-    // живут в системе координат, ЛОКАЛЬНОЙ для ТЕКУЩЕГО снимка [trackBegin,
-    // trackMiddle,trackEnd] (blockIndex ВСЕГДА 0,1,2 у того, что сейчас лежит
-    // в этих трёх полях, см. lib/board#flattenTrackSegments) — сдвиг
-    // сегментов -1 в массиве без компенсации windowStart заставлял камеру
-    // "смотреть" совсем не туда: то, что было видно в окне [windowStart,
-    // windowStart+cols), мгновенно подменялось контентом совершенно другого
-    // куска трассы; (2) сама подмена картинок происходила одним кадром, без
-    // перехода.
+    // TrackService::shift()/Move::handle() на бэке, read-only) — заход
+    // бегуна на "пик" 4-го фрагмента (см. lib/board#flattenPeekColumn) удаляет
+    // фрагмент №1 (trackBegin), сдвигает №2→№1/№3→№2/№4(только что раскрытый
+    // trackNext)→№3. По прямому запросу пользователя, 2026-09-08— это должно
+    // быть заметной хореографией на экранах ВСЕХ игроков, а не тихой
+    // подменой данных:
+    //   1. Камера ВСЕХ клиентов принудительно прыгает на фрагмент 1
+    //      (windowStart=0) — независимо от того, куда каждый был проскроллен.
+    //   2. Пока камера там — доигрывают destroy/fly у тех, кто на фрагменте 1
+    //      стоял (см. TRACK_SHIFT_SETTLE_MS) — это уже РАБОТАЕТ само по себе
+    //      (существующий механизм в lib/runnerAnimTriggers.js, тут только
+    //      подставляем ЗАМОРОЖЕННУЮ картинку старого фрагмента 1 вместо уже
+    //      переименованной боевой, чтобы под анимацией была правильная земля,
+    //      а бегуны/токены остаются ЖИВЫМИ — см. boardGridEl ниже).
+    //   3. Фрагмент гаснет ВОЛНОЙ по 8 колонкам, одна за другой, по
+    //      направлению движения (col 0 → col 7) — см. TRACK_SHIFT_WIPE_MS,
+    //      BoardGrid#wipeGridData/wipeColumnOpacities.
+    //   4. Камера прыгает СТРОГО на новый фрагмент 3 (фиксированный диапазон
+    //      колонок, не позиция бегуна — см. TRACK_SHIFT_REVEAL_WINDOW_START).
+    //   5. Новый фрагмент 3 проявляется ЗЕРКАЛЬНО ТОЙ ЖЕ волной (маска на
+    //      колонку гаснет 1→0) за TRACK_SHIFT_REVEAL_MS — по прямому
+    //      уточнению пользователя, НЕ общий fade всей доски разом.
+    //   6. Кусочек НОВОГО 4-го сегмента (новый пик) — камера сдвигается на
+    //      правый край, показывая его, и он проявляется ПОСЛЕДНИМ, отдельным
+    //      коротким шагом (TRACK_SHIFT_PEEK_REVEAL_MS) ПОСЛЕ того, как весь
+    //      фрагмент 3 уже полностью виден — по прямому запросу пользователя,
+    //      2026-09-08.
     //
     // Обнаружение самого факта сдвига — по имени `game.trackBegin.name`, НЕ
     // по `game.trackNumber` (тот, проверено чтением бэка, выставляется ОДИН
@@ -635,68 +682,127 @@ export default function GameBoardScreen({ route, navigation }) {
     // делала — оказалось ЛОМАЕТСЯ на КАЖДОМ reconnect/resync: useMercure#sync
     // на любом подключении, даже без единого реального события, всегда
     // парсит REST-снапшот ЗАНОВО и коммитит его как НОВЫЙ объект — ссылка на
-    // `trackBegin` меняется, хотя фрагмент физически тот же самый; ложное
-    // срабатывание сдвигало бы windowStart на -COLS без всякого реального
-    // сдвига). Имя фрагмента — надёжный, содержательный идентификатор:
-    // `TrackLoader::prepareTracksForGame()` тасует ВЕСЬ список файлов БЕЗ
-    // возврата (`shuffle`+`array_splice`) — внутри одной партии одно и то же
-    // имя не может встретиться дважды, значит "имя изменилось" ⇔ "это
-    // реально другой фрагмент" всегда, а "имя то же" ⇔ "фрагмент не менялся"
-    // даже если сам объект пересоздан REST-снапшотом.
+    // `trackBegin` меняется, хотя фрагмент физически тот же самый). Имя
+    // фрагмента — надёжный идентификатор: `TrackLoader::prepareTracksForGame()`
+    // тасует ВЕСЬ список файлов БЕЗ возврата, внутри одной партии одно и то
+    // же имя не может встретиться дважды.
     // trackSnapshotRef хранит СТАРОЕ значение (записывается в КОНЦЕ этого же
-    // эффекта с ПРОШЛОГО срабатывания) — на момент, когда эффект видит новое
-    // имя, `prev.trackBegin` — это как раз то, что было ДО
-    // сдвига (сам `game` уже содержит новое — реducer применяет мгновенно,
-    // без задержки, остальной игровой логике старые значения не нужны).
-    // `prev.trackBegin != null` отсекает первый снапшот партии (переход
-    // null→объект при загрузке, это не сдвиг). Известный неполный случай:
-    // если ПОКА клиент был отключён произошло больше одного сдвига разом,
-    // здесь виден только факт "имя другое" — компенсация windowStart всё
-    // равно применится лишь на один TRACK_FADE (-COLS), не на N — не
-    // проверено живьём, поскольку требует спец. сценария с длительным
-    // разрывом связи, отложено как известное ограничение.
-    // Как только замечен реальный сдвиг:
-    //   1. windowStart сдвигается на ту же дельту (-BOARD_LAYOUT.COLS) —
-    //      удерживает камеру на том же физическом месте трассы (см.
-    //      shiftWindowBy в useBoardScroll.js за подробным разбором системы
-    //      координат и почему именно такая дельта сохраняет позицию).
-    //   2. Старый (удаляемый) фрагмент №1 — единственная часть, которая
-    //      РЕАЛЬНО пропадает с экрана без замены (фрагменты 2/3 просто
-    //      переименовываются в 1/2, тот же контент виден в тех же пикселях
-    //      благодаря сдвигу windowStart из п.1, никакого визуального разрыва
-    //      для них нет и своей анимации не нужно) — снимок его ячеек
-    //      (посчитанный ИМЕННО от prev.trackBegin, той же функцией, что и
-    //      сама сетка) кладётся overlay-слоем ПОВЕРХ уже подменившейся
-    //      боевой сетки на СТАРОМ windowStart (там, где фрагмент №1 был
-    //      виден до сдвига) и плавно растворяется (Animated.timing 1→0, см.
-    //      TRACK_FADE_MS) — под ним к этому моменту уже отрисован новый
-    //      расклад, так что затухание overlay'я и есть "плавное исчезновение
-    //      первого фрагмента и вставка нового": сам новый (третий) фрагмент
-    //      никакого отдельного fade-in не получает (он и так СРАЗУ виден в
-    //      боевом слое) — оверлей просто перестаёт его закрывать.
+    // эффекта с ПРОШЛОГО срабатывания) — `prev.trackBegin` на момент, когда
+    // эффект видит новое имя, это как раз то, что было ДО сдвига (сам `game`
+    // уже содержит новое — реducer применяет мгновенно). `prev.trackBegin !=
+    // null` отсекает первый снапшот партии (переход null→объект, не сдвиг).
+    // Известное ограничение: если ЗА ВРЕМЯ разрыва связи произошло больше
+    // ОДНОГО сдвига разом, вся хореография запустится только один раз на
+    // САМОЕ ПОСЛЕДНЕЕ состояние — не проверено живьём, требует спец.
+    // сценария с длительным разрывом связи.
     const trackSnapshotRef = useRef({ trackBegin: null });
-    const [trackFadeOverlay, setTrackFadeOverlay] = useState(null); // { gridData, windowStart, opacity }
+    const [trackShiftPhase, setTrackShiftPhase] = useState(null); // null | 'settling' | 'wiping' | 'revealing'
+    const [trackShiftGridData, setTrackShiftGridData] = useState(null); // замороженные 8 колонок старого фрагмента 1
+    const trackShiftColOpacitiesRef = useRef(
+        Array.from({ length: BOARD_LAYOUT.COLS }, () => new Animated.Value(1)),
+    );
+    // Маска появления НОВОГО фрагмента (см. BoardGrid#revealColumnOpacities) —
+    // по прямому уточнению пользователя, 2026-09-08: "плавное возникновение
+    // новых сегментов... аналогично затуханию того, который уничтожился,
+    // только наоборот" — ПЕРВАЯ версия (общий Animated.View-обёртка с
+    // opacity 0→1 вокруг ВСЕЙ доски целиком) была неверна ровно в том, на что
+    // указал пользователь: проявлялось (одинаково, разом) вообще всё видимое
+    // окно, а не волной по колонкам НОВОГО фрагмента, зеркалящей затухание.
+    // Теперь — Animated.Value НА КОЛОНКУ (opacity=1 значит "закрыто маской",
+    // 0 — "открыто"), тот же Animated.stagger-приём, что и у wipe, просто
+    // 1→0 вместо 1→0... то есть та же операция (класть в toValue:0), разница
+    // только в НАЧАЛЬНОМ значении (маска стартует ЗАКРЫТОЙ, opacity=1, и
+    // гаснет — а не наоборот, "загорается") и в том, что закрывает НОВЫЙ
+    // фрагмент, а не старый.
+    // Длина — TRACK_SHIFT_REVEAL_COLS.length (9: 8 колонок фрагмента 3 + 1
+    // пик), НЕ BOARD_LAYOUT.COLS — см. комментарий у TRACK_SHIFT_PEEK_COL
+    // выше про то, почему пик прицеплен девятым элементом того же списка.
+    const trackShiftRevealOpacitiesRef = useRef(
+        Array.from({ length: TRACK_SHIFT_REVEAL_COLS.length }, () => new Animated.Value(0)),
+    );
     useEffect(() => {
         const prev = trackSnapshotRef.current;
         const nameChanged = prev.trackBegin != null && game?.trackBegin != null
             && prev.trackBegin.name !== game.trackBegin.name;
         if (nameChanged) {
-            shiftWindowBy(-BOARD_LAYOUT.COLS);
             // Массив из ОДНОГО элемента — flattenTrackSegments проходит только
-            // blockIndex 0 (forEach по длине массива), считать/фильтровать
-            // несуществующие blockIndex 1/2 не нужно.
-            const removedGridData = flattenTrackSegments([prev.trackBegin], rows, cols);
-            const opacity = new Animated.Value(1);
-            setTrackFadeOverlay({ gridData: removedGridData, windowStart, opacity });
-            Animated.timing(opacity, {
-                toValue: 0,
-                duration: TRACK_FADE_MS,
-                useNativeDriver: true,
-            }).start(() => setTrackFadeOverlay(null));
+            // blockIndex 0, считать/фильтровать несуществующие 1/2 не нужно.
+            setTrackShiftGridData(flattenTrackSegments([prev.trackBegin], rows, cols));
+            trackShiftColOpacitiesRef.current.forEach((v) => v.setValue(1));
+            trackShiftRevealOpacitiesRef.current.forEach((v) => v.setValue(1)); // новый фрагмент — сразу под маской
+            jumpToStart(0); // камера ВСЕХ клиентов — на фрагмент 1, БЕЗ центрирования
+            setTrackShiftPhase('settling');
         }
         trackSnapshotRef.current = { trackBegin: game?.trackBegin };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [game?.trackBegin?.name]);
+
+    // Фазы хореографии — см. докстринг выше. 'settling': камера уже на
+    // фрагменте 1, gridData у boardGridEl подменена на замороженный снимок
+    // (см. его определение ниже) — бегуны/анимации ОСТАЮТСЯ живыми, поэтому
+    // destroy/fly у тех, кто там стоял, доигрывают как обычно поверх
+    // правильной (старой) земли. 'wiping': gridData возвращается к боевой, а
+    // ПОВЕРХ неё волна из 8 колонок (BoardGrid#wipeGridData/
+    // wipeColumnOpacities) гаснет одна за другой — под ней уже готова новая
+    // картинка. К этому моменту всё, что стояло на фрагменте 1, уже либо
+    // скрыто (hiddenIds), либо улетело в резерв (Жнец) — прятать за волной
+    // больше нечего. По завершении волны — камера прыгает СТРОГО на диапазон
+    // нового фрагмента (TRACK_SHIFT_REVEAL_WINDOW_START, левый край без
+    // центрирования — см. её определение у констант выше: фиксированный
+    // диапазон по построению, не зависит от того, успел ли прийти
+    // собственный runner_save мовера). 'revealing': та же волна, что и wipe,
+    // ЗЕРКАЛЬНО — маска НА КОЛОНКУ гаснет (1→0) одна за другой, по тому же
+    // направлению движения, обнажая уже отрисованную реальную сетку под
+    // собой (не покадровая перестройка, не общий fade всей доски).
+    useEffect(() => {
+        if (trackShiftPhase === 'settling') {
+            const t = setTimeout(() => setTrackShiftPhase('wiping'), TRACK_SHIFT_SETTLE_MS);
+            return () => clearTimeout(t);
+        }
+        if (trackShiftPhase === 'wiping') {
+            const perCol = TRACK_SHIFT_WIPE_MS / BOARD_LAYOUT.COLS;
+            Animated.stagger(
+                perCol,
+                trackShiftColOpacitiesRef.current.map((v) =>
+                    Animated.timing(v, { toValue: 0, duration: perCol * 1.4, useNativeDriver: true }),
+                ),
+            ).start(() => {
+                setTrackShiftGridData(null);
+                jumpToStart(TRACK_SHIFT_REVEAL_WINDOW_START); // камера — строго на новый фрагмент 3
+                setTrackShiftPhase('revealing');
+            });
+            return undefined;
+        }
+        if (trackShiftPhase === 'revealing') {
+            // Сначала — волна ПО ФРАГМЕНТУ 3 целиком (первые 8 значений, см.
+            // TRACK_SHIFT_REVEAL_COLS). Пик (9-й, последний элемент) в неё
+            // намеренно НЕ входит — по прямому запросу пользователя, он должен
+            // проявиться отдельным, самым последним шагом, а не одновременно
+            // с общей волной.
+            const perCol = TRACK_SHIFT_REVEAL_MS / BOARD_LAYOUT.COLS;
+            const fragmentOpacities = trackShiftRevealOpacitiesRef.current.slice(0, BOARD_LAYOUT.COLS);
+            Animated.stagger(
+                perCol,
+                fragmentOpacities.map((v) =>
+                    Animated.timing(v, { toValue: 0, duration: perCol * 1.4, useNativeDriver: true }),
+                ),
+            ).start(() => {
+                // Кусочек нового 4-го сегмента — камера сдвигается на самый
+                // правый край (jumpToStart клэмпит любое большое значение до
+                // maxStart), вводя пик в кадр, и только ТЕПЕРЬ его собственная
+                // маска коротко гаснет — самый последний бит хореографии.
+                jumpToStart(BOARD_LAYOUT.TOTAL_COLS);
+                const peekOpacity = trackShiftRevealOpacitiesRef.current[BOARD_LAYOUT.COLS];
+                Animated.timing(peekOpacity, {
+                    toValue: 0,
+                    duration: TRACK_SHIFT_PEEK_REVEAL_MS,
+                    useNativeDriver: true,
+                }).start(() => setTrackShiftPhase(null));
+            });
+            return undefined;
+        }
+        return undefined;
+    }, [trackShiftPhase, jumpToStart]);
 
     // Имена 3 фрагментов трассы (карт) для FragmentLabelStrip — портретная
     // раскладка, полоса слева от доски (см. useBoardLayout.labelStripW).
@@ -714,7 +820,12 @@ export default function GameBoardScreen({ route, navigation }) {
     // первого выхода на трассу — GameBoardScreen решает, что означает тап,
     // handleCellPress ниже.
     const { highlightedCells, tapMode } = useMemo(() => {
-        if (!myTurn || busy) return { highlightedCells: new Set(), tapMode: null };
+        // Хореография сдвига фрагментов (trackShiftPhase != null) —
+        // "кат-сцена": камера скачет туда-сюда сама, интерактив с доской на
+        // это время выключен целиком (по прямому запросу пользователя,
+        // 2026-09-08 — "тапать некуда, доска сейчас показывает не то, чем
+        // управляет игрок прямо сейчас").
+        if (!myTurn || busy || trackShiftPhase) return { highlightedCells: new Set(), tapMode: null };
 
         if (pendingReaperPlacement && reaperPreviewReady) {
             // Направление выстрела Жнеца сразу при размещении — подсветка
@@ -813,7 +924,7 @@ export default function GameBoardScreen({ route, navigation }) {
         }
 
         return { highlightedCells: new Set(), tapMode: null };
-    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady]);
+    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, trackShiftPhase]);
 
     // Звук шага СИНХРОННО с анимацией перемещения — по прямому запросу
     // пользователя, 2026-09-01: играет, пока у ХОТЬ ОДНОГО бегуна сейчас
@@ -1315,9 +1426,17 @@ export default function GameBoardScreen({ route, navigation }) {
     // Общий элемент для обеих раскладок (было продублировано дважды —
     // вынесено в переменную, чтобы новые пропы не пришлось синхронизировать
     // руками в двух местах, см. runnerAnims/currentTurnPlayerId ниже).
+    // gridData во время фазы 'settling' подменяется на замороженный снимок
+    // старого фрагмента 1 (trackShiftGridData) — камера уже там (jumpTo(0) в
+    // эффекте выше), а бегуны/анимации остаются ЖИВЫМИ (runners/runnerAnims/
+    // runnerVisualPositions не трогаем), так что destroy/fly у тех, кто там
+    // стоял, доигрывают поверх ПРАВИЛЬНОЙ (старой) земли, а не уже
+    // переименованной боевой. wipeGridData/wipeColumnOpacities — только в
+    // фазе 'wiping' (см. докстринг эффекта выше и BoardGrid.js за деталями
+    // самого слоя волны).
     const boardGridEl = (
         <BoardGrid
-            gridData={gridData}
+            gridData={trackShiftPhase === 'settling' && trackShiftGridData ? trackShiftGridData : gridData}
             rows={rows}
             cols={viewportCols}
             segmentW={segmentW}
@@ -1347,33 +1466,13 @@ export default function GameBoardScreen({ route, navigation }) {
                     }
                     : null
             }
+            wipeGridData={trackShiftPhase === 'wiping' ? trackShiftGridData : null}
+            wipeColumnOpacities={trackShiftPhase === 'wiping' ? trackShiftColOpacitiesRef.current : null}
+            revealCols={trackShiftPhase === 'revealing' ? TRACK_SHIFT_REVEAL_COLS : null}
+            revealColumnOpacities={trackShiftPhase === 'revealing' ? trackShiftRevealOpacitiesRef.current : null}
             onCellPress={handleCellPress}
         />
     );
-
-    // Overlay удаляемого фрагмента №1 (см. эффект у gridData/trackSnapshotRef
-    // выше) — отдельный, некликабельный экземпляр BoardGrid поверх боевого,
-    // рисующий ТОЛЬКО старые ячейки blockIndex 0 на их СТАРОЙ (до сдвига)
-    // windowStart-позиции, плавно затухающий. runners не передаём (пустой
-    // массив по умолчанию у BoardGrid) — токены уже отрисованы боевым слоем
-    // и обновляются его собственной анимационной очередью, дублировать их
-    // тут не нужно (и рисовало бы "двух бегунов" на время fade).
-    const trackFadeOverlayEl = trackFadeOverlay ? (
-        <Animated.View pointerEvents="none" style={[styles.boardGridFadeOverlay, { opacity: trackFadeOverlay.opacity }]}>
-            <BoardGrid
-                gridData={trackFadeOverlay.gridData}
-                rows={rows}
-                cols={viewportCols}
-                segmentW={segmentW}
-                segmentH={segmentH}
-                windowStart={trackFadeOverlay.windowStart}
-                orientation="portrait"
-                containerWidth={roadContainerW}
-                containerHeight={roadContainerH}
-                playerColorById={playerColorById}
-            />
-        </Animated.View>
-    ) : null;
 
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
@@ -1388,6 +1487,16 @@ export default function GameBoardScreen({ route, navigation }) {
             {/* Скрытый прогрев декодера для атаки Жнеца — см. reaperAttackPreloadSource выше. */}
             {reaperAttackPreloadSource && (
                 <Image source={reaperAttackPreloadSource} style={styles.hiddenPreload} pointerEvents="none" />
+            )}
+
+            {/* Кат-сцена сдвига фрагментов (см. эффект у trackShiftPhase выше) —
+                видна ВСЕМ игрокам одновременно, не только тому, кто вызвал сдвиг:
+                камера прыгает без спроса, доска на это время неинтерактивна
+                (см. highlightedCells), banner объясняет почему. */}
+            {trackShiftPhase && (
+                <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]} pointerEvents="none">
+                    <Text style={styles.collisionText}>Трасса смещается…</Text>
+                </View>
             )}
 
             {!isPortrait && <View style={styles.turnBanner}>{turnBannerInner}</View>}
@@ -1510,9 +1619,13 @@ export default function GameBoardScreen({ route, navigation }) {
                                 segmentSize={segmentH}
                                 totalHeight={roadContainerH}
                             />
+                            {/* Появление нового фрагмента после сдвига теперь рисует САМ
+                                BoardGrid (revealCols/revealColumnOpacities — маска на
+                                колонку, зеркалящая волну wipe, см. эффект у trackShiftPhase
+                                выше) — обёртка тут больше не нужна, boardGridStack остался
+                                чисто layout-контейнером. */}
                             <View style={styles.boardGridStack}>
                                 {boardGridEl}
-                                {trackFadeOverlayEl}
                             </View>
                         </View>
                     </RoadArea>
@@ -1623,10 +1736,12 @@ const styles = StyleSheet.create({
     // раскладка. Обе имеют явную height=roadContainerH (см. JSX), выравнивать
     // по кросс-оси дополнительно не нужно.
     roadRowPortrait: { flexDirection: 'row' },
-    // position:'relative' — якорь для trackFadeOverlayEl (position:'absolute'
-    // поверх боевого BoardGrid, см. game_track_updated эффект у gridData).
+    // Чисто layout-обёртка вокруг boardGridEl — появление нового фрагмента
+    // (фаза 'revealing' хореографии сдвига) рисует сам BoardGrid
+    // (revealCols/revealColumnOpacities), отдельного Animated.View тут больше
+    // не нужно. position:'relative' оставлен для консистентности с
+    // остальными stack-обёртками в этом файле.
     boardGridStack: { position: 'relative' },
-    boardGridFadeOverlay: { position: 'absolute', top: 0, left: 0 },
     // Полностью невидимый (opacity:0, 1×1) — см. reaperAttackPreloadSource
     // выше, единственная задача этого элемента — заставить Android
     // декодировать gif заранее, сам он никогда не должен быть виден/мешать
