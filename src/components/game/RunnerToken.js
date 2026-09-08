@@ -88,7 +88,17 @@ export default function RunnerToken({
                 style,
             ]}
         >
-            <Image source={source} style={imgBoxStyle} resizeMode="contain" />
+            {/* fadeDuration=0 — на Android <Image> по умолчанию кросс-фейдит
+                (~300мс) при КАЖДОЙ смене source, включая смену анимационной
+                позы бегуна (move→attack, idle→fly и т.п.) — жалоба
+                пользователя, 2026-09-08: "плавные исчезновения одной gif и
+                появление другого", хотя в самом компоненте никакого
+                кастомного фейда нет (тот, что раньше был в истории проекта,
+                убран ещё 2026-09-02 при переходе на реверс-маскинг) — это
+                чистый платформенный дефолт RN Image, не наш код. На вебе
+                проп не действует (там и так не было проблемы), убирать не
+                нужно отдельным Platform-условием. */}
+            <Image source={source} style={imgBoxStyle} resizeMode="contain" fadeDuration={0} />
         </View>
     );
 }

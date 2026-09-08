@@ -90,6 +90,46 @@ export function flattenTrackSegments(segments, rows, cols) {
 }
 
 /**
+ * "Пик" 4-го фрагмента (trackNext) — по прямому запросу пользователя,
+ * 2026-09-08: без него бегуну физически некуда шагнуть с последней клетки
+ * 3-го фрагмента (см. известный TODO в CLAUDE.md). Разворачивает ТОЛЬКО
+ * ПЕРВУЮ колонку (positionX=0) каждой дорожки trackNext — не весь фрагмент
+ * целиком (тот ещё не должен быть виден по дизайну, только его "передний
+ * край"). blockIndex захардкожен в 3 (следующий после 0/1/2 у обычных
+ * фрагментов), col — абсолютная глобальная колонка, куда встаёт эта
+ * единственная "пиковая" клетка (см. BOARD_LAYOUT.TOTAL_COLS = 3*COLS+1).
+ * Формат id/ключа СОВПАДАЕТ с обычными ячейками (`${blockIndex}-${row}-${col
+ * внутри сегмента=0}`) — lib/hexDirection#cellKey строит тот же формат для
+ * соседа с segment=3, positionX=0, так что подсветка/тап-детекция работают
+ * без доп. кода. trackNext сейчас НЕ отдаётся бэком ни в REST-снапшоте, ни в
+ * game_track_updated (см. CLAUDE.md, читано read-only) — пока это не
+ * добавят, `trackNext` будет `undefined`, и функция просто вернёт [] (пик не
+ * рисуется, поведение как раньше).
+ */
+export function flattenPeekColumn(trackNext, rows, peekCol) {
+    const grid = trackNext?.grid;
+    if (!grid) return [];
+    const data = [];
+    for (let row = 0; row < rows; row++) {
+        const rawType = grid?.[0]?.[row] ?? null;
+        const id = `3-${row}-0`;
+        const type = resolveCellVisual(rawType);
+        data.push({
+            id,
+            row,
+            col: peekCol,
+            blockIndex: 3,
+            segmentName: trackNext?.name ?? null,
+            rawType,
+            type,
+            image: pickSegmentImage(type, id),
+            baseImage: pickBaseImage(type, id),
+        });
+    }
+    return data;
+}
+
+/**
  * Группирует видимое окно прокрутки [windowStart, windowStart+viewportCols)
  * по фрагменту трассы (blockIndex = floor(globalCol/fragmentCols)) — для
  * FragmentLabelStrip (портретная раскладка), чтобы показать имя фрагмента(ов),

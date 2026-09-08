@@ -25,6 +25,17 @@ const ANIM_DURATION_MS = { move: 1440, attack: 1800, gotShot: 1400, fly: 2200, s
 // позже победителя, а не одновременно/раньше (2026-09-07).
 const KNOCKBACK_WAIT_MS = 1650;
 
+// Страховочный таймаут для 'pending'-заготовок (step_move/anomaly, см.
+// lib/runnerAnimTriggers.js) — заготовка ждёт ВТОРОЙ trigger (реальный
+// runner_save с toPosition), который должен её ДОПОЛНИТЬ на месте (см. merge
+// в trigger() ниже). Обычная длительность ANIM_DURATION_MS[kind] (900-1440мс)
+// тут неуместна — если подтверждающее событие задерживается ДОЛЬШЕ этого
+// срока (сетевой джиттер), таймаут срабатывает раньше мерджа и запускает
+// "дёрганье" (см. подробный разбор у места использования, 2026-09-08). Это
+// ЗАВЕДОМО больше нормального времени доставки события (обычно десятки-сотни
+// мс) — чистая подстраховка на случай, если оно вообще не придёт.
+const PENDING_SAFETY_TIMEOUT_MS = 8000;
+
 // 'destroyed' сознательно НЕ имеет записи здесь (терминальный шаг, не идёт
 // через обычный setTimeout ниже — см. advanceQueue) — DESTROYED_HIDE_DELAY_MS
 // ниже управляет ОТДЕЛЬНЫМ таймером, который прячет токен с доски после того,
@@ -114,8 +125,23 @@ export function useRunnerAnimations() {
         active.current[runnerId] = step;
         const { kind, extra } = step;
         const { toPosition, pending, ...animExtra } = extra ?? {};
-        const nonce = ++nonceRef.current;
-        setAnims((prev) => ({ ...prev, [runnerId]: { kind, nonce, ...animExtra } }));
+        // Заготовка (pending) ЕЩЁ НЕ несёт позицию — если показать её позу
+        // прямо сейчас, токен на пару кадров "шагает на месте" (поза уже
+        // сменилась, x/y — ещё старые), а когда чуть позже придёт мердж с
+        // реальной toPosition, поза/позиция обновятся ВТОРОЙ раз почти сразу
+        // следом — на реальном устройстве это читалось как дёрганье/"будто
+        // телепортируется на изначальный сегмент" (жалоба пользователя,
+        // 2026-09-08, третий раз за сессию — предыдущий фикс той же сессии,
+        // PENDING_SAFETY_TIMEOUT_MS, устранял ДРУГУЮ причину той же жалобы —
+        // преждевременную очистку по таймауту, но не этот двухфазный показ).
+        // Раз в норме мердж приходит за десятки-сотни мс (обычная сетевая
+        // задержка между step_move и runner_save), безопаснее ПОДОЖДАТЬ его и
+        // показать позу и позицию ОДНИМ кадром — токен остаётся в текущей
+        // (старой) позе до этого момента, а не мигает лишней промежуточной.
+        if (!pending) {
+            const nonce = ++nonceRef.current;
+            setAnims((prev) => ({ ...prev, [runnerId]: { kind, nonce, ...animExtra } }));
+        }
         if (toPosition) {
             setVisualPositions((prev) => ({ ...prev, [runnerId]: toPosition }));
         }
@@ -139,9 +165,29 @@ export function useRunnerAnimations() {
             return;
         }
 
+        // `pending`-заготовка (см. lib/runnerAnimTriggers.js — step_move/
+        // anomaly) ждёт ВТОРОЙ trigger (реальный runner_save с toPosition),
+        // который должен её ДОПОЛНИТЬ на месте (см. merge-ветку в trigger()
+        // ниже), а не превращаться в отдельный шаг. Раньше у заготовки был
+        // ОБЫЧНЫЙ ANIM_DURATION_MS[kind] таймаут (900-1440мс) — если
+        // подтверждающее событие задерживалось (сетевой джиттер) дольше
+        // этого срока, таймаут срабатывал ПЕРВЫМ, "no more steps"-ветка
+        // выше очищала anims/visualPositions ДО прихода мерджа, и когда
+        // runner_save всё же приходил, он уже не находил pending-заготовку
+        // для мерджа (active.current[runnerId] уже null) — заводил
+        // ОТДЕЛЬНЫЙ, второй 'move'-шаг с нуля. Визуально это давало ровно
+        // то дёрганье, на которое пожаловался пользователь, 2026-09-08:
+        // "то в движении, то телепортируется на изначальный сегмент, то
+        // снова в движении" — фаза 1 (заготовка играет позу на месте, без
+        // сдвига позиции), фаза 2 (преждевременная очистка — поза сбрасывается
+        // в idle на том же месте), фаза 3 (запоздавший второй 'move' наконец
+        // реально едет). PENDING_SAFETY_TIMEOUT_MS — с большим запасом
+        // (обычно мердж приходит за десятки-сотни мс), это подстраховка на
+        // случай, если подтверждающее событие вообще НЕ придёт, а не
+        // ожидаемый путь выполнения.
         timers.current[runnerId] = setTimeout(
             () => advanceQueue(runnerId),
-            kind === 'wait' ? KNOCKBACK_WAIT_MS : (ANIM_DURATION_MS[kind] ?? 900),
+            pending ? PENDING_SAFETY_TIMEOUT_MS : kind === 'wait' ? KNOCKBACK_WAIT_MS : (ANIM_DURATION_MS[kind] ?? 900),
         );
     }, []);
 
@@ -169,6 +215,16 @@ export function useRunnerAnimations() {
                     const { pending, ...animExtra } = mergeTarget.extra;
                     setAnims((prev) => ({ ...prev, [runnerId]: { ...prev[runnerId], ...animExtra, kind: finalKind } }));
                     setVisualPositions((prev) => ({ ...prev, [runnerId]: extra.toPosition }));
+                    // Заготовка была запущена со СТРАХОВОЧНЫМ таймаутом
+                    // (PENDING_SAFETY_TIMEOUT_MS, см. advanceQueue) — теперь,
+                    // когда мердж её финализировал, переставляем таймер на
+                    // ШТАТНУЮ длительность этого kind, иначе шаг играл бы
+                    // аномально долго (до самого страховочного таймаута).
+                    if (timers.current[runnerId]) clearTimeout(timers.current[runnerId]);
+                    timers.current[runnerId] = setTimeout(
+                        () => advanceQueue(runnerId),
+                        finalKind === 'wait' ? KNOCKBACK_WAIT_MS : (ANIM_DURATION_MS[finalKind] ?? 900),
+                    );
                 }
                 return;
             }

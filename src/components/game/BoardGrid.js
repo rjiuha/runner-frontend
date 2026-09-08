@@ -302,6 +302,19 @@ export default function BoardGrid({
 
             if (visible.length === 2) {
                 const [a, b] = visible;
+                // Жнец на клетке — это НЕ столкновение, а ловушка (бегун,
+                // закончивший ход на этой клетке, уничтожается — см.
+                // lib/runnerAnimTriggers.js#'bomb'), по прямому запросу
+                // пользователя, 2026-09-08: обычная поза "лицом друг к другу"
+                // тут неуместна (жертва вот-вот исчезнет). Оба рисуются как
+                // независимые соло-токены — Жнец играет СВОЮ 'bomb'-анимацию,
+                // жертва — 'destroyed' (с задержкой после bomb, см. triggers),
+                // затем скрывается через hiddenRunnerIds.
+                if (a.type === RUNNER_TYPES.REAPER || b.type === RUNNER_TYPES.REAPER) {
+                    pushSolo(a, x, y);
+                    pushSolo(b, x, y);
+                    continue;
+                }
                 const isArriving = (r) => {
                     const kind = runnerAnims?.[r.id]?.kind;
                     return kind === 'move' || kind === 'fly';

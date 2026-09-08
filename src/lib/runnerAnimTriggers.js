@@ -18,6 +18,14 @@ import { RUNNER_TYPES } from '../constants/GameConstants';
 const RECENTLY_SHOT_TTL_MS = 4000;
 const recentlyShotRunners = new Map(); // runnerId -> timestamp
 
+// Ловушка Жнеца (см. 'bomb' ниже) — жертва проигрывает 'destroyed' ТОЛЬКО
+// ПОСЛЕ того, как Жнец доиграет СВОЮ 'bomb'-анимацию (по прямому запросу
+// пользователя, 2026-09-08: "должна быть анимация bomb и дальше destroyed",
+// не одновременно). Совпадает с ANIM_DURATION_MS.bomb в useRunnerAnimations.js
+// (держать числа в паре, как и другие такие пары в проекте — см. move/
+// SLIDE_DURATION_MS).
+const REAPER_BOMB_TO_DESTROYED_DELAY_MS = 1800;
+
 function markRecentlyShot(runnerId) {
     // Заодно чистим протухшие записи — карта живёт весь сеанс модуля,
     // не хотим копить мусор за долгую партию.
@@ -182,10 +190,53 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
     if (e.event === 'runner_damage' || e.event === 'runner_destroy') {
         const patch = e.runnerId;
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
-        if (!prev || !statusWorsened(prev.status, patch.status)) return;
+        if (!prev) return;
+
+        // Последняя известная (ДО события) позиция — нужна как toPosition
+        // для 'fly'/'destroyed' ниже: RunnerDestroyService на бэке (read-only)
+        // ВСЕГДА обнуляет position/segment ПЕРЕД публикацией события, так что
+        // сам `patch` их уже не несёт — без явного toPosition BoardGrid
+        // (через effectiveRunners/runnerVisualPositions) увидел бы у бегуна
+        // segment=null РАНЬШЕ, чем анимация успеет доиграть, и он исчезал бы
+        // мгновенно вместо того чтобы визуально "остаться на месте" на время
+        // позы (случайно маскировалось раньше только тем, что почти всегда
+        // на момент destroy уже был АКТУАЛЬНЫЙ leftover toPosition от
+        // предыдущего шага очереди этого же бегуна — ненадёжно, если бегун
+        // перед этим долго стоял на месте).
+        const lastKnownPosition = prev.segment != null
+            ? { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY }
+            : null;
+
+        // Жнец НИКОГДА не получает статус 'destroyed' от RunnerDestroyService
+        // (см. бэк, read-only — там явное исключение по RunnerType::REAPER) —
+        // событие runner_destroy для НЕГО означает "вернулся в резерв"
+        // (segment/position обнулены, статус НЕ менялся), независимо от
+        // причины (сдвиг трассы при выходе за 3-й фрагмент — см.
+        // TrackService::shift(), или что угодно ещё, что вызовет тот же
+        // сервис). По прямому запросу пользователя, 2026-09-08: "жнец должен
+        // улететь и вернуться в резерв (чтобы можно было дальше его снова
+        // вызвать)" — играем 'fly' НА МЕСТЕ (toPosition = его же последняя
+        // позиция, эффект "улетает" даёт сама gif-анимация fly, не слайд),
+        // после чего он просто перестаёт индексироваться на доске
+        // (indexRunnersByCell пропускает segment==null) — не нужен
+        // hiddenIds/DESTROYED_HIDE_DELAY_MS, как у обычного 'destroyed' (тот
+        // МЕХАНИЗМ специально держит токен видимым ПОСЛЕ того, как реальная
+        // позиция уже null — тут это не нужно, обнуление и так происходит
+        // ровно к концу 'fly'). Ловим ДО statusWorsened-гейта ниже — для
+        // Жнеца статус в этом случае не "ухудшается", гейт бы просто молча
+        // проглотил событие (жалоба пользователя, 2026-09-08: "жнец не
+        // уничтожил персонажа" была ПРО ДРУГОЙ бэковый баг — read-only
+        // находка, Move::handle() не проверяет столкновение на danger/anomaly
+        // клетках, — но раз уж разбирали этот же кусок кода, этот пробел для
+        // возврата САМОГО Жнеца в резерв нашёлся тут же и тоже был пуст).
+        if (e.event === 'runner_destroy' && patch.type === RUNNER_TYPES.REAPER && lastKnownPosition) {
+            trigger(patch.id, 'fly', { toPosition: lastKnownPosition });
+            return;
+        }
+
+        if (!statusWorsened(prev.status, patch.status)) return;
 
         if (patch.status === 'destroyed') {
-            trigger(patch.id, 'destroyed', { fromStatus: prev.status });
             // Ловушка Жнеца: "по правилам игры Жнец должен убить того
             // бегуна, который закончил ход на его клетке" (прямой запрос
             // пользователя, 2026-09-03). Бэк это ЧАСТИЧНО умеет
@@ -194,14 +245,26 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
             // — сигнала "это была именно бомба Жнеца" бэк не даёт вообще.
             // Эвристика: если ПОСЛЕДНЯЯ ИЗВЕСТНАЯ (до уничтожения) позиция
             // погибшего бегуна совпадает с текущей позицией какого-то
-            // Жнеца — считаем это ловушкой и играем Жнецу его 'bomb'
-            // отдельным шагом очереди (Жнец анимирует это у СЕБЯ, жертва —
-            // своим обычным 'destroyed', уже вызванным строкой выше).
+            // Жнеца — считаем это ловушкой. Порядок — bomb СНАЧАЛА (у
+            // Жнеца), жертва получает 'destroyed' только ПОСЛЕ (см.
+            // REAPER_BOMB_TO_DESTROYED_DELAY_MS выше), не одновременно (по
+            // прямому запросу пользователя, 2026-09-08). Не через
+            // useRunnerAnimations-очередь victim'а (та относится к ДРУГОМУ
+            // runnerId — Жнецу — не годится для задержки жертвы), обычный
+            // setTimeout поверх переданного trigger.
             const reaperHere = prevGame.runners.find(
                 (r) => r.type === RUNNER_TYPES.REAPER
                     && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
             );
-            if (reaperHere) trigger(reaperHere.id, 'bomb', {});
+            if (reaperHere) {
+                trigger(reaperHere.id, 'bomb', {});
+                setTimeout(
+                    () => trigger(patch.id, 'destroyed', { fromStatus: prev.status, toPosition: lastKnownPosition }),
+                    REAPER_BOMB_TO_DESTROYED_DELAY_MS,
+                );
+            } else {
+                trigger(patch.id, 'destroyed', { fromStatus: prev.status, toPosition: lastKnownPosition });
+            }
         } else {
             trigger(patch.id, 'gotShot');
             // Метим — см. RECENTLY_SHOT_TTL_MS/consumeRecentlyShot выше:

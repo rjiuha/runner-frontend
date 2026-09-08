@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Platform, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Animated, Platform, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,7 +10,7 @@ import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
 import FragmentLabelStrip from '../components/game/FragmentLabelStrip';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
-import GameWaitingRoom from '../components/game/GameWaitingRoom';
+import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
 import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
@@ -21,7 +21,7 @@ import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
-import { flattenTrackSegments, computeFragmentBands } from '../lib/board';
+import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
@@ -31,9 +31,10 @@ import { COLLISION_SOUND, FALLBACK_MOVE_SOUND } from '../constants/runnerSounds'
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
+import { ROUTES } from '../navigation/routes';
 import {
-    GAME_STATUS, MOBILE_FRAME_BLEED, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STEP, RUNNER_DISPLAY,
-    RUNNER_STATUS, RUNNER_TYPES,
+    BOARD_LAYOUT, GAME_STATUS, MOBILE_FRAME_BLEED, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STATUS, PLAYER_STEP,
+    RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
 
@@ -62,6 +63,11 @@ const STUCK_ACTION_TIMEOUT = 8000;
 // (SLIDE_DURATION_MS/ANIM_DURATION_MS.move, ~1400мс) плюс минимальный показ
 // самой позы столкновения (COLLISION_MIN_HOLD_MS в BoardGrid, 1000мс).
 const COLLISION_ANIM_DELAY_MS = 2200;
+
+// Плавность смены фрагментов трассы (game_track_updated, см. эффект у
+// gridData ниже) — длительность fade-out старого (удаляемого) фрагмента №1,
+// нарисованного overlay-слоем поверх уже подменённой сетки.
+const TRACK_FADE_MS = 550;
 
 const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
 const SEGMENT_KEYS = ['trackBegin', 'trackMiddle', 'trackEnd'];
@@ -144,7 +150,7 @@ function stepInstruction(step, activeRunner, pendingAbility, pendingSelect, pend
  * не туда кубик иначе было бы не вернуть, реальный /select уходит только по
  * кнопке "Подтвердить"/повторному тапу по той же карточке — см. handleConfirmSelect).
  */
-export default function GameBoardScreen({ route }) {
+export default function GameBoardScreen({ route, navigation }) {
     useAdaptiveOrientation();
     // GameBoardScreen сознательно без SafeAreaView (см. шапку файла) — без
     // этого top:spacing.md у collisionBanner рисовал плашку под статус-баром
@@ -213,6 +219,21 @@ export default function GameBoardScreen({ route }) {
         player.play();
     }, []);
 
+    // Подавляем ДУБЛИРУЮЩИЙ 'start' Жнеца на клиенте, который его сам только
+    // что поставил — см. handleReaperShoot: локальное превью (reaperPreview
+    // в BoardGrid) уже показало "прилёт сбоку" ДО реального API-вызова, и
+    // когда настоящий ability_reaper-event приходит, повторный 'start'
+    // (2.2с, визуально это gif ходьбы — у Жнеца нет отдельного start-ассета,
+    // см. constants/runnerAnimations) заставлял казаться, будто на месте
+    // выстрела играет анимация ХОДЬБЫ (жалоба пользователя, 2026-09-08:
+    // "вместо анимации выстрела у жнеца анимация передвижения"). ДРУГИЕ
+    // клиенты (не размещавшие этого Жнеца) превью не видели — им 'start'
+    // по-прежнему нужен, поэтому подавление СТРОГО локальное (per-client
+    // ref, не часть игрового стейта). TTL — на случай, если API-вызов
+    // упадёт и событие никогда не придёт: флаг не должен свисать вечно и
+    // случайно съесть 'start' у совершенно другого бегуна (первый выход из
+    // резерва/спавн Мяча) позже в этой же партии.
+    const reaperStartSkipUntilRef = useRef(0);
     // Оборачивает runnerAnim.trigger — сам визуальный триггер не трогаем
     // (lib/runnerAnimTriggers.js ничего не знает о звуке), тут ТОЛЬКО решаем,
     // что доп. проиграть по kind. Тип бегуна для 'attack' ищем в текущем
@@ -222,7 +243,14 @@ export default function GameBoardScreen({ route }) {
     // — прокинут явно именно для этого случая).
     const triggerWithSound = useCallback(
         (runnerId, kind, extra) => {
-            runnerAnim.trigger(runnerId, kind, extra);
+            // Подавляем ТОЛЬКО визуальный триггер (дублирующий walk-цикл) —
+            // звук "прилёта" (drone_start.wav) всё равно проигрываем: во
+            // время локального превью никакого звука не было (превью чисто
+            // визуальное), так что размещавший игрок иначе вообще не
+            // услышал бы этот эффект.
+            const suppressAnim = kind === 'start' && Date.now() < reaperStartSkipUntilRef.current;
+            if (suppressAnim) reaperStartSkipUntilRef.current = 0;
+            else runnerAnim.trigger(runnerId, kind, extra);
             if (kind === 'attack') {
                 const type = gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(shootSound, pickShootSoundSource(type));
@@ -339,7 +367,7 @@ export default function GameBoardScreen({ route }) {
     // arrowBtnSize остаётся только для mobileNav-кнопок в seamRow — те
     // привязаны к толщине декоративной рамки, не к сегменту.
 
-    const { windowStart, backButtonProps, forwardButtonProps } = useBoardScroll({ cols: viewportCols });
+    const { windowStart, backButtonProps, forwardButtonProps, jumpTo, shiftWindowBy } = useBoardScroll({ cols: viewportCols });
 
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
@@ -388,6 +416,39 @@ export default function GameBoardScreen({ route }) {
     const myStep = myPlayer?.step;
     const myCollision = !!myPlayer && game?.extraTurnPlayer != null
         && String(game.extraTurnPlayer) === String(myPlayer.id);
+
+    // Автостарт партии (по прямому запросу пользователя, 2026-09-08) —
+    // POST /runner_game/start технически обязателен для КАЖДОГО игрока (см.
+    // RunnerGameService::start(), read-only: статус игры становится ACTIVE
+    // только когда ВСЕ RunnerPlayer перешли в ACTIVE, контракт этого не
+    // меняет), но сам вызов не несёт никакого решения — он просто дублировал
+    // готовность, уже подтверждённую тем же игроком в лобби. Вызываем его
+    // сами, как только видим свой WAITING-статус, вместо того чтобы ждать
+    // ещё одного явного тапа (см. бывший components/game/GameWaitingRoom.js
+    // с ручной кнопкой «Готов», теперь не используется).
+    const autoStartAttemptedRef = useRef(false);
+    const [autoStartError, setAutoStartError] = useState(null);
+    // Инкремент форсирует повторный запуск эффекта ниже — единственный способ
+    // повторить попытку после ошибки (сеть/бэк отказал именно в этот момент),
+    // см. кнопку «Повторить» в JSX. Без него сброс autoStartAttemptedRef сам
+    // по себе ничего не триггерит — эффект не перезапускается, пока не
+    // изменится что-то из его зависимостей.
+    const [startRetryNonce, setStartRetryNonce] = useState(0);
+    useEffect(() => {
+        if (game?.status !== GAME_STATUS.WAITING) {
+            autoStartAttemptedRef.current = false; // сброс на случай следующей партии в этой же сессии
+            return;
+        }
+        if (myPlayer?.status !== PLAYER_STATUS.WAITING) return; // уже готов, либо данные ещё не пришли
+        if (autoStartAttemptedRef.current) return;
+        autoStartAttemptedRef.current = true;
+        setAutoStartError(null);
+        runnerGameApi.start().catch((e) => {
+            autoStartAttemptedRef.current = false; // разрешает повтор через startRetryNonce
+            setAutoStartError(e.userMessage ?? e.message ?? 'Не удалось начать партию');
+        });
+    }, [game?.status, myPlayer?.status, startRetryNonce]);
+    const retryAutoStart = useCallback(() => setStartRetryNonce((n) => n + 1), []);
 
     // "Мяч" (RUNNER_TYPES.BALL) — неконтролируемая коллизия (побочный эффект
     // вскрытия danger-клетки, RunnerBallInitService на бэке), в отличие от
@@ -486,10 +547,119 @@ export default function GameBoardScreen({ route }) {
         [gamePlayers, game?.playerOrder],
     );
 
-    const gridData = useMemo(
-        () => flattenTrackSegments([game?.trackBegin, game?.trackMiddle, game?.trackEnd], rows, cols),
-        [game?.trackBegin, game?.trackMiddle, game?.trackEnd, rows, cols],
+    // game_finish (см. GameFinishService::run() на бэке, read-only) — статус
+    // 'winner' выставляется РОВНО одному игроку (тому, кого передали в
+    // сервис — победитель по финишу ИЛИ последний оставшийся после того, как
+    // все остальные выбыли, см. Move.php:37/PlayerOutService.php:46), все
+    // ОСТАЛЬНЫЕ активные переводятся в 'out' тем же вызовом — искать
+    // безопасно без доп. проверок на "а вдруг их несколько".
+    const winnerPlayer = useMemo(
+        () => gamePlayers.find((p) => p.status === PLAYER_STATUS.WINNER) ?? null,
+        [gamePlayers],
     );
+    const goToMainMenu = useCallback(() => {
+        navigation.reset({ index: 0, routes: [{ name: ROUTES.MAIN_MENU }] });
+    }, [navigation]);
+
+    // "Пик" 4-го фрагмента (первая колонка каждой дорожки trackNext) —
+    // добавлена по прямому запросу пользователя, 2026-09-08: без неё бегуну
+    // некуда шагнуть с последней клетки 3-го фрагмента. trackNext СЕЙЧАС не
+    // отдаётся бэком (ни в REST-снапшоте, ни в game_track_updated — перечитан
+    // read-only, D:\Programming\runner-game-backend, RunnerGame::toArray() и
+    // GameTrackUpdatedEvent) — до этого `game?.trackNext` будет `undefined`,
+    // flattenPeekColumn просто вернёт [], пик не рисуется (безопасный no-op,
+    // не крашится и не показывает мусор).
+    const gridData = useMemo(() => {
+        const base = flattenTrackSegments([game?.trackBegin, game?.trackMiddle, game?.trackEnd], rows, cols);
+        const peek = flattenPeekColumn(game?.trackNext, rows, BOARD_LAYOUT.COLS * BOARD_LAYOUT.TOTAL_BLOCKS);
+        return [...base, ...peek];
+    }, [game?.trackBegin, game?.trackMiddle, game?.trackEnd, game?.trackNext, rows, cols]);
+
+    // game_track_updated (см. runnerGameReducer#'game_track_updated' и
+    // TrackService::shift()/Move.php:41 на бэке, read-only) — сервер удаляет
+    // фрагмент №1 (trackBegin), сдвигает №2→№1/№3→№2 и добавляет новый №3.
+    // Реакция на это событие раньше отсутствовала ВООБЩЕ: `game.trackBegin/
+    // Middle/End` (и, соответственно, `gridData`) уже применялись реducer'ом
+    // мгновенно (плоское слияние полей), но (1) `cell.col`/`windowStart`
+    // живут в системе координат, ЛОКАЛЬНОЙ для ТЕКУЩЕГО снимка [trackBegin,
+    // trackMiddle,trackEnd] (blockIndex ВСЕГДА 0,1,2 у того, что сейчас лежит
+    // в этих трёх полях, см. lib/board#flattenTrackSegments) — сдвиг
+    // сегментов -1 в массиве без компенсации windowStart заставлял камеру
+    // "смотреть" совсем не туда: то, что было видно в окне [windowStart,
+    // windowStart+cols), мгновенно подменялось контентом совершенно другого
+    // куска трассы; (2) сама подмена картинок происходила одним кадром, без
+    // перехода.
+    //
+    // Обнаружение самого факта сдвига — по имени `game.trackBegin.name`, НЕ
+    // по `game.trackNumber` (тот, проверено чтением бэка, выставляется ОДИН
+    // раз в RunnerGameFactory и TrackService::shift() его никогда не меняет —
+    // на каждое событие приходит одно и то же число, диффить нечего) и НЕ по
+    // ссылке на сам объект `trackBegin` (первая версия этой правки так и
+    // делала — оказалось ЛОМАЕТСЯ на КАЖДОМ reconnect/resync: useMercure#sync
+    // на любом подключении, даже без единого реального события, всегда
+    // парсит REST-снапшот ЗАНОВО и коммитит его как НОВЫЙ объект — ссылка на
+    // `trackBegin` меняется, хотя фрагмент физически тот же самый; ложное
+    // срабатывание сдвигало бы windowStart на -COLS без всякого реального
+    // сдвига). Имя фрагмента — надёжный, содержательный идентификатор:
+    // `TrackLoader::prepareTracksForGame()` тасует ВЕСЬ список файлов БЕЗ
+    // возврата (`shuffle`+`array_splice`) — внутри одной партии одно и то же
+    // имя не может встретиться дважды, значит "имя изменилось" ⇔ "это
+    // реально другой фрагмент" всегда, а "имя то же" ⇔ "фрагмент не менялся"
+    // даже если сам объект пересоздан REST-снапшотом.
+    // trackSnapshotRef хранит СТАРОЕ значение (записывается в КОНЦЕ этого же
+    // эффекта с ПРОШЛОГО срабатывания) — на момент, когда эффект видит новое
+    // имя, `prev.trackBegin` — это как раз то, что было ДО
+    // сдвига (сам `game` уже содержит новое — реducer применяет мгновенно,
+    // без задержки, остальной игровой логике старые значения не нужны).
+    // `prev.trackBegin != null` отсекает первый снапшот партии (переход
+    // null→объект при загрузке, это не сдвиг). Известный неполный случай:
+    // если ПОКА клиент был отключён произошло больше одного сдвига разом,
+    // здесь виден только факт "имя другое" — компенсация windowStart всё
+    // равно применится лишь на один TRACK_FADE (-COLS), не на N — не
+    // проверено живьём, поскольку требует спец. сценария с длительным
+    // разрывом связи, отложено как известное ограничение.
+    // Как только замечен реальный сдвиг:
+    //   1. windowStart сдвигается на ту же дельту (-BOARD_LAYOUT.COLS) —
+    //      удерживает камеру на том же физическом месте трассы (см.
+    //      shiftWindowBy в useBoardScroll.js за подробным разбором системы
+    //      координат и почему именно такая дельта сохраняет позицию).
+    //   2. Старый (удаляемый) фрагмент №1 — единственная часть, которая
+    //      РЕАЛЬНО пропадает с экрана без замены (фрагменты 2/3 просто
+    //      переименовываются в 1/2, тот же контент виден в тех же пикселях
+    //      благодаря сдвигу windowStart из п.1, никакого визуального разрыва
+    //      для них нет и своей анимации не нужно) — снимок его ячеек
+    //      (посчитанный ИМЕННО от prev.trackBegin, той же функцией, что и
+    //      сама сетка) кладётся overlay-слоем ПОВЕРХ уже подменившейся
+    //      боевой сетки на СТАРОМ windowStart (там, где фрагмент №1 был
+    //      виден до сдвига) и плавно растворяется (Animated.timing 1→0, см.
+    //      TRACK_FADE_MS) — под ним к этому моменту уже отрисован новый
+    //      расклад, так что затухание overlay'я и есть "плавное исчезновение
+    //      первого фрагмента и вставка нового": сам новый (третий) фрагмент
+    //      никакого отдельного fade-in не получает (он и так СРАЗУ виден в
+    //      боевом слое) — оверлей просто перестаёт его закрывать.
+    const trackSnapshotRef = useRef({ trackBegin: null });
+    const [trackFadeOverlay, setTrackFadeOverlay] = useState(null); // { gridData, windowStart, opacity }
+    useEffect(() => {
+        const prev = trackSnapshotRef.current;
+        const nameChanged = prev.trackBegin != null && game?.trackBegin != null
+            && prev.trackBegin.name !== game.trackBegin.name;
+        if (nameChanged) {
+            shiftWindowBy(-BOARD_LAYOUT.COLS);
+            // Массив из ОДНОГО элемента — flattenTrackSegments проходит только
+            // blockIndex 0 (forEach по длине массива), считать/фильтровать
+            // несуществующие blockIndex 1/2 не нужно.
+            const removedGridData = flattenTrackSegments([prev.trackBegin], rows, cols);
+            const opacity = new Animated.Value(1);
+            setTrackFadeOverlay({ gridData: removedGridData, windowStart, opacity });
+            Animated.timing(opacity, {
+                toValue: 0,
+                duration: TRACK_FADE_MS,
+                useNativeDriver: true,
+            }).start(() => setTrackFadeOverlay(null));
+        }
+        trackSnapshotRef.current = { trackBegin: game?.trackBegin };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [game?.trackBegin?.name]);
 
     // Имена 3 фрагментов трассы (карт) для FragmentLabelStrip — портретная
     // раскладка, полоса слева от доски (см. useBoardLayout.labelStripW).
@@ -510,14 +680,19 @@ export default function GameBoardScreen({ route }) {
         if (!myTurn || busy) return { highlightedCells: new Set(), tapMode: null };
 
         if (pendingReaperPlacement && reaperPreviewReady) {
-            // Направление выстрела Жнеца сразу при размещении — ТЕ ЖЕ 3
-            // клетки, что раньше показывали кнопки ↖/↑/↗, теперь подсветкой
-            // на доске (единообразно с обычным MOVE/SHOOT, по прямому
+            // Направление выстрела Жнеца сразу при размещении — подсветка
+            // на доске вместо кнопок ↖/↑/↗ (единообразно с MOVE, по прямому
             // запросу пользователя, 2026-09-07). Появляется только ПОСЛЕ
             // того, как "прилёт" Жнеца успел доиграть (см. reaperPreviewReady
-            // выше) — до этого highlightedCells пуст, тапать некуда. БЕЗ
-            // фильтра по занятости клетки — кнопки тоже не проверяли занятость.
-            const cells = forwardNeighbors(pendingReaperPlacement).map(cellKey);
+            // выше) — до этого highlightedCells пуст, тапать некуда. СТРОГО
+            // вперёд (UP) — по прямому уточнению пользователя, 2026-09-08:
+            // "стрелять строго по прямой должен только Жнец", остальные типы
+            // (см. SHOOT-ветку ниже) стреляют по всем 3 направлениям, как
+            // обычный MOVE. БЕЗ фильтра по занятости клетки — кнопки тоже не
+            // проверяли занятость.
+            const cells = forwardNeighbors(pendingReaperPlacement)
+                .filter((pos) => pos.direction === 'UP')
+                .map(cellKey);
             return { highlightedCells: new Set(cells), tapMode: 'reaperShoot' };
         }
 
@@ -530,7 +705,16 @@ export default function GameBoardScreen({ route }) {
                 }
                 return { highlightedCells: cells, tapMode: 'start' };
             }
-            const neighbors = forwardNeighbors(activeRunner);
+            // Накат (type=ROLL, см. canSelectRunner) — строго 1 клетка ВПЕРЁД
+            // (UP), без выбора направления (по прямому запросу пользователя,
+            // 2026-09-08: "накат — это строго движение вперёд"). Бегун,
+            // делающий накат, уже полностью проехал в обычном режиме (dice===0)
+            // и получил ОТДЕЛЬНЫЙ кубик rollDice для этого доп. хода (см.
+            // canSelectRunner/RunnerCard "Накат") — этой парой полей и отличаем
+            // накат-ход от обычного здесь, где `activeRunner` уже не несёт
+            // никакого признака "это был выбор type=ROLL" сам по себе.
+            const isRollMove = activeRunner.dice === 0 && activeRunner.rollDice != null;
+            const neighbors = forwardNeighbors(activeRunner).filter((n) => !isRollMove || n.direction === 'UP');
             return {
                 highlightedCells: new Set(neighbors.map(cellKey)),
                 tapMode: 'move',
@@ -538,12 +722,13 @@ export default function GameBoardScreen({ route }) {
         }
 
         if (myStep === PLAYER_STEP.SHOOT && activeRunner) {
-            // Стрелять можно СТРОГО по прямой (UP) — по прямому запросу
-            // пользователя, 2026-09-02: диагонали (LEFT_UP/RIGHT_UP), даже
-            // визуально "передние" (см. hexDirection.js), для выстрела не
-            // считаются — только тот, кто прямо впереди.
+            // Все 3 направления вперёд (как обычный MOVE) — по прямому
+            // уточнению пользователя, 2026-09-08: предыдущее решение
+            // (2026-09-02, "стрелять только строго по прямой") оказалось
+            // СЛИШКОМ строгим — ограничение "только вперёд, без диагоналей"
+            // должно было касаться ТОЛЬКО Жнеца (см. pendingReaperPlacement
+            // выше), не обычных бегунов.
             const targets = forwardNeighbors(activeRunner)
-                .filter((pos) => pos.direction === 'UP')
                 .filter((pos) => {
                     const occupant = findRunnerAt(runners, pos);
                     return occupant && occupant.type !== RUNNER_TYPES.REAPER && !DEAD_STATUSES.includes(occupant.status);
@@ -555,9 +740,14 @@ export default function GameBoardScreen({ route }) {
             // Любая пустая проходимая клетка на всех трёх загруженных сегментах —
             // бэк это не проверяет (см. CLAUDE.md про ReaperService::validateCell),
             // так что и занятость, и проходимость (не wall/anomaly) считаем сами.
+            // positionX ТОЛЬКО 0-5 (не 0-7, как у обычных клеток) — живой тест,
+            // 2026-09-08, поймал реальный баг: бэк отклоняет размещение Жнеца в
+            // последних 2 колонках сегмента отдельной валидацией DTO
+            // ("details.positionX: This value should be between 0 and 5"),
+            // раньше подсветка ошибочно предлагала все 8 колонок.
             const cells = new Set();
             for (let segment = 0; segment < totalBlocks; segment++) {
-                for (let positionX = 0; positionX <= 7; positionX++) {
+                for (let positionX = 0; positionX <= 5; positionX++) {
                     for (let positionY = 0; positionY <= 5; positionY++) {
                         const pos = { segment, positionX, positionY };
                         const type = rawCellType(game, segment, positionX, positionY);
@@ -630,21 +820,70 @@ export default function GameBoardScreen({ route }) {
         setShowActionStuckRefresh(false);
     }, [myStep, myTurn]);
 
-    const runAction = useCallback(async (fn) => {
+    // `skipStuckWatch` — MOVE специально ИСКЛЮЧЁН из watchdog (живой тест,
+    // 2026-09-08, поймал ВТОРОЙ реальный баг подряд в этом же механизме):
+    // один ход игрока на шаге MOVE обычно состоит из НЕСКОЛЬКИХ успешных
+    // /move-вызовов подряд (пока не кончится кубик хода), и КАЖДЫЙ из них
+    // оставляет player.step тем же самым MOVE (шаг меняется только когда
+    // движение ЗАКОНЧИЛОСЬ — на SHOOT/ROAD_BONUS/следующего игрока). Раз шаг
+    // не меняется между отдельными успешными ходами, сравнение "шаг не
+    // сдвинулся с момента действия" ложно считало бы "зависанием" ЛЮБОЕ
+    // обычное раздумье игрока дольше 8с над СЛЕДУЮЩИМ шагом того же
+    // многошагового хода — ровно тот же класс бага, что уже был исправлен
+    // чуть выше (фиксация stepBeforeAction ДО вызова), но для MOVE это в
+    // принципе неразрешимо через сравнение PLAYER_STEP — там просто НЕТ
+    // гарантированного "шаг обязан смениться после одного успешного вызова".
+    // Остальные действия (select/ability/shoot/roadBonus/collision/reaper) —
+    // каждое ОДНОЗНАЧНО переводит игру в другой шаг за один успешный вызов,
+    // watchdog для них остаётся осмысленным.
+    const runAction = useCallback(async (fn, { skipStuckWatch = false } = {}) => {
+        // Шаг фиксируем ДО вызова, не после — если брать myStep ПОСЛЕ await
+        // fn() (когда live-событие уже успело прилететь и подвинуть шаг
+        // дальше, что при быстрой локальной сети — обычное дело), сравнение
+        // "шаг не сдвинулся с момента действия" сравнивало бы НОВЫЙ шаг сам
+        // с собой — ложное "зависание" при обычном раздумье над следующим
+        // шагом (первый баг того же живого теста, 2026-09-08).
+        const stepBeforeAction = myStepRef.current;
         setBusy(true);
         try {
             await fn();
-            const stepAtAction = myStepRef.current;
             if (actionStuckTimerRef.current) clearTimeout(actionStuckTimerRef.current);
-            actionStuckTimerRef.current = setTimeout(() => {
-                if (myTurnRef.current && myStepRef.current === stepAtAction) setShowActionStuckRefresh(true);
-            }, STUCK_ACTION_TIMEOUT);
+            if (!skipStuckWatch) {
+                actionStuckTimerRef.current = setTimeout(() => {
+                    if (myTurnRef.current && myStepRef.current === stepBeforeAction) setShowActionStuckRefresh(true);
+                }, STUCK_ACTION_TIMEOUT);
+            }
         } catch (e) {
             notify('Не удалось выполнить действие', e.userMessage ?? e.message);
         } finally {
             setBusy(false);
         }
     }, []);
+
+    // Автоматический ход накатом (по прямому запросу пользователя, 2026-09-08):
+    // после подтверждения SELECT типа ROLL шаг игрока переходит в MOVE, а
+    // highlightedCells (см. выше, isRollMove) подсвечивает РОВНО одну клетку
+    // (строго UP, без выбора направления — уже решено ранее, 2026-09-08) —
+    // тапать там больше не по чему выбирать, только по единственному
+    // варианту, так что делаем этот тап сами. autoRollMoveKeyRef — защита от
+    // повторного вызова: эффект перезапускается на каждое изменение
+    // activeRunner (новый объект на каждое live-обновление), а не только
+    // когда РЕАЛЬНО появляется новая накат-возможность — ключ
+    // "runnerId:rollDice" уникален на каждую конкретную попытку наката
+    // (rollDice меняется между накатами, см. RunnerRollService на бэке).
+    const autoRollMoveKeyRef = useRef(null);
+    useEffect(() => {
+        if (!myTurn || busy || myStep !== PLAYER_STEP.MOVE || !activeRunner) return;
+        const isRollMove = activeRunner.dice === 0 && activeRunner.rollDice != null;
+        if (!isRollMove) {
+            autoRollMoveKeyRef.current = null;
+            return;
+        }
+        const key = `${activeRunner.id}:${activeRunner.rollDice}`;
+        if (autoRollMoveKeyRef.current === key) return;
+        autoRollMoveKeyRef.current = key;
+        runAction(() => runnerGameApi.move(null, 'UP'), { skipStuckWatch: true });
+    }, [myTurn, busy, myStep, activeRunner, runAction]);
 
     // Второй шаг размещения Жнеца — направление выстрела (или пропуск).
     // direction === undefined → JSON.stringify выкидывает поле из тела
@@ -657,6 +896,11 @@ export default function GameBoardScreen({ route }) {
     const handleReaperShoot = useCallback(
         (direction) => {
             if (!pendingReaperPlacement) return;
+            // См. reaperStartSkipUntilRef выше — мы уже показали "прилёт"
+            // локальным превью, реальный 'start' от бэка для ЭТОГО Жнеца на
+            // НАШЕМ клиенте больше не нужен. 5с — щедрый запас на сетевой
+            // круговорот запроса, не более того.
+            reaperStartSkipUntilRef.current = Date.now() + 5000;
             const { diceIndex, positionX, positionY, segment } = pendingReaperPlacement;
             runAction(() =>
                 runnerGameApi
@@ -674,22 +918,22 @@ export default function GameBoardScreen({ route }) {
             if (!highlightedCells.has(key)) return;
 
             if (tapMode === 'start') {
-                runAction(() => runnerGameApi.move(cell.row, null));
+                // skipStuckWatch — см. комментарий у runAction: MOVE может
+                // состоять из нескольких ходов подряд без смены player.step.
+                runAction(() => runnerGameApi.move(cell.row, null), { skipStuckWatch: true });
                 return;
             }
             if (tapMode === 'move') {
                 const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
                 const neighbor = forwardNeighbors(activeRunner).find((n) => cellKey(n) === cellKey(target));
                 if (!neighbor) return;
-                runAction(() => runnerGameApi.move(null, neighbor.direction));
+                runAction(() => runnerGameApi.move(null, neighbor.direction), { skipStuckWatch: true });
                 return;
             }
             if (tapMode === 'shoot') {
+                // Все 3 направления — см. highlightedCells выше (2026-09-08).
                 const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
-                // Только UP — см. highlightedCells выше, диагонали для выстрела не считаются.
-                const neighbor = forwardNeighbors(activeRunner).find(
-                    (n) => n.direction === 'UP' && cellKey(n) === cellKey(target),
-                );
+                const neighbor = forwardNeighbors(activeRunner).find((n) => cellKey(n) === cellKey(target));
                 if (!neighbor) return;
                 runAction(() => runnerGameApi.shoot(true, neighbor.direction));
                 return;
@@ -793,6 +1037,17 @@ export default function GameBoardScreen({ route }) {
         [pendingSelect, pendingAbility, myPlayer?.id, runAction],
     );
 
+    // Двойной тап по карточке бегуна — переносит видимое окно дороги туда,
+    // где он сейчас стоит (по прямому запросу пользователя, 2026-09-08).
+    // Бегун в резерве (segment==null) ещё нигде не отрисован — переходить некуда.
+    const handleRunnerCardDoubleTap = useCallback(
+        (runner) => {
+            if (runner.segment == null) return;
+            jumpTo(runner.segment * BOARD_LAYOUT.COLS + runner.positionX);
+        },
+        [jumpTo],
+    );
+
     const handleShootSkip = useCallback(() => {
         runAction(() => runnerGameApi.shoot(false));
     }, [runAction]);
@@ -892,10 +1147,30 @@ export default function GameBoardScreen({ route }) {
     }
 
     if (game.status === GAME_STATUS.WAITING) {
+        // Раньше тут был отдельный экран (GameWaitingRoom) с ручной кнопкой
+        // «Готов» — второе подтверждение того же самого, что игрок уже
+        // подтвердил в лобби. По прямому запросу пользователя, 2026-09-08:
+        // POST /runner_game/start вызывается автоматически (см. эффект у
+        // autoStartAttemptedRef выше), тут — только спиннер того же вида,
+        // что и у `!game` выше (не отдельный "экран", а продолжение той же
+        // загрузки), плюс счётчик готовности остальных игроков и кнопка
+        // «Повторить», если автовызов сам упал по сети/бэку.
+        const readyCount = gamePlayers.filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
         return (
             <View style={styles.wrapper}>
                 <ParallaxBackground />
-                <GameWaitingRoom gamePlayers={gamePlayers} />
+                <View style={styles.center}>
+                    <ActivityIndicator size="large" color={colors.primary} />
+                    <Text style={styles.statusText}>
+                        Начинаем партию… готовы {readyCount} из {gamePlayers.length}
+                    </Text>
+                    {autoStartError && (
+                        <>
+                            <Text style={styles.errorText}>{autoStartError}</Text>
+                            <Button title="Повторить" variant="danger" onPress={retryAutoStart} style={styles.retryBtn} />
+                        </>
+                    )}
+                </View>
                 <EventLogPanel entries={eventLog} />
             </View>
         );
@@ -941,6 +1216,15 @@ export default function GameBoardScreen({ route }) {
             {pendingReaperPlacement && !busy && (
                 <View style={styles.turnBtnRow}>
                     <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtn} />
+                    {/* "Отмена" — живой тест, 2026-09-08, поймал реальный
+                        тупик: если размещение отклонено бэком (например,
+                        невалидный positionX — см. фикс highlightedCells
+                        выше), pendingReaperPlacement не сбрасывается сам
+                        (runAction молча ловит ошибку, .then(()=>...) не
+                        вызывается), а других способов вернуться к выбору
+                        клетки не было — игрок застревал, раз за разом
+                        повторяя ту же обречённую попытку. */}
+                    <Button title="Отмена" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtn} />
                 </View>
             )}
             {!pendingReaperPlacement && pendingSelect && !busy && (
@@ -1012,9 +1296,39 @@ export default function GameBoardScreen({ route }) {
         />
     );
 
+    // Overlay удаляемого фрагмента №1 (см. эффект у gridData/trackSnapshotRef
+    // выше) — отдельный, некликабельный экземпляр BoardGrid поверх боевого,
+    // рисующий ТОЛЬКО старые ячейки blockIndex 0 на их СТАРОЙ (до сдвига)
+    // windowStart-позиции, плавно затухающий. runners не передаём (пустой
+    // массив по умолчанию у BoardGrid) — токены уже отрисованы боевым слоем
+    // и обновляются его собственной анимационной очередью, дублировать их
+    // тут не нужно (и рисовало бы "двух бегунов" на время fade).
+    const trackFadeOverlayEl = trackFadeOverlay ? (
+        <Animated.View pointerEvents="none" style={[styles.boardGridFadeOverlay, { opacity: trackFadeOverlay.opacity }]}>
+            <BoardGrid
+                gridData={trackFadeOverlay.gridData}
+                rows={rows}
+                cols={viewportCols}
+                segmentW={segmentW}
+                segmentH={segmentH}
+                windowStart={trackFadeOverlay.windowStart}
+                orientation="portrait"
+                containerWidth={roadContainerW}
+                containerHeight={roadContainerH}
+                playerColorById={playerColorById}
+            />
+        </Animated.View>
+    ) : null;
+
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
             <ParallaxBackground />
+
+            <GameFinishModal
+                visible={game.status === GAME_STATUS.FINISH}
+                winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
+                onExit={goToMainMenu}
+            />
 
             {!isPortrait && <View style={styles.turnBanner}>{turnBannerInner}</View>}
 
@@ -1075,6 +1389,7 @@ export default function GameBoardScreen({ route }) {
                     onPressAbilityZone={handlePressAbilityZone}
                     onDropOnRunner={handleDropOnRunner}
                     onRunnerCardPress={handleRunnerCardPress}
+                    onRunnerCardDoubleTap={handleRunnerCardDoubleTap}
                     width={leftPanelW}
                     switcherHeight={switcherH}
                 />
@@ -1135,7 +1450,10 @@ export default function GameBoardScreen({ route }) {
                                 segmentSize={segmentH}
                                 totalHeight={roadContainerH}
                             />
-                            {boardGridEl}
+                            <View style={styles.boardGridStack}>
+                                {boardGridEl}
+                                {trackFadeOverlayEl}
+                            </View>
                         </View>
                     </RoadArea>
                     {/* bleed.top закрывает И вырез/статус-бар (insets.top), плюс
@@ -1172,6 +1490,7 @@ export default function GameBoardScreen({ route }) {
                         onPressAbilityZone={handlePressAbilityZone}
                         onDropOnRunner={handleDropOnRunner}
                         onRunnerCardPress={handleRunnerCardPress}
+                        onRunnerCardDoubleTap={handleRunnerCardDoubleTap}
                         height={panelH}
                         switcherHeight={switcherH}
                         switcherAtBottom
@@ -1244,6 +1563,10 @@ const styles = StyleSheet.create({
     // раскладка. Обе имеют явную height=roadContainerH (см. JSX), выравнивать
     // по кросс-оси дополнительно не нужно.
     roadRowPortrait: { flexDirection: 'row' },
+    // position:'relative' — якорь для trackFadeOverlayEl (position:'absolute'
+    // поверх боевого BoardGrid, см. game_track_updated эффект у gridData).
+    boardGridStack: { position: 'relative' },
+    boardGridFadeOverlay: { position: 'absolute', top: 0, left: 0 },
     panelFrameWrap: { position: 'relative' },
     // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
     // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому
@@ -1277,6 +1600,8 @@ const styles = StyleSheet.create({
     },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
+    errorText: { fontSize: font.small, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
+    retryBtn: { marginTop: spacing.sm },
     collisionBanner: {
         // right (не alignSelf:'center') — абсолютно спозиционированные дети в RN
         // не центрируются через alignSelf надёжно, нужны явные координаты.

@@ -780,10 +780,11 @@ const droneYellow = {
 
 // Мяч (RUNNER_TYPES.BALL) — ничейный обструкт-хазард (RunnerBallInitService
 // на бэке, playerId всегда null), НЕ игрок, поэтому НЕТ per-player тонировки
-// — один фиксированный вид на всю игру. Цвет — white (2026-09-07, живой
-// прогон выявил, что исходный crimson визуально путался с игроком red);
-// выбран пользователем из 10 предложенных вариантов, специально избегая
-// сходства со всеми 4 цветами игроков (red/indigo-blue/yellow/green).
+// — один фиксированный вид на всю игру. Цвет — magenta (2026-09-08; исходный
+// crimson путался с игроком red, промежуточный white пользователь передумал
+// на следующий день — "пожалуй лучше magenta"), выбран из 10 предложенных
+// вариантов, специально избегая сходства со всеми 4 цветами игроков
+// (red/indigo-blue/yellow/green).
 // Сгенерированы ВСЕ 10 кандидатов на диске (obstacle_*_{crimson,orange,gold,
 // lime,teal,indigo,violet,magenta,silver,white}.gif) — если понадобится
 // сменить ещё раз, достаточно поменять суффикс ниже, картинки уже готовы,
@@ -796,13 +797,13 @@ const droneYellow = {
 // PLAYER_COLOR_HEX, colorKeyForHex упадёт в дефолтный 'blue' — не важно, все
 // 4 слота отдают один и тот же файл).
 const ballFixed = {
-    idle: require('../assets/images/runners/obstacle/obstacle_idle_white.gif'),
-    fly: require('../assets/images/runners/obstacle/obstacle_fly_white.gif'),
-    destroyed: require('../assets/images/runners/obstacle/obstacle_destroyed_white.gif'),
-    start: require('../assets/images/runners/obstacle/obstacle_start_white.gif'),
+    idle: require('../assets/images/runners/obstacle/obstacle_idle_magenta.gif'),
+    fly: require('../assets/images/runners/obstacle/obstacle_fly_magenta.gif'),
+    destroyed: require('../assets/images/runners/obstacle/obstacle_destroyed_magenta.gif'),
+    start: require('../assets/images/runners/obstacle/obstacle_start_magenta.gif'),
     collision: {
-        east: require('../assets/images/runners/obstacle/obstacle_collision_east_white.gif'),
-        west: require('../assets/images/runners/obstacle/obstacle_collision_west_white.gif'),
+        east: require('../assets/images/runners/obstacle/obstacle_collision_east_magenta.gif'),
+        west: require('../assets/images/runners/obstacle/obstacle_collision_west_magenta.gif'),
     },
 };
 

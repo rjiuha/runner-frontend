@@ -53,9 +53,43 @@ export function useBoardScroll({ cols }) {
 
     useEffect(() => () => stopRepeat(), [stopRepeat]);
 
+    // Прыжок к произвольной глобальной колонке (2026-09-08, по прямому
+    // запросу пользователя — двойной тап по карточке бегуна должен
+    // перебросить видимое окно дороги туда, где он сейчас стоит).
+    // Центрируем бегуна в окне (не прижимаем к левому/нижнему краю) —
+    // так его видно вместе с соседними клетками по обе стороны, а не
+    // ровно на границе видимой области.
+    const jumpTo = useCallback(
+        (globalCol) => {
+            stopRepeat();
+            setWindowStart(Math.max(0, Math.min(maxStart, globalCol - Math.floor(cols / 2))));
+        },
+        [maxStart, cols, stopRepeat],
+    );
+
+    // Сдвиг окна на произвольную ЗНАКОВУЮ дельту без остановки на границах
+    // одним нажатием (в отличие от step ±1) — нужен для game_track_updated
+    // (см. GameBoardScreen): когда сервер "сдвигает" фрагменты трассы
+    // (begin удаляется, middle->begin, end->middle, новый->end), нумерация
+    // cell.col у ВСЕХ клеток сбрасывается на -COLS относительно прежней (см.
+    // lib/board#flattenTrackSegments — col всегда 0..TOTAL_COLS-1 от ТЕКУЩИХ
+    // trackBegin/Middle/End, blockIndex всегда 0,1,2). Чтобы камера
+    // продолжала "смотреть" на то же самое место трассы, а не на случайно
+    // подменившийся кусок, windowStart должен сдвинуться на ту же дельту
+    // синхронно с этим событием. Клэмп — как и у step/jumpTo.
+    const shiftWindowBy = useCallback(
+        (delta) => {
+            stopRepeat();
+            setWindowStart((s) => Math.max(0, Math.min(maxStart, s + delta)));
+        },
+        [maxStart, stopRepeat],
+    );
+
     return {
         windowStart,
         backButtonProps: { onPressIn: () => startRepeat(-1), onPressOut: stopRepeat },
         forwardButtonProps: { onPressIn: () => startRepeat(1), onPressOut: stopRepeat },
+        jumpTo,
+        shiftWindowBy,
     };
 }

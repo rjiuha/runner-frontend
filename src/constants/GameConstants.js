@@ -289,7 +289,13 @@ export const BOARD_LAYOUT = {
   ROWS: 6,
   COLS: 8,
   TOTAL_BLOCKS: 3,
-  TOTAL_COLS: 24,
+  // 3 полных фрагмента (trackBegin/Middle/End, по 8 колонок каждый) + 1
+  // "пик"-колонка (первая колонка trackNext, см. lib/board#flattenPeekColumn) —
+  // по прямому запросу пользователя, 2026-09-08: без неё бегуну физически
+  // некуда шагнуть с последней клетки 3-го фрагмента (см. TODO в CLAUDE.md
+  // про "переход за передний край сегмента"). Заход на неё — триггер
+  // game_track_updated на бэке (см. Move::handle(), read-only).
+  TOTAL_COLS: 25,
 };
 
 /**

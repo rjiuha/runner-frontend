@@ -40,6 +40,7 @@ export default function PlayerInfoPanel({
     onPressAbilityZone,
     onDropOnRunner,
     onRunnerCardPress,
+    onRunnerCardDoubleTap,
     width,
     height,
     switcherHeight,
@@ -231,6 +232,7 @@ export default function PlayerInfoPanel({
                 pending={isPending}
                 healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
                 onPress={() => onRunnerCardPress(runner)}
+                onDoubleTap={onRunnerCardDoubleTap}
                 moveDiceValue={moveDiceValue}
                 rollDiceValue={rollDiceValue}
                 hoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}

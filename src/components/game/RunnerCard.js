@@ -50,6 +50,10 @@ import { colors, font, radius, spacing } from '../../theme';
  * Накат под ним), а не отдельная строка на всю ширину карточки, как было
  * раньше.
  */
+// Порог между двумя тапами, чтобы считать их двойным (мс) — обычное для
+// платформ значение, ничем не привязано к остальным таймингам проекта.
+const DOUBLE_TAP_MS = 300;
+
 export default function RunnerCard({
     runner,
     color,
@@ -57,6 +61,7 @@ export default function RunnerCard({
     pending,
     healTarget,
     onPress,
+    onDoubleTap,
     moveDiceValue = null,
     rollDiceValue = null,
     hoverState,
@@ -69,6 +74,26 @@ export default function RunnerCard({
     const placed = runner.segment != null;
     const zoneKey = `move:${runner.id}`;
     const cardRef = useRef(null);
+    // Двойной тап по карточке — переносит видимое окно дороги к бегуну (см.
+    // GameBoardScreen#handleRunnerCardDoubleTap), по прямому запросу
+    // пользователя, 2026-09-08. Первый тап срабатывает СРАЗУ как обычно
+    // (onPress, без искусственной задержки "подождать вдруг будет второй") —
+    // если ВТОРОЙ тап приходит достаточно быстро после ПЕРВОГО, ОН вместо
+    // обычного onPress зовёт onDoubleTap (обычное действие карточки — отмена
+    // pendingSelect/выбор цели лечения — для повторного тапа в этом случае
+    // просто не вызывается, двойной тап это не "два одинарных подряд", а своё
+    // отдельное действие).
+    const lastTapAtRef = useRef(0);
+    const handlePress = useCallback(() => {
+        const now = Date.now();
+        if (onDoubleTap && now - lastTapAtRef.current < DOUBLE_TAP_MS) {
+            lastTapAtRef.current = 0;
+            onDoubleTap(runner);
+            return;
+        }
+        lastTapAtRef.current = now;
+        onPress?.();
+    }, [onPress, onDoubleTap, runner]);
 
     const measure = useCallback(() => {
         // requestAnimationFrame — measureInWindow вызванный СРАЗУ в onLayout на
@@ -126,7 +151,7 @@ export default function RunnerCard({
                 hoverState === 'valid' && styles.cardHoverValid,
                 hoverState === 'invalid' && styles.cardHoverInvalid,
             ]}
-            onPress={onPress}
+            onPress={handlePress}
             activeOpacity={0.8}
         >
             <View style={styles.cardRow}>

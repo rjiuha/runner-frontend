@@ -36,8 +36,12 @@
  * следующего live-обновления — риск принят пользователем.
  * Игрок сам выбирает только 3 "вперёд" направления (MoveDto/ShootDto
  * разрешают только их), назад — только для служебных эффектов на бэке.
- * Стрелять можно ТОЛЬКО строго вперёд (UP) — диагонали для SHOOT исключены
- * отдельным фильтром в GameBoardScreen, эта функция общая для MOVE и SHOOT.
+ * Стрелять можно по всем 3 направлениям (как обычный MOVE) для обычных
+ * бегунов — СТРОГО только вперёд (UP) ограничен ТОЛЬКО у Жнеца (отдельный
+ * фильтр в GameBoardScreen на его pendingReaperPlacement-ветке, 2026-09-08 —
+ * предыдущее решение "SHOOT только UP для всех" оказалось ошибочным и
+ * применялось ко всем типам, исправлено по прямому уточнению пользователя).
+ * Эта функция общая для MOVE, SHOOT и направления выстрела Жнеца.
  */
 export const MOVE_DIRECTIONS = ['LEFT_UP', 'UP', 'RIGHT_UP'];
 
@@ -84,10 +88,16 @@ export function neighborPosition({ positionX, positionY, segment }, direction) {
 
 /**
  * До 3 клеток "вперёд" от бегуна (LEFT_UP/UP/RIGHT_UP), отфильтрованных до
- * тех, что физически существуют на текущих 3 загруженных сегментах (0-2) и
- * в пределах дорожек (0-5) — то есть реально отрисованы на доске сейчас.
+ * тех, что физически существуют на доске СЕЙЧАС — 3 полных загруженных
+ * сегмента (0-2) плюс "пик" 4-го (segment===3, ТОЛЬКО positionX===0, см.
+ * lib/board#flattenPeekColumn) — и в пределах дорожек (0-5). Клетка сегмента
+ * 3 с positionX>0 сюда попасть не может даже без явной проверки: единственный
+ * способ получить segment===3 — переполнение positionX>7 из соседней клетки
+ * segment===2 (см. neighborPosition), которое ВСЕГДА даёт positionX=0.
  * Используется и для подсветки MOVE, и для подсветки SHOOT (canShoot() на
- * бэке проверяет ровно те же 3 соседа).
+ * бэке проверяет ровно те же 3 соседа) — по прямому решению пользователя,
+ * 2026-09-08, пик-клетка не исключается отдельно ни для того, ни для
+ * другого (тот же общий случай, что и любая другая клетка на доске).
  */
 export function forwardNeighbors(runner) {
     if (runner?.segment == null || runner.positionX == null || runner.positionY == null) return [];
@@ -96,7 +106,7 @@ export function forwardNeighbors(runner) {
     for (const direction of MOVE_DIRECTIONS) {
         const cell = neighborPosition(runner, direction);
         if (!cell) continue;
-        if (cell.segment < 0 || cell.segment > 2) continue; // за пределами 3 загруженных сегментов
+        if (cell.segment < 0 || cell.segment > 3) continue; // за пределами загруженных сегментов + пика
         if (cell.positionY < 0 || cell.positionY > 5) continue; // за пределами дорожек
         result.push({ direction, ...cell });
     }
