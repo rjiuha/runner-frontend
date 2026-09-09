@@ -1,8 +1,35 @@
 // src/components/game/RunnerToken.js
-import React from 'react';
-import { Image, StyleSheet, View } from 'react-native';
+import React, { useEffect, useRef, useState } from 'react';
+import { Animated, Image, StyleSheet, View } from 'react-native';
 import { RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { colorKeyForHex, getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
+import { colors } from '../../theme';
+
+// Вращающийся пунктирный ореол вокруг активного бегуна (см. selected проп) —
+// по прямому запросу пользователя, 2026-09-09, ВМЕСТО прежней белой рамки-
+// кружка/квадрата ("как иногда делают в играх") — выбран из 5 живых
+// вариантов (сравнивались в отдельном Artifact-макете), пользователь выбрал
+// именно этот: стабильное вращение пунктирной рамки, БЕЗ мерцания —
+// "силовое поле", не "дыхание". HALO_SCALE — во сколько раз ореол крупнее
+// самого кольца (не обрезается — у ring нет overflow:hidden). HALO_SPIN_MS —
+// время ОДНОГО полного оборота (360°).
+const HALO_SCALE = 1.35;
+const HALO_SPIN_MS = 3000;
+
+// Кроссфейд между сменами source — держит ПРЕДЫДУЩУЮ картинку видимой, пока
+// новая набирает opacity, маскируя паузу декодирования нового gif на Android
+// (Fresco). Это НЕ платформенный дефолт RN Image (тот отдельно подавлен
+// fadeDuration={0} ниже, см. комментарий там) — свой, контролируемой
+// длительности. Был в проекте с 2026-09-01 (тогда — на паре {base,mask}), но
+// потерялся при переходе на готовые одноцветные ассеты 2026-09-02 (тот
+// рефакторинг схлопнул dual-layer в один <Image>, вместе с ним ушёл и
+// crossfade-слой) — обнаружено и восстановлено 2026-09-09 по жалобе
+// пользователя "мерцание при анимации передвижения... стоит там, откуда
+// начал, потом резко продолжение" — ТОЛЬКО на Android, что и указывало на
+// decode-паузу (сам слайд позиции идёт независимо через RunnerTokenSlide,
+// не блокируется декодированием — а вот СПРАЙТ до готовности нового кадра,
+// похоже, продолжал показывать старый, отставая от уже проехавшей позиции).
+const CROSSFADE_MS = 120;
 
 /**
  * Иконка бегуна в цветном кольце владельца. Один и тот же компонент рисует
@@ -46,9 +73,14 @@ import { colorKeyForHex, getRunnerAnimationImage, getRunnerAvatarImage } from '.
  * `showRing` — цветной кружок-обводка (цвет игрока + полупрозрачная заливка).
  * По умолчанию `true` (карточка в панели — там он всё ещё нужен для быстрой
  * идентификации). На доске (BoardGrid) передаётся `false` — сама перекраска
- * уже показывает, чей это бегун, отдельная обводка избыточна. Белая рамка
- * `selected` (сейчас выбран для хода/выстрела) — другая, никак не связанная
- * с цветом игрока сущность, рисуется независимо от `showRing`.
+ * уже показывает, чей это бегун, отдельная обводка избыточна. `selected`
+ * (сейчас выбран для хода/выстрела) — другая, никак не связанная с цветом
+ * игрока сущность, рисуется независимо от `showRing`: вращающийся зелёный
+ * пунктирный ореол ВОКРУГ кольца (см. HALO_SCALE/HALO_SPIN_MS выше), а не
+ * рамка ПО кольцу — до 2026-09-09 тут была белая рамка+тень, убрана по
+ * прямому запросу пользователя (заодно избавляет от известного Android-бага
+ * с elevation+прямоугольной тенью на View без фона — эффект больше не
+ * использует shadow/elevation вообще).
  *
  * `imageAlign` — 'center' (по умолчанию) или 'bottom'. Определяет, как
  * картинка (которая может быть БОЛЬШЕ кольца, см. imageScale выше)
@@ -73,6 +105,50 @@ export default function RunnerToken({
 
     const imgBoxStyle = { width: size * imageScale, height: size * imageScale };
 
+    // Своя crossfade-логика (см. CROSSFADE_MS выше) — НЕ завязана на
+    // Platform.OS намеренно (тот же выбор, что и в 2026-09-01: на вебе смена
+    // <img> src мгновенна, лишний 120мс opacity-бленд там просто незаметен,
+    // отдельная ветка ради no-op не нужна). prevSourceRef хранит source
+    // ПРЕДЫДУЩЕГО рендера — как только он реально меняется, старое значение
+    // переезжает в fadingSource (рисуется под новым, статично, без анимации
+    // само по себе) и гаснет по мере роста opacity у нового поверх него.
+    const prevSourceRef = useRef(source);
+    const [fadingSource, setFadingSource] = useState(null);
+    const fadeOpacity = useRef(new Animated.Value(1)).current;
+    useEffect(() => {
+        if (prevSourceRef.current === source) return;
+        setFadingSource(prevSourceRef.current);
+        prevSourceRef.current = source;
+        fadeOpacity.setValue(0);
+        Animated.timing(fadeOpacity, {
+            toValue: 1,
+            duration: CROSSFADE_MS,
+            useNativeDriver: true,
+        }).start(() => setFadingSource(null));
+    }, [source, fadeOpacity]);
+
+    // Вращение ореола — ОДИН Animated.Value, растёт линейно 0→1 и сразу
+    // зацикливается (не туда-обратно, как было бы у пульса) — стабильное
+    // вращение БЕЗ мерцания, по прямому выбору пользователя из 5 живых
+    // вариантов. Останавливается и сбрасывается, когда selected становится
+    // false — Animated.loop сам не остановится, если не вызвать .stop()
+    // явно (и не начнёт с произвольного угла при повторном выборе).
+    // useNativeDriver:true — rotate-transform им поддерживается нативно (не
+    // layout-свойство); на вебе RN-Web сам откатывается на JS-анимацию, если
+    // нативный драйвер недоступен — не наш код, ничего доп. делать не нужно.
+    const haloSpin = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        if (!selected) return undefined;
+        haloSpin.setValue(0);
+        const anim = Animated.loop(
+            Animated.timing(haloSpin, { toValue: 1, duration: HALO_SPIN_MS, useNativeDriver: true }),
+        );
+        anim.start();
+        return () => anim.stop();
+    }, [selected, haloSpin]);
+    const haloRotate = haloSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+    const haloSize = size * HALO_SCALE;
+
     return (
         <View
             style={[
@@ -84,21 +160,70 @@ export default function RunnerToken({
                     borderRadius: size / 2,
                 },
                 showRing && { borderWidth: 2, borderColor: color, backgroundColor: `${color}33` },
-                selected && styles.selected,
                 style,
             ]}
         >
-            {/* fadeDuration=0 — на Android <Image> по умолчанию кросс-фейдит
-                (~300мс) при КАЖДОЙ смене source, включая смену анимационной
-                позы бегуна (move→attack, idle→fly и т.п.) — жалоба
-                пользователя, 2026-09-08: "плавные исчезновения одной gif и
-                появление другого", хотя в самом компоненте никакого
-                кастомного фейда нет (тот, что раньше был в истории проекта,
-                убран ещё 2026-09-02 при переходе на реверс-маскинг) — это
-                чистый платформенный дефолт RN Image, не наш код. На вебе
-                проп не действует (там и так не было проблемы), убирать не
-                нужно отдельным Platform-условием. */}
-            <Image source={source} style={imgBoxStyle} resizeMode="contain" fadeDuration={0} />
+            {selected && (
+                // Явные width/height + left/top (НЕ StyleSheet.absoluteFill) —
+                // тот же класс бага, что уже ловили на react-native-web в
+                // этом файле чуть ниже (натуральный размер файла вместо
+                // растяжения под родителя) — тут своего файла нет, но привычка
+                // из этой же сессии: явный размер надёжнее в любом случае.
+                // pointerEvents="none" — чисто декоративный слой, не должен
+                // перехватывать тапы по токену.
+                <Animated.View
+                    pointerEvents="none"
+                    style={{
+                        position: 'absolute',
+                        left: (size - haloSize) / 2,
+                        top: (size - haloSize) / 2,
+                        width: haloSize,
+                        height: haloSize,
+                        borderRadius: haloSize / 2,
+                        borderWidth: 3,
+                        borderStyle: 'dashed',
+                        borderColor: colors.success,
+                        opacity: 0.85,
+                        transform: [{ rotate: haloRotate }],
+                    }}
+                />
+            )}
+            <View style={imgBoxStyle}>
+                {/* Явные width/height (НЕ StyleSheet.absoluteFill) — на
+                    react-native-web <Image> с position:absolute и только
+                    top/left/right/bottom (без явного width/height)
+                    откатывается на НАТУРАЛЬНЫЙ пиксельный размер файла вместо
+                    растяжения под родителя (тот же класс бага, что уже
+                    ловили на MobileFrameOverlay/wipeOverlayCells в
+                    BoardGrid.js — жалоба пользователя, 2026-09-09: "размеры
+                    огромны", после того как этот слой добавился под
+                    кроссфейд). На native оба варианта работали одинаково,
+                    баг был только на вебе — но явный size надёжнее в любом
+                    случае, absoluteFill тут не даёт ничего взамен.
+
+                    fadeDuration=0 на ОБОИХ слоях — на Android <Image> по
+                    умолчанию кросс-фейдит (~300мс) при КАЖДОЙ смене source
+                    сам по себе (жалоба пользователя, 2026-09-08: "плавные
+                    исчезновения одной gif и появление другого") — это
+                    платформенный дефолт RN Image, не наш код, гасим его на
+                    обоих <Image>, чтобы не накладывался ДВОЙНОЙ фейд поверх
+                    собственного (управляемого, контролируемой длительности)
+                    ниже. */}
+                {fadingSource && (
+                    <Image
+                        source={fadingSource}
+                        style={[styles.imgLayer, imgBoxStyle]}
+                        resizeMode="contain"
+                        fadeDuration={0}
+                    />
+                )}
+                <Animated.Image
+                    source={source}
+                    style={[styles.imgLayer, imgBoxStyle, fadingSource && { opacity: fadeOpacity }]}
+                    resizeMode="contain"
+                    fadeDuration={0}
+                />
+            </View>
         </View>
     );
 }
@@ -108,23 +233,15 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
+    // top/left:0 фиксированы тут, width/height добавляются рядом через
+    // imgBoxStyle (динамический, зависит от size/imageScale) — см. комментарий
+    // у мест использования про то, почему не StyleSheet.absoluteFill.
+    imgLayer: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+    },
     ringBottom: {
         justifyContent: 'flex-end',
-    },
-    // Известный баг Android: `elevation` на View БЕЗ явного backgroundColor
-    // иногда рисует тень/контур по ПРЯМОУГОЛЬНОЙ границе вида, игнорируя
-    // borderRadius (Android считает форму от заливки, а не только от
-    // borderRadius) — у токенов на доске (showRing=false) кольцо обычно без
-    // фона вообще, отсюда "у некоторых персонажей квадрат вместо кружка".
-    // backgroundColor:'transparent' даёт Android нужную явную форму для
-    // расчёта тени, ничего визуально не меняя (сама заливка прозрачная).
-    selected: {
-        borderWidth: 3,
-        borderColor: '#fff',
-        backgroundColor: 'transparent',
-        shadowColor: '#fff',
-        shadowOpacity: 0.9,
-        shadowRadius: 4,
-        elevation: 4,
     },
 });

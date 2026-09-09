@@ -85,6 +85,8 @@ export function describeEvent(e) {
             return `Занос: ${e.stunt} клеток → ${dir(e.direction)}`;
         case 'anomaly':
             return `Аномалия → ${dir(e.direction)}`;
+        case 'ghost_pass':
+            return `Призрак: бегун ${e.runnerId} проходит сквозь бегуна ${e.otherRunnerId}`;
         default:
             return null; // неизвестное событие — вызывающий код сам решает fallback
     }

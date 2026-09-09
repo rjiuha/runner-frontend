@@ -3,9 +3,16 @@ import React, { useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
+import { ghostPairKey } from '../../lib/ghostPairs';
 import { colors } from '../../theme';
 import RunnerToken from './RunnerToken';
-import RunnerTokenSlide from './RunnerTokenSlide';
+import RunnerTokenSlide, { SLIDE_DURATION_MS } from './RunnerTokenSlide';
+
+// Прилёт Жнеца из резерва — вдвое медленнее обычного слайда (см. RunnerTokenSlide#duration),
+// по прямому запросу пользователя, 2026-09-09: "он двигается очень быстро, может стоит
+// продлить анимацию передвижения жнеца из резерва на игровое поле в два раза". Только эта
+// ОДНА анимация — обычные шаги остальных бегунов используют SLIDE_DURATION_MS как есть.
+const REAPER_PREVIEW_SLIDE_MS = SLIDE_DURATION_MS * 2;
 
 /**
  * Статичное окно из `cols` подряд идущих колонок трассы (rows × cols, обычно
@@ -78,6 +85,7 @@ export default function BoardGrid({
     runnerVisualPositions = null,
     currentTurnPlayerId = null,
     hiddenRunnerIds = null,
+    ghostPairs = null,
     onCollisionPoseStart = null,
     reaperPreview = null,
     wipeGridData = null,
@@ -118,16 +126,17 @@ export default function BoardGrid({
     // персонаж читался как "вне клетки", см. история в CLAUDE.md).
     const tokenSize = Math.floor(Math.min(segmentW, segmentH) * 0.82);
     // Картинка внутри кольца — по умолчанию 0.68*size (RunnerToken). Итоговая
-    // картинка = tokenSize*BOARD_TOKEN_IMAGE_SCALE ≈ 0.97×segmentSize на вебе.
-    // На native — ещё +30% (×1.3), а следующим заходом (2026-09-01, третий
-    // раз) ЕЩЁ +15% (×1.15, итого ×1.495 от исходного) — низ картинки
-    // прижат к низу клетки вместо центра (см. anchorBottom/imageAlign ниже),
-    // так что "ноги" остаются на месте, а верхняя часть туловища выпирает
-    // всё дальше вверх — ровно то, что попросил пользователь. Только для
-    // Android/iOS — веб-версию просил не трогать (там текущий размер/
-    // центрирование уже устраивает).
-    const isNativeToken = Platform.OS !== 'web';
-    const BOARD_TOKEN_IMAGE_SCALE = isNativeToken ? 1.18 * 1.3 * 1.15 : 1.18;
+    // картинка = tokenSize*BOARD_TOKEN_IMAGE_SCALE — ещё +30% (×1.3), а
+    // следующим заходом (2026-09-01, третий раз) ЕЩЁ +15% (×1.15, итого
+    // ×1.495 от исходного) — низ картинки прижат к низу клетки вместо
+    // центра (см. anchorBottom/imageAlign ниже), так что "ноги" остаются на
+    // месте, а верхняя часть туловища выпирает всё дальше вверх. Раньше
+    // это было ТОЛЬКО для Android/iOS (веб — свой, меньший ×1.18 с
+    // центрированием, по прямой просьбе пользователя не трогать веб) — по
+    // ОБРАТНОМУ прямому запросу, 2026-09-09 ("сделай размер и расположение
+    // персонажа на дороге в браузере такими же, как на android"), платформенная
+    // развилка убрана целиком — оба используют одни и те же значения.
+    const BOARD_TOKEN_IMAGE_SCALE = 1.18 * 1.3 * 1.15;
     // Пара при коллизии — несколько раундов живой правки на Android
     // (2026-08-31/09-01, по факту увиденного пользователем): 0.575 → 0.75 →
     // 0.9 от одиночной картинки, зазор 0.06 → 0.02 от сегмента. Финально —
@@ -234,7 +243,7 @@ export default function BoardGrid({
                 runnerId: runner.id, runner, x: sx, y: sy,
                 boxW: segmentW, boxH: segmentH, tokenSize,
                 anim: runnerAnims?.[runner.id] ?? null,
-                anchorBottom: isNativeToken,
+                anchorBottom: true,
                 onTop,
             });
         };
@@ -263,18 +272,19 @@ export default function BoardGrid({
                 x: cellX, y: cellY, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
                 anim: { kind: 'collision', side: 'east' },
                 // Пара крепится к низу клетки ТАК ЖЕ, как одиночный токен (см.
-                // anchorBottom/isNativeToken выше) — раньше была единственным
-                // состоянием, которое центрировалось по вертикали, пользователь
-                // прямо попросил единообразия ("должны быть так же, как и в
-                // других состояниях"). На вебе — по-прежнему центр (не трогаем).
-                anchorBottom: isNativeToken,
+                // anchorBottom выше) — раньше была единственным состоянием,
+                // которое центрировалось по вертикали, пользователь прямо
+                // попросил единообразия ("должны быть так же, как и в других
+                // состояниях"). Веб и native теперь ведут себя одинаково (см.
+                // BOARD_TOKEN_IMAGE_SCALE выше, 2026-09-09).
+                anchorBottom: true,
                 innerOffsetX: -offset,
             });
             items.push({
                 runnerId: rightRunner.id, runner: rightRunner,
                 x: cellX, y: cellY, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
                 anim: { kind: 'collision', side: 'west' },
-                anchorBottom: isNativeToken,
+                anchorBottom: true,
                 innerOffsetX: offset,
             });
         };
@@ -319,6 +329,22 @@ export default function BoardGrid({
 
             if (visible.length === 2) {
                 const [a, b] = visible;
+                // "Призрак" — мирное сосуществование на одной клетке, НЕ
+                // коллизия (см. lib/ghostPairs.js, по прямому запросу
+                // пользователя, 2026-09-09: "стоят рядом в idle, пока это не
+                // последний ход призрачного бегуна"). Реальная (не ghost)
+                // коллизия НИКОГДА не оставляет двух бегунов НАДОЛГО на одной
+                // клетке — проигравший либо мгновенно уводится
+                // (авторазрешение того же размера), либо ждёт
+                // game.extraTurnPlayer (отдельная, уже обработанная ветка на
+                // GameBoardScreen) — так что если конкретно ЭТА пара помечена
+                // как ghost, рисуем solo/solo безусловно, минуя даже
+                // isArriving-проверку ниже (тот же приём, что у Жнеца).
+                if (ghostPairs?.has(ghostPairKey(a.id, b.id, segment, Number(colStr), row))) {
+                    pushSolo(a, x, y);
+                    pushSolo(b, x, y);
+                    continue;
+                }
                 // Жнец на клетке — это НЕ столкновение, а ловушка (бегун,
                 // закончивший ход на этой клетке, уничтожается — см.
                 // lib/runnerAnimTriggers.js#'bomb'), по прямому запросу
@@ -399,11 +425,10 @@ export default function BoardGrid({
                 x, y, boxW: segmentW, boxH: segmentH, tokenSize,
                 anim: runnerAnims?.[topRunner.id] ?? null,
                 badgeCount: visible.length,
-                // Низ картинки прижат к низу клетки вместо центра — ТОЛЬКО
-                // на native (см. isNativeToken выше), только у одиночных
-                // токенов (у пары свой маленький бокс "впритык" к самому
-                // персонажу, там anchorBottom не нужен — центр).
-                anchorBottom: isNativeToken,
+                // Низ картинки прижат к низу клетки вместо центра — веб и
+                // native одинаково (см. BOARD_TOKEN_IMAGE_SCALE выше,
+                // 2026-09-09).
+                anchorBottom: true,
             });
         }
 
@@ -418,8 +443,8 @@ export default function BoardGrid({
         return items;
     }, [
         runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait,
-        currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims, isNativeToken, holdTick,
-        onCollisionPoseStart,
+        currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims, holdTick,
+        onCollisionPoseStart, ghostPairs,
     ]);
 
     // Локальное превью "прилёта" Жнеца ИЗ-ЗА КРАЯ карты (2026-09-07, по
@@ -759,9 +784,10 @@ export default function BoardGrid({
                             y={reaperPreviewItem.y}
                             width={segmentW}
                             height={segmentH}
-                            style={isNativeToken ? styles.tokenLayerBottom : styles.tokenLayer}
+                            style={styles.tokenLayerBottom}
                             windowStart={windowStart}
                             enterFrom={reaperPreviewItem.enterFrom}
+                            duration={REAPER_PREVIEW_SLIDE_MS}
                         >
                             <RunnerToken
                                 type={RUNNER_TYPES.REAPER}
@@ -770,7 +796,7 @@ export default function BoardGrid({
                                 size={tokenSize}
                                 imageScale={BOARD_TOKEN_IMAGE_SCALE}
                                 showRing={false}
-                                imageAlign={isNativeToken ? 'bottom' : 'center'}
+                                imageAlign="bottom"
                                 anim={reaperPreview.settled ? null : { kind: 'start', side: reaperPreview.side }}
                             />
                         </RunnerTokenSlide>
@@ -927,9 +953,9 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    // Только native (см. isNativeToken/anchorBottom в компоненте) — низ
-    // персонажа прижат к низу клетки вместо центра, картинка (которая теперь
-    // на 30% крупнее сегмента) выпирает вверх, а не поровну на все 4 стороны.
+    // Веб и native одинаково (см. anchorBottom в компоненте) — низ персонажа
+    // прижат к низу клетки вместо центра, картинка (которая теперь заметно
+    // крупнее сегмента) выпирает вверх, а не поровну на все 4 стороны.
     tokenLayerBottom: {
         position: 'absolute',
         alignItems: 'center',

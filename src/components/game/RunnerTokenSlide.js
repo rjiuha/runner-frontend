@@ -8,7 +8,7 @@ import { Animated } from 'react-native';
 // примерно столько же, не рассинхронизируясь. Вдвое медленнее исходных 850 —
 // по прямому запросу пользователя, 2026-08-31 (держим в паре с move там же).
 // На 20% быстрее (2026-09-02, по прямому запросу пользователя) — 1700×0.8.
-const SLIDE_DURATION_MS = 1360;
+export const SLIDE_DURATION_MS = 1360;
 
 /**
  * Обёртка токена бегуна на доске — плавно СКОЛЬЗИТ от предыдущей позиции к
@@ -61,8 +61,15 @@ const SLIDE_DURATION_MS = 1360;
  * "первый рендер — ехать неоткуда, ставим сразу". Не влияет на поведение,
  * если не передан — существующие токены первый раз появляются мгновенно,
  * как и раньше.
+ *
+ * `duration` (2026-09-09) — необязательное переопределение SLIDE_DURATION_MS
+ * ДЛЯ ЭТОГО КОНКРЕТНОГО токена, не трогая общую константу (та расшарена на
+ * ВСЕ обычные перемещения по доске) — нужно для "прилёта" Жнеца из резерва
+ * (см. BoardGrid#reaperPreviewItem), которую по прямому запросу пользователя
+ * замедлили вдвое относительно обычного шага, не касаясь скорости шагов
+ * остальных бегунов.
  */
-export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart, enterFrom }) {
+export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart, enterFrom, duration = SLIDE_DURATION_MS }) {
     const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
     const prevPos = useRef(null);
     const prevWindowStart = useRef(windowStart);
@@ -92,10 +99,10 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
         translate.setValue({ x: dx, y: dy });
         Animated.timing(translate, {
             toValue: { x: 0, y: 0 },
-            duration: SLIDE_DURATION_MS,
+            duration,
             useNativeDriver: true,
         }).start();
-    }, [x, y, width, height, windowStart, translate, enterFrom]);
+    }, [x, y, width, height, windowStart, translate, enterFrom, duration]);
 
     return (
         <Animated.View

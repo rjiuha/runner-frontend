@@ -19,6 +19,7 @@ import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
+import { useGhostPairs } from '../hooks/useGhostPairs';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands } from '../lib/board';
@@ -26,6 +27,7 @@ import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
+import { identifyGhostPass } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
 import { getRunnerAnimationImage, colorKeyForHex } from '../constants/runnerAnimations';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND } from '../constants/runnerSounds';
@@ -235,6 +237,11 @@ export default function GameBoardScreen({ route, navigation }) {
     // может означать чистый редирект без урона (см. подробный разбор в
     // lib/runnerDamageTokens.js).
     const runnerDamageTokens = useRunnerDamageTokens();
+    // Пары бегунов, мирно сосуществующих на одной клетке благодаря "призраку"
+    // (см. lib/ghostPairs.js) — BoardGrid рисует их как два независимых
+    // solo-токена (idle рядом), не коллизионную позу, по прямому запросу
+    // пользователя, 2026-09-09.
+    const ghostPairs = useGhostPairs();
     // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен для
     // anomaly и для жетонов повреждений — оба берут activeRunner текущего
     // ходящего игрока, ни то ни другое событие не несёт id бегуна само по
@@ -299,7 +306,16 @@ export default function GameBoardScreen({ route, navigation }) {
             if (kind === 'attack') {
                 const type = gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(shootSound, pickShootSoundSource(type));
-            } else if (kind === 'start') {
+            } else if (kind === 'start' && !suppressAnim) {
+                // !suppressAnim — та же граница, что и у визуального триггера
+                // чуть выше: если это реальный 'start' Жнеца, для которого мы
+                // УЖЕ показали локальное превью прилёта (см. handleCellPress —
+                // размещение играет 'start' сразу, локально, свой звук — см.
+                // reaperStartSkipUntilRef ниже), повторно звук проигрывать не
+                // нужно, иначе он звучал бы дважды (2026-09-09, по прямому
+                // запросу пользователя — звук раньше играл ТОЛЬКО здесь, уже
+                // ПОСЛЕ подтверждения диалога, с заметной задержкой от
+                // момента, когда токен реально начинал двигаться визуально).
                 const type = extra?.runnerType ?? gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(startSound, pickStartSoundSource(type));
             }
@@ -366,8 +382,10 @@ export default function GameBoardScreen({ route, navigation }) {
             handleTransientRunnerAnimEvent(e, gameRef, triggerWithSound);
             const pending = identifyPendingDamageType(e, gameRef);
             if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
+            const ghostPass = identifyGhostPass(e, gameRef);
+            if (ghostPass) ghostPairs.record(ghostPass.key);
         },
-        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType],
+        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, ghostPairs.record],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -432,15 +450,20 @@ export default function GameBoardScreen({ route, navigation }) {
     const [pendingReaperPlacement, setPendingReaperPlacement] = useState(null);
     const [busy, setBusy] = useState(false);
 
-    // Совпадает с ANIM_DURATION_MS.start обычных бегунов (useRunnerAnimations)
-    // — пока идёт "прилёт" Жнеца ИЗ-ЗА КРАЯ карты (см. reaperPreview ниже),
-    // выбор направления выстрела ещё не показываем (по прямому запросу
-    // пользователя, 2026-09-07: сперва красивое появление, ПОТОМ выбор
-    // направления, а не одновременно). reaperPreviewReady переключается
-    // ровно ОДИН раз на каждое новое размещение — эффект зависит от самого
-    // объекта pendingReaperPlacement (новый объект на каждый тап, см.
-    // handleCellPress), не от отдельного счётчика.
-    const REAPER_PREVIEW_MS = 2200;
+    // Раньше совпадало с ANIM_DURATION_MS.start обычных бегунов
+    // (useRunnerAnimations, 2200мс) — пока идёт "прилёт" Жнеца ИЗ-ЗА КРАЯ
+    // карты (см. reaperPreview ниже), выбор направления выстрела ещё не
+    // показываем (по прямому запросу пользователя, 2026-09-07: сперва
+    // красивое появление, ПОТОМ выбор направления, а не одновременно).
+    // Удвоено, 2026-09-09, по прямому запросу пользователя ("двигается
+    // очень быстро, продли анимацию... в два раза") — держим в паре с
+    // REAPER_PREVIEW_SLIDE_MS в BoardGrid.js (тот же слайд, тоже ×2 от
+    // обычного SLIDE_DURATION_MS): "готово"-состояние не должно наступать
+    // раньше, чем сам токен визуально закончит въезжать. reaperPreviewReady
+    // переключается ровно ОДИН раз на каждое новое размещение — эффект
+    // зависит от самого объекта pendingReaperPlacement (новый объект на
+    // каждый тап, см. handleCellPress), не от отдельного счётчика.
+    const REAPER_PREVIEW_MS = 2200 * 2;
     const [reaperPreviewReady, setReaperPreviewReady] = useState(false);
     useEffect(() => {
         setReaperPreviewReady(false);
@@ -926,6 +949,13 @@ export default function GameBoardScreen({ route, navigation }) {
         return { highlightedCells: new Set(), tapMode: null };
     }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, trackShiftPhase]);
 
+    // Есть ли у Жнеца реальный выстрел ПРЯМО СЕЙЧАС (раунд>0 И подсвеченная
+    // клетка реально нашлась, см. reaperShoot-ветку useMemo выше) — общий
+    // источник истины для подсказки (stepInstruction) и для авто-подтверждения
+    // "без выстрела" ниже, вынесен в отдельную переменную, чтобы не дублировать
+    // выражение в двух местах.
+    const canReaperShoot = tapMode === 'reaperShoot' && highlightedCells.size > 0;
+
     // Звук шага СИНХРОННО с анимацией перемещения — по прямому запросу
     // пользователя, 2026-09-01: играет, пока у ХОТЬ ОДНОГО бегуна сейчас
     // проигрывается поза 'move' (см. hooks/useRunnerAnimations —
@@ -1074,6 +1104,35 @@ export default function GameBoardScreen({ route, navigation }) {
         [pendingReaperPlacement, runAction],
     );
 
+    // Авто-подтверждение "без выстрела", когда выстрела в принципе быть не
+    // может — по прямому запросу пользователя, 2026-09-09: "в первом раунде
+    // вижу диалог... перед ним никого, чтобы стрелять... по правилам в
+    // первом раунде жнец не может стрелять вообще, только встать". Раньше
+    // игрок был ОБЯЗАН явно нажать «Без выстрела», даже когда canReaperShoot
+    // заведомо false (round===0 ИЛИ нет цели прямо по курсу) — теперь в этом
+    // случае решение принимается САМО, как только "прилёт" Жнеца доиграл
+    // (reaperPreviewReady), без лишнего диалога. Если canReaperShoot true —
+    // выбор остаётся за игроком (тапнуть клетку или явно нажать «Без
+    // выстрела»), тут ничего не меняется.
+    //
+    // autoNoShotAttemptedRef — защита от повторного авто-вызова: если ЭТОТ
+    // вызов почему-то упадёт (сеть), runAction молча покажет тост, busy
+    // вернётся в false, а pendingReaperPlacement/reaperPreviewReady/
+    // canReaperShoot останутся ТЕМИ ЖЕ значениями — без этой защиты эффект
+    // немедленно перезапустил бы тот же обречённый вызов по кругу. Ref
+    // хранит САМ ОБЪЕКТ pendingReaperPlacement (новый объект на каждое новое
+    // размещение, см. handleCellPress) — сравнение по ссылке естественно
+    // сбрасывается на следующей попытке, отдельно чистить не нужно. «Отмена»
+    // (см. рендер кнопок ниже) остаётся видимой в любом случае — если
+    // авто-вызов всё же завис/упал, у игрока по-прежнему есть явный выход.
+    const autoNoShotAttemptedRef = useRef(null);
+    useEffect(() => {
+        if (!pendingReaperPlacement || !reaperPreviewReady || canReaperShoot || busy) return;
+        if (autoNoShotAttemptedRef.current === pendingReaperPlacement) return;
+        autoNoShotAttemptedRef.current = pendingReaperPlacement;
+        handleReaperShoot(undefined);
+    }, [pendingReaperPlacement, reaperPreviewReady, canReaperShoot, busy, handleReaperShoot]);
+
     const handleCellPress = useCallback(
         (cell) => {
             if (!tapMode) return;
@@ -1127,9 +1186,22 @@ export default function GameBoardScreen({ route, navigation }) {
                 const side = Math.random() < 0.5 ? 'east' : 'west';
                 setPendingReaperPlacement({ diceIndex, positionX, positionY, segment: cell.blockIndex, side });
                 setPendingAbility(null);
+                // Звук "прилёта" — СРАЗУ, в момент, когда токен реально
+                // начинает визуально въезжать (см. BoardGrid#reaperPreviewItem,
+                // тот же тап заводит и локальный превью-слайд), а не позже,
+                // когда придёт реальный ability_reaper с бэка (только ПОСЛЕ
+                // подтверждения диалога) — по прямому запросу пользователя,
+                // 2026-09-09: "звук движения жнеца проигрывается уже после
+                // подтверждения в диалоге, а должен быть в момент анимации
+                // движения". Дублирующий звук на РЕАЛЬНОМ событии подавлен —
+                // см. triggerWithSound#suppressAnim выше (та же граница по
+                // reaperStartSkipUntilRef, что уже гасила повторную ВИЗУАЛЬНУЮ
+                // анимацию, теперь гасит и звук).
+                reaperStartSkipUntilRef.current = Date.now() + 5000;
+                playOneShot(startSound, pickStartSoundSource(RUNNER_TYPES.REAPER));
             }
         },
-        [tapMode, highlightedCells, activeRunner, cols, pendingAbility, pendingReaperPlacement, handleReaperShoot, runAction],
+        [tapMode, highlightedCells, activeRunner, cols, pendingAbility, pendingReaperPlacement, handleReaperShoot, runAction, playOneShot, startSound],
     );
 
     // Дроп кубика на карточку бегуна — шаг SELECT. Реальный /select уходит не
@@ -1357,7 +1429,7 @@ export default function GameBoardScreen({ route, navigation }) {
             <Text style={styles.turnHint}>
                 {stepInstruction(
                     myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain,
-                    pendingReaperPlacement, reaperPreviewReady, tapMode === 'reaperShoot' && highlightedCells.size > 0,
+                    pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
                 )}
             </Text>
             {showActionStuckRefresh && !busy && (
@@ -1378,10 +1450,22 @@ export default function GameBoardScreen({ route, navigation }) {
                 отображение, как для обычных бегунов"). "Без выстрела"
                 остаётся кнопкой — это не клетка на доске. Доступна сразу
                 (не ждёт reaperPreviewReady) — пропустить выстрел можно и не
-                дожидаясь, пока доиграет анимация прилёта. */}
+                дожидаясь, пока доиграет анимация прилёта.
+
+                Кнопка СКРЫТА, когда автоэффект выше (см. autoNoShotAttemptedRef)
+                и так уже примет то же решение сам — по прямому запросу
+                пользователя, 2026-09-09: раньше диалог "Без выстрела/Отмена"
+                показывался ДАЖЕ когда выбора физически нет (round===0 или
+                нет цели), хотя игроку нечего решать. Условие СИММЕТРИЧНО
+                автоэффекту (canReaperShoot||!reaperPreviewReady) — до того,
+                как preview settled, кнопка ещё видна (можно пропустить
+                выстрел не дожидаясь анимации, как и раньше), settled+нет
+                выбора → эффект уже сам всё решил, лишняя кнопка не нужна. */}
             {pendingReaperPlacement && !busy && (
                 <View style={styles.turnBtnRow}>
-                    <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtn} />
+                    {(canReaperShoot || !reaperPreviewReady) && (
+                        <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtn} />
+                    )}
                     {/* "Отмена" — живой тест, 2026-09-08, поймал реальный
                         тупик: если размещение отклонено бэком (например,
                         невалидный positionX — см. фикс highlightedCells
@@ -1389,7 +1473,10 @@ export default function GameBoardScreen({ route, navigation }) {
                         (runAction молча ловит ошибку, .then(()=>...) не
                         вызывается), а других способов вернуться к выбору
                         клетки не было — игрок застревал, раз за разом
-                        повторяя ту же обречённую попытку. */}
+                        повторяя ту же обречённую попытку. Видна БЕЗУСЛОВНО
+                        (не гейтится canReaperShoot) — общий аварийный выход
+                        и для авто-случая тоже, если сам авто-вызов вдруг
+                        зависнет/упадёт. */}
                     <Button title="Отмена" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtn} />
                 </View>
             )}
@@ -1453,6 +1540,7 @@ export default function GameBoardScreen({ route, navigation }) {
             runnerVisualPositions={runnerAnim.visualPositions}
             currentTurnPlayerId={game.playerOrder}
             hiddenRunnerIds={runnerAnim.hiddenIds}
+            ghostPairs={ghostPairs.pairs}
             onCollisionPoseStart={handleCollisionPoseStart}
             reaperPreview={
                 pendingReaperPlacement
@@ -1478,8 +1566,17 @@ export default function GameBoardScreen({ route, navigation }) {
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
             <ParallaxBackground />
 
+            {/* Гейт trackShiftPhase — по прямому запросу пользователя, 2026-09-09: если
+                game_finish пришёл ОДНОВременно со сдвигом фрагмента (типовой случай —
+                сдвиг уничтожает свободных бегунов соперника, тот уходит в OUT, у
+                оставшегося ровно одного активного игрока сразу победа), модалка не
+                должна перекрывать/обрывать кат-сцену сдвига — ждём, пока
+                trackShiftPhase не станет null (хореография доиграла целиком), и только
+                тогда показываем результат. game.status уже реально FINISH всё это
+                время (редьюсер применяет мгновенно, как и везде в проекте) — гейтится
+                только ПОКАЗ модалки, не сам факт завершения игры. */}
             <GameFinishModal
-                visible={game.status === GAME_STATUS.FINISH}
+                visible={game.status === GAME_STATUS.FINISH && !trackShiftPhase}
                 winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
                 onExit={goToMainMenu}
             />
