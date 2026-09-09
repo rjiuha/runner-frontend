@@ -4,7 +4,6 @@ import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } f
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
 import { indexRunnersByCell } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
-import { colors } from '../../theme';
 import RunnerToken from './RunnerToken';
 import RunnerTokenSlide, { SLIDE_DURATION_MS } from './RunnerTokenSlide';
 
@@ -88,10 +87,7 @@ export default function BoardGrid({
     ghostPairs = null,
     onCollisionPoseStart = null,
     reaperPreview = null,
-    wipeGridData = null,
-    wipeColumnOpacities = null,
-    revealCols = null,
-    revealColumnOpacities = null,
+    columnOpacities = null,
     onCellPress,
 }) {
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
@@ -238,9 +234,14 @@ export default function BoardGrid({
         // CLAUDE.md — "токен под сегментом"/"квадрат вместо кружка"/
         // "персонажи прорисовываются под полосой", всё лечилось явным
         // zIndex/elevation, порядок в дереве сам по себе не всегда уважался).
-        const pushSolo = (runner, sx, sy, onTop = false) => {
+        // col — глобальный номер колонки (см. globalCol ниже), нужен ТОЛЬКО
+        // для BoardGrid#columnOpacities (хореография сдвига фрагментов, 2026-
+        // 09-10: токены обязаны затухать/материализовываться СО СВОЕЙ
+        // колонкой, а не отдельно от сетки — иначе Жнец на удаляемом фрагменте
+        // снова не исчезнет, как уже было пойманным багом раньше).
+        const pushSolo = (runner, sx, sy, sCol, onTop = false) => {
             items.push({
-                runnerId: runner.id, runner, x: sx, y: sy,
+                runnerId: runner.id, runner, x: sx, y: sy, col: sCol,
                 boxW: segmentW, boxH: segmentH, tokenSize,
                 anim: runnerAnims?.[runner.id] ?? null,
                 anchorBottom: true,
@@ -260,7 +261,7 @@ export default function BoardGrid({
         // Теперь бокс константен при любом переходе — разъезд между двумя
         // персонажами даёт ЧИСТО transform:translateX на самом RunnerToken
         // (innerOffsetX ниже), размер бокса это не трогает вообще.
-        const pushPair = (leftRunner, rightRunner, cellX, cellY) => {
+        const pushPair = (leftRunner, rightRunner, cellX, cellY, cellCol) => {
             // Расстояние от центра клетки до центра КАЖДОГО токена — уменьшено
             // на 7% (жалоба пользователя, 2026-09-01, третий заход: "чуть
             // сблизь анимации коллизии"). Трогаем именно offset, не pairGap
@@ -269,7 +270,7 @@ export default function BoardGrid({
             const offset = (pairGap / 2 + pairSize / 2) * 0.93;
             items.push({
                 runnerId: leftRunner.id, runner: leftRunner,
-                x: cellX, y: cellY, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
+                x: cellX, y: cellY, col: cellCol, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
                 anim: { kind: 'collision', side: 'east' },
                 // Пара крепится к низу клетки ТАК ЖЕ, как одиночный токен (см.
                 // anchorBottom выше) — раньше была единственным состоянием,
@@ -282,7 +283,7 @@ export default function BoardGrid({
             });
             items.push({
                 runnerId: rightRunner.id, runner: rightRunner,
-                x: cellX, y: cellY, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
+                x: cellX, y: cellY, col: cellCol, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
                 anim: { kind: 'collision', side: 'west' },
                 anchorBottom: true,
                 innerOffsetX: offset,
@@ -341,8 +342,8 @@ export default function BoardGrid({
                 // как ghost, рисуем solo/solo безусловно, минуя даже
                 // isArriving-проверку ниже (тот же приём, что у Жнеца).
                 if (ghostPairs?.has(ghostPairKey(a.id, b.id, segment, Number(colStr), row))) {
-                    pushSolo(a, x, y);
-                    pushSolo(b, x, y);
+                    pushSolo(a, x, y, globalCol);
+                    pushSolo(b, x, y, globalCol);
                     continue;
                 }
                 // Жнец на клетке — это НЕ столкновение, а ловушка (бегун,
@@ -366,8 +367,8 @@ export default function BoardGrid({
                     // порядок в дереве для двух соседних абсолютных View
                     // (см. комментарий у pushSolo).
                     const [victim, reaper] = a.type === RUNNER_TYPES.REAPER ? [b, a] : [a, b];
-                    pushSolo(victim, x, y);
-                    pushSolo(reaper, x, y, true);
+                    pushSolo(victim, x, y, globalCol);
+                    pushSolo(reaper, x, y, globalCol, true);
                     continue;
                 }
                 const isArriving = (r) => {
@@ -375,8 +376,8 @@ export default function BoardGrid({
                     return kind === 'move' || kind === 'fly';
                 };
                 if (isArriving(a) || isArriving(b)) {
-                    pushSolo(a, x, y);
-                    pushSolo(b, x, y);
+                    pushSolo(a, x, y, globalCol);
+                    pushSolo(b, x, y, globalCol);
                     continue;
                 }
 
@@ -394,7 +395,7 @@ export default function BoardGrid({
                     if (aIsMover && !bIsMover) [leftRunner, rightRunner] = [b, a];
                     else if (bIsMover && !aIsMover) [leftRunner, rightRunner] = [a, b];
                     else [leftRunner, rightRunner] = a.id < b.id ? [a, b] : [b, a];
-                    hold = { until: now + COLLISION_MIN_HOLD_MS, x, y, leftRunner, rightRunner };
+                    hold = { until: now + COLLISION_MIN_HOLD_MS, x, y, col: globalCol, leftRunner, rightRunner };
                     collisionHoldsRef.current[pairKey] = hold;
                     setTimeout(() => setHoldTick((t) => t + 1), COLLISION_MIN_HOLD_MS + 30);
                     // Сигнал наружу "поза столкновения только что появилась"
@@ -410,10 +411,10 @@ export default function BoardGrid({
                     // тик, как и holdTick парой строк выше.
                     if (onCollisionPoseStart) setTimeout(() => onCollisionPoseStart(pairKey), 0);
                 } else {
-                    hold.x = x; hold.y = y; // пока реально вместе — держим позицию свежей
+                    hold.x = x; hold.y = y; hold.col = globalCol; // пока реально вместе — держим позицию свежей
                 }
                 refreshedPairKeys.add(pairKey);
-                pushPair(hold.leftRunner, hold.rightRunner, x, y);
+                pushPair(hold.leftRunner, hold.rightRunner, x, y, globalCol);
                 continue;
             }
 
@@ -422,7 +423,7 @@ export default function BoardGrid({
             const topRunner = visible[0];
             items.push({
                 runnerId: topRunner.id, runner: topRunner,
-                x, y, boxW: segmentW, boxH: segmentH, tokenSize,
+                x, y, col: globalCol, boxW: segmentW, boxH: segmentH, tokenSize,
                 anim: runnerAnims?.[topRunner.id] ?? null,
                 badgeCount: visible.length,
                 // Низ картинки прижат к низу клетки вместо центра — веб и
@@ -437,7 +438,7 @@ export default function BoardGrid({
         // дорисовать на замороженной (последней известной вместе) позиции.
         for (const [pairKey, hold] of Object.entries(collisionHoldsRef.current)) {
             if (refreshedPairKeys.has(pairKey)) continue;
-            pushPair(hold.leftRunner, hold.rightRunner, hold.x, hold.y);
+            pushPair(hold.leftRunner, hold.rightRunner, hold.x, hold.y, hold.col);
         }
 
         return items;
@@ -556,86 +557,20 @@ export default function BoardGrid({
         return segments;
     }, [windowStart, cols, rows, segmentW, segmentH, isPortrait]);
 
-    // "Волна" исчезновения удаляемого фрагмента №1 (game_track_updated, см.
-    // GameBoardScreen — по прямому запросу пользователя, 2026-09-08: камера
-    // ВСЕХ игроков принудительно на фрагменте 1, там доигрывают destroy/fly
-    // анимации, ПОТОМ 8 колонок фрагмента гаснут одна за другой волной по
-    // направлению движения). `wipeGridData` — замороженный снимок СТАРОГО
-    // фрагмента 1 (см. flattenTrackSegments — тот же формат, что у обычных
-    // ячеек, `cell.col` тут ВСЕГДА локальная колонка 0..COLS-1, поскольку
-    // снимок берётся из массива с ОДНИМ сегментом). Рисуется ОТДЕЛЬНЫМ
-    // абсолютным слоем поверх обычной сетки (не переиспользует flex-раскладку
-    // самих ячеек — та рассчитана на ПОЛНЫЙ набор колонок подряд, кусок из
-    // одной колонки в ней просто "прижался" бы не туда) — та же формула
-    // x/y, что уже проверена на tokenOverlay/fragmentBoundarySegments выше.
-    // Опэсити на колонку — `wipeColumnOpacities[cell.col]`, отдельный
-    // Animated.Value на каждую из 8 колонок, управляется снаружи
-    // (GameBoardScreen, Animated.stagger).
-    const wipeOverlayCells = useMemo(() => {
-        if (!wipeGridData) return [];
-        // Та же фильтрация по видимому окну, что и у обычных ячеек
-        // (visibleCells выше) — wipeGridData несёт ВСЕ 8 колонок старого
-        // фрагмента 1 целиком, но если viewportCols < 8 (узкий портретный
-        // экран), должны попасть в кадр только те, что реально видны СЕЙЧАС
-        // (windowStart=0 на время волны, см. GameBoardScreen) — без фильтра
-        // localCol для "лишних" колонок ушёл бы в отрицательные Y/X.
-        return wipeGridData
-            .filter((cell) => cell.col >= windowStart && cell.col < windowEnd)
-            .map((cell) => {
-                const localCol = cell.col - windowStart;
-                return {
-                    ...cell,
-                    x: isPortrait ? cell.row * segmentW : localCol * segmentW + (cell.row % 2 === 0 ? segmentW / 2 : 0),
-                    y: isPortrait
-                        ? (cols - 1 - localCol) * segmentH + (cell.row % 2 === 0 ? segmentH / 2 : 0)
-                        : cell.row * segmentH,
-                };
-            });
-    }, [wipeGridData, isPortrait, segmentW, segmentH, cols, windowStart, windowEnd]);
-
-    // Обратная сторона той же волны — появление НОВОГО фрагмента 3 (был пик,
-    // теперь полный сегмент), по прямому запросу пользователя, 2026-09-08
-    // (уточнение): "плавное возникновение новых сегментов... аналогично
-    // затуханию того, который уничтожился, только наоборот" — то есть НЕ
-    // общий opacity-фейд всей доски разом (это была первая, неверная версия —
-    // видно было и по демо-виджету, и по игре одинаково), а ТОТ ЖЕ приём, что
-    // и у wipeOverlayCells: отдельный абсолютный слой, по колонке своя
-    // Animated.Value, управляется снаружи (GameBoardScreen). Разница только в
-    // содержимом слоя — здесь не картинки старой клетки (нечего показывать
-    // "старого" для только что раскрытого фрагмента), а сплошная маска цвета
-    // фона экрана (colors.bg — тот же фолбэк-цвет, что у GameBoardScreen
-    // wrapper), которая гаснет (1→0) колонка за колонкой, обнажая уже
-    // отрисованную РЕАЛЬНУЮ сетку под собой. `revealCols` — фиксированный
-    // список ГЛОБАЛЬНЫХ колонок нового фрагмента (не зависит от windowStart —
-    // просто те 8 колонок, что физически являются "новым" сегментом),
-    // `revealColumnOpacities` ключуется ТЕМ ЖЕ числом (cell.col), что и
-    // wipeColumnOpacities, для единообразия с уже проверенным паттерном.
-    const revealOverlayCells = useMemo(() => {
-        if (!revealCols || !revealCols.length) return [];
-        const cells = [];
-        // idx — позиция колонки внутри revealCols (0..revealCols.length-1),
-        // НЕ глобальный номер колонки — revealColumnOpacities приходит
-        // снаружи компактным массивом (по одному Animated.Value на каждую из
-        // 8 колонок нового фрагмента), индексировать по абсолютному cell.col
-        // потребовало бы разреженного массива на TOTAL_COLS элементов ради
-        // 8 занятых слотов, эта форма проще для вызывающей стороны.
-        revealCols.forEach((col, idx) => {
-            if (col < windowStart || col >= windowEnd) return;
-            const localCol = col - windowStart;
-            for (let row = 0; row < rows; row++) {
-                cells.push({
-                    key: `${col}-${row}`,
-                    idx,
-                    x: isPortrait ? row * segmentW : localCol * segmentW + (row % 2 === 0 ? segmentW / 2 : 0),
-                    y: isPortrait
-                        ? (cols - 1 - localCol) * segmentH + (row % 2 === 0 ? segmentH / 2 : 0)
-                        : row * segmentH,
-                });
-            }
-        });
-        return cells;
-    }, [revealCols, isPortrait, segmentW, segmentH, cols, rows, windowStart, windowEnd]);
-
+    // Хореография сдвига фрагментов трассы (game_track_updated, см.
+    // GameBoardScreen) — БЕЗ дублирующих overlay-слоёв: `columnOpacities`
+    // (объект globalCol → Animated.Value, 0=невидим/1=виден) применяется
+    // ПРЯМО К РЕАЛЬНЫМ ячейкам (laneCells.map ниже) И к токенам на них
+    // (tokenOverlay.map — см. item.col/columnOpacities[item.col] там), по
+    // одной колонке за раз — сегменты и их токены (в т.ч. Жнецы) вместе
+    // затухают/материализуются из невидимости, а не "прячутся за отдельным
+    // слоем, который потом исчезает". Используется симметрично в ОБЕИХ фазах:
+    // 'wiping' (значения идут 1→0, gridData у этого инстанса ЗАМОРОЖЕН на
+    // старом фрагменте, см. GameBoardScreen) и 'revealing' (0→1, gridData уже
+    // реальный/новый) — переписано 2026-09-10 по прямому запросу пользователя
+    // ("хочу, чтобы [фрагмент] исчезал посегментно, аналогично тому, как
+    // появляется новый") — до этого исчезновение было ЕДИНЫМ фейдом всего
+    // контента разом (`contentOpacity`, теперь убран как избыточный).
     return (
         <View
             style={[
@@ -661,6 +596,12 @@ export default function BoardGrid({
                         >
                             {laneCells.map((cell) => {
                                 const highlighted = highlightedCells?.has(cell.id) ?? false;
+                                // Прямое per-column затухание/материализация
+                                // РЕАЛЬНОЙ клетки (см. докстринг у return выше) —
+                                // columnOpacities отсутствует вне хореографии
+                                // сдвига фрагментов, тогда opacity всегда 1
+                                // (обычный рендер не затронут).
+                                const cellOpacity = columnOpacities ? (columnOpacities[cell.col] ?? 1) : 1;
                                 return (
                                     <TouchableOpacity
                                         key={cell.id}
@@ -668,6 +609,7 @@ export default function BoardGrid({
                                         style={{ width: segmentW, height: segmentH }}
                                         activeOpacity={0.75}
                                     >
+                                        <Animated.View style={{ width: segmentW, height: segmentH, opacity: cellOpacity }}>
                                         {cell.baseImage && (
                                             // Подложка (road под danger/anomaly, sand под mud, см.
                                             // lib/board#pickBaseImage) — во весь слот, БЕЗ инсета и
@@ -725,6 +667,7 @@ export default function BoardGrid({
                                                     : null),
                                             }}
                                         />
+                                        </Animated.View>
                                     </TouchableOpacity>
                                 );
                             })}
@@ -755,6 +698,11 @@ export default function BoardGrid({
                             style={[
                                 item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer,
                                 item.onTop && styles.tokenOnTop,
+                                // Токен затухает/материализуется СО СВОЕЙ колонкой во
+                                // время хореографии сдвига фрагментов (2026-09-10) —
+                                // иначе Жнец на удаляемом фрагменте снова не исчезнет
+                                // (см. докстринг у pushSolo выше).
+                                columnOpacities && { opacity: columnOpacities[item.col] ?? 1 },
                             ]}
                             windowStart={windowStart}
                         >
@@ -816,81 +764,6 @@ export default function BoardGrid({
                         <View key={seg.key} style={[styles.fragmentBoundarySegment, seg.style]} />
                     ))}
                 </View>
-
-                {wipeGridData && (
-                    <View
-                        style={[
-                            styles.wipeOverlayLayer,
-                            isPortrait
-                                ? { width: rows * segmentW, height: cols * segmentH }
-                                : { width: cols * segmentW, height: rows * segmentH },
-                        ]}
-                        pointerEvents="none"
-                    >
-                        {wipeOverlayCells.map((cell) => (
-                            <Animated.View
-                                key={cell.id}
-                                style={{
-                                    position: 'absolute',
-                                    left: cell.x,
-                                    top: cell.y,
-                                    width: segmentW,
-                                    height: segmentH,
-                                    opacity: wipeColumnOpacities?.[cell.col] ?? 1,
-                                }}
-                            >
-                                {cell.baseImage && (
-                                    <Image
-                                        source={cell.baseImage}
-                                        style={{
-                                            position: 'absolute', left: 0, top: 0, width: segmentW, height: segmentH,
-                                            resizeMode: 'stretch',
-                                        }}
-                                    />
-                                )}
-                                <Image
-                                    source={cell.image}
-                                    style={{
-                                        position: 'absolute',
-                                        left: segmentW * (SEGMENT_INSET / 2),
-                                        top: segmentH * (SEGMENT_INSET / 2),
-                                        width: segmentW * (1 - SEGMENT_INSET),
-                                        height: segmentH * (1 - SEGMENT_INSET),
-                                        resizeMode: 'stretch',
-                                        opacity: CELL_OPACITY[cell.type] ?? 0.9,
-                                    }}
-                                />
-                            </Animated.View>
-                        ))}
-                    </View>
-                )}
-
-                {revealCols && revealCols.length > 0 && (
-                    <View
-                        style={[
-                            styles.revealMaskLayer,
-                            isPortrait
-                                ? { width: rows * segmentW, height: cols * segmentH }
-                                : { width: cols * segmentW, height: rows * segmentH },
-                        ]}
-                        pointerEvents="none"
-                    >
-                        {revealOverlayCells.map((cell) => (
-                            <Animated.View
-                                key={cell.key}
-                                style={{
-                                    position: 'absolute',
-                                    left: cell.x,
-                                    top: cell.y,
-                                    width: segmentW,
-                                    height: segmentH,
-                                    backgroundColor: colors.bg,
-                                    opacity: revealColumnOpacities?.[cell.idx] ?? 0,
-                                }}
-                            />
-                        ))}
-                    </View>
-                )}
             </View>
         </View>
     );
@@ -936,18 +809,6 @@ const styles = StyleSheet.create({
     // абсолютных слоёв этого компонента.
     fragmentBoundaryLayer: { position: 'absolute', top: 0, left: 0, zIndex: 2, elevation: 2 },
     fragmentBoundarySegment: { position: 'absolute' },
-    // Волна исчезновения удаляемого фрагмента (см. wipeGridData/
-    // wipeOverlayCells выше) — ниже токенов (обычно там уже никого нет к
-    // моменту wipe, см. GameBoardScreen), выше обычной сетки/линии стыка,
-    // чтобы полностью перекрыть её замороженным снимком.
-    wipeOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 3, elevation: 3 },
-    // Маска появления нового фрагмента (см. revealOverlayCells) — ВЫШЕ вообще
-    // всего остального в этом слое, включая tokenOnTop (10): пока волна не
-    // догасла ровно до этой колонки, под маской может быть уже отрисован
-    // реальный контент (в т.ч. только что появившийся токен бегуна на новом
-    // фрагменте) — маска обязана перекрывать его целиком, не только обычные
-    // клетки/линию стыка.
-    revealMaskLayer: { position: 'absolute', top: 0, left: 0, zIndex: 12, elevation: 12 },
     tokenLayer: {
         position: 'absolute',
         alignItems: 'center',

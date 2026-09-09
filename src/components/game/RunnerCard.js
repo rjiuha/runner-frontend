@@ -178,6 +178,7 @@ export default function RunnerCard({
                             color={color}
                             size={compact ? 30 : 36}
                             selected={active}
+                            showRing={false}
                         />
 
                         <View style={styles.info}>

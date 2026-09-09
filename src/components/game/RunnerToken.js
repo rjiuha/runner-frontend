@@ -1,6 +1,6 @@
 // src/components/game/RunnerToken.js
 import React, { useEffect, useRef, useState } from 'react';
-import { Animated, Image, StyleSheet, View } from 'react-native';
+import { Animated, Image, Platform, StyleSheet, View } from 'react-native';
 import { RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { colorKeyForHex, getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
 import { colors } from '../../theme';
@@ -11,9 +11,11 @@ import { colors } from '../../theme';
 // вариантов (сравнивались в отдельном Artifact-макете), пользователь выбрал
 // именно этот: стабильное вращение пунктирной рамки, БЕЗ мерцания —
 // "силовое поле", не "дыхание". HALO_SCALE — во сколько раз ореол крупнее
-// самого кольца (не обрезается — у ring нет overflow:hidden). HALO_SPIN_MS —
+// самого кольца (не обрезается — у ring нет overflow:hidden), уменьшен на
+// ~20% (1.35→1.08) по прямому запросу пользователя тем же днём, единообразно
+// для Android и веба (платформенного сплита тут нет и не было). HALO_SPIN_MS —
 // время ОДНОГО полного оборота (360°).
-const HALO_SCALE = 1.35;
+const HALO_SCALE = 1.08;
 const HALO_SPIN_MS = 3000;
 
 // Кроссфейд между сменами source — держит ПРЕДЫДУЩУЮ картинку видимой, пока
@@ -71,9 +73,13 @@ const CROSSFADE_MS = 120;
  * осознанный эффект, не баг.
  *
  * `showRing` — цветной кружок-обводка (цвет игрока + полупрозрачная заливка).
- * По умолчанию `true` (карточка в панели — там он всё ещё нужен для быстрой
- * идентификации). На доске (BoardGrid) передаётся `false` — сама перекраска
- * уже показывает, чей это бегун, отдельная обводка избыточна. `selected`
+ * По умолчанию `false` (2026-09-09, по прямому запросу пользователя — "убери
+ * кружок контурный с плитки вообще": раньше был `true` для карточек в панели,
+ * "нужен для быстрой идентификации", но перекраска бегунов под цвет игрока
+ * (см. выше) и так уже это показывает — отдельная обводка признана избыточной
+ * ВЕЗДЕ. Ни один вызывающий код теперь не передаёт `true` — прежний
+ * default-`true` был бы мёртвым/вводящим в заблуждение, дефолт синхронизирован
+ * с фактическим использованием). `selected`
  * (сейчас выбран для хода/выстрела) — другая, никак не связанная с цветом
  * игрока сущность, рисуется независимо от `showRing`: вращающийся зелёный
  * пунктирный ореол ВОКРУГ кольца (см. HALO_SCALE/HALO_SPIN_MS выше), а не
@@ -93,7 +99,7 @@ const CROSSFADE_MS = 120;
  */
 export default function RunnerToken({
     type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
-    showRing = true, imageAlign = 'center', style,
+    showRing = false, imageAlign = 'center', style,
 }) {
     const display = RUNNER_DISPLAY[type];
     const colorKey = colorKeyForHex(color);
@@ -134,11 +140,20 @@ export default function RunnerToken({
     // false — Animated.loop сам не остановится, если не вызвать .stop()
     // явно (и не начнёт с произвольного угла при повторном выборе).
     // useNativeDriver:true — rotate-transform им поддерживается нативно (не
-    // layout-свойство); на вебе RN-Web сам откатывается на JS-анимацию, если
-    // нативный драйвер недоступен — не наш код, ничего доп. делать не нужно.
+    // layout-свойство). ТОЛЬКО native (Android/iOS) — на вебе живьём
+    // подтверждено (2026-09-09, после фикса ниже), что RN `Animated`
+    // (JS-driven, т.к. useNativeDriver на вебе не поддерживается) на этом
+    // конкретном стеке не прогрессирует вообще (проверено полностью
+    // изолированным тестом вне этого компонента — голый Animated.Value,
+    // тот же результат): значение застревает на 0 бесконечно, колбэк
+    // .start(cb) не срабатывает НИКОГДА. Причина НЕ установлена окончательно
+    // (подозрение — визуальный движок именно в среде разработки/тестирования
+    // не даёт rAF прогрессировать), но раз пользователь подтвердил статичность
+    // и в СВОЁМ реальном браузере — решение: не полагаться на JS Animated для
+    // веба вообще, см. ветку web в JSX ниже.
     const haloSpin = useRef(new Animated.Value(0)).current;
     useEffect(() => {
-        if (!selected) return undefined;
+        if (!selected || Platform.OS === 'web') return undefined;
         haloSpin.setValue(0);
         const anim = Animated.loop(
             Animated.timing(haloSpin, { toValue: 1, duration: HALO_SPIN_MS, useNativeDriver: true }),
@@ -171,22 +186,52 @@ export default function RunnerToken({
                 // из этой же сессии: явный размер надёжнее в любом случае.
                 // pointerEvents="none" — чисто декоративный слой, не должен
                 // перехватывать тапы по токену.
-                <Animated.View
-                    pointerEvents="none"
-                    style={{
-                        position: 'absolute',
-                        left: (size - haloSize) / 2,
-                        top: (size - haloSize) / 2,
-                        width: haloSize,
-                        height: haloSize,
-                        borderRadius: haloSize / 2,
-                        borderWidth: 3,
-                        borderStyle: 'dashed',
-                        borderColor: colors.success,
-                        opacity: 0.85,
-                        transform: [{ rotate: haloRotate }],
-                    }}
-                />
+                //
+                // Platform.OS==='web' — ПЛОСКИЙ View со static CSS-анимацией
+                // (styles.haloWeb, animationKeyframes), НЕ Animated.View — см.
+                // комментарий у haloSpin выше про то, почему JS Animated не
+                // прогрессирует на этом вебе. animationKeyframes — официальный
+                // API react-native-web (0.21+), тот же приём, что их
+                // собственный ActivityIndicator использует для спиннера
+                // (node_modules/react-native-web/.../ActivityIndicator) —
+                // вращение целиком на браузерном CSS-движке, JS/rAF не нужен.
+                Platform.OS === 'web' ? (
+                    <View
+                        pointerEvents="none"
+                        style={[
+                            styles.haloWeb,
+                            {
+                                position: 'absolute',
+                                left: (size - haloSize) / 2,
+                                top: (size - haloSize) / 2,
+                                width: haloSize,
+                                height: haloSize,
+                                borderRadius: haloSize / 2,
+                                borderWidth: 3,
+                                borderStyle: 'dashed',
+                                borderColor: colors.success,
+                                opacity: 0.85,
+                            },
+                        ]}
+                    />
+                ) : (
+                    <Animated.View
+                        pointerEvents="none"
+                        style={{
+                            position: 'absolute',
+                            left: (size - haloSize) / 2,
+                            top: (size - haloSize) / 2,
+                            width: haloSize,
+                            height: haloSize,
+                            borderRadius: haloSize / 2,
+                            borderWidth: 3,
+                            borderStyle: 'dashed',
+                            borderColor: colors.success,
+                            opacity: 0.85,
+                            transform: [{ rotate: haloRotate }],
+                        }}
+                    />
+                )
             )}
             <View style={imgBoxStyle}>
                 {/* Явные width/height (НЕ StyleSheet.absoluteFill) — на
@@ -243,5 +288,20 @@ const styles = StyleSheet.create({
     },
     ringBottom: {
         justifyContent: 'flex-end',
+    },
+    // Вращение ореола НА ВЕБЕ — чистый CSS `@keyframes`, тот же приём, что
+    // react-native-web использует в своём собственном ActivityIndicator.
+    // `animationKeyframes` — web-only ключ StyleSheet (react-native-web
+    // 0.21+), молча игнорируется на native — там вращает Animated.loop (см.
+    // JSX выше). Не зависит от JS Animated/rAF вообще — крутит браузерный
+    // compositor.
+    haloWeb: {
+        animationKeyframes: [{
+            '0%': { transform: 'rotate(0deg)' },
+            '100%': { transform: 'rotate(360deg)' },
+        }],
+        animationDuration: `${HALO_SPIN_MS}ms`,
+        animationTimingFunction: 'linear',
+        animationIterationCount: 'infinite',
     },
 });

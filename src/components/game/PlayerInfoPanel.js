@@ -206,6 +206,7 @@ export default function PlayerInfoPanel({
                 color={activePlayer.color}
                 size={compactColumns ? 22 : 30}
                 selected={String(reaper.id) === String(activePlayer.activeRunnerId)}
+                showRing={false}
             />
             <Text style={styles.reaperText} numberOfLines={1}>
                 {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
