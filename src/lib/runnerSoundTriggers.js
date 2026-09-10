@@ -6,7 +6,7 @@ import { RUNNER_STATUS } from '../constants/GameConstants';
  * Голосовая реплика при выборе бегуна активным (SELECT прошёл, стал
  * activeRunner игрока, см. GameBoardScreen#reduceAndLog — диффит
  * player.activeRunner до/после применения события). Только 3 обычных типа
- * (Скаут/Солдат/Атлет) имеют voice-реплики — Жнец/Мяч возвращают null, вызывающий
+ * (Скаут/Атлет/Танк) имеют voice-реплики — Жнец/Мяч возвращают null, вызывающий
  * код просто ничего не играет.
  *
  * damagedActive — 30% шанс, ТОЛЬКО если бегун сейчас повреждён (damaged/broken),
@@ -23,7 +23,7 @@ export function pickActiveSoundSource(type, status) {
     return pickRandom(set.active);
 }
 
-/** Звук выстрела ('attack'-триггер) — есть у всех 4 "стреляющих" типов (Скаут/Солдат/Атлет/Жнец). */
+/** Звук выстрела ('attack'-триггер) — есть у всех 4 "стреляющих" типов (Скаут/Атлет/Танк/Жнец). */
 export function pickShootSoundSource(type) {
     const set = RUNNER_SOUNDS[type];
     return set?.shoot?.length ? pickRandom(set.shoot) : null;
@@ -32,7 +32,7 @@ export function pickShootSoundSource(type) {
 /**
  * Звук шага ('move'-триггер, зацикленно пока идёт анимация) — заменяет
  * общий lazer.mp3, который раньше был звуком шага ДЛЯ ВСЕХ типов (2026-09-03,
- * прямой запрос пользователя). У Солдата (RUNNER_TYPES.ATHLETE) своего
+ * прямой запрос пользователя). У Атлета (RUNNER_TYPES.ATHLETE) своего
  * move.wav нет — используем тот же lazer.mp3 как фолбэк ИМЕННО для него.
  */
 export function pickMoveSoundSource(type) {

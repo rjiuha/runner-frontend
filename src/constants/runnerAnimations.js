@@ -2,7 +2,7 @@
 import { PLAYER_COLOR_HEX, RUNNER_STATUS, RUNNER_TYPES } from './GameConstants';
 
 /**
- * Ассеты анимаций бегунов — Скаут/Солдат/Атлет (RUNNER_TYPES.SPRINTER/
+ * Ассеты анимаций бегунов — Скаут/Атлет/Танк (RUNNER_TYPES.SPRINTER/
  * ATHLETE/TANK), добавлены пользователем в assets/images/runners/
  * {scout,athlet,tank}/{healthy,damaged}/. Жнец пока без набора —
  * getRunnerAnimationImage/getRunnerAvatarImage возвращают null, RunnerToken

@@ -357,8 +357,8 @@ export const RUNNER_TYPES = {
 export const RUNNER_ORDER = [RUNNER_TYPES.TANK, RUNNER_TYPES.ATHLETE, RUNNER_TYPES.SPRINTER];
 
 export const RUNNER_DISPLAY = {
-  [RUNNER_TYPES.TANK]: { label: 'Атлет', icon: require('../assets/images/runner/jaggernaut.png'), size: 3 },
-  [RUNNER_TYPES.ATHLETE]: { label: 'Солдат', icon: require('../assets/images/runner/trooper.png'), size: 2 },
+  [RUNNER_TYPES.TANK]: { label: 'Танк', icon: require('../assets/images/runner/jaggernaut.png'), size: 3 },
+  [RUNNER_TYPES.ATHLETE]: { label: 'Атлет', icon: require('../assets/images/runner/trooper.png'), size: 2 },
   [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', icon: require('../assets/images/runner/scout.png'), size: 1 },
   [RUNNER_TYPES.REAPER]: { label: 'Жнец', icon: require('../assets/images/runner/reaper.png'), size: 0 },
   // "Мяч" — ничейный (playerId всегда null), никогда не показывается в

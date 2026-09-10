@@ -10,6 +10,10 @@
 
 const DIRECTION_LABEL = { LEFT_UP: '↖', UP: '↑', RIGHT_UP: '↗', LEFT_DOWN: '↙', DOWN: '↓', RIGHT_DOWN: '↘' };
 const dir = (d) => (d == null ? '—' : DIRECTION_LABEL[d] ?? d);
+// Экспортирован отдельно — переиспользуется в GameBoardScreen.js для показа
+// результата броска столкновения в баннере "Использовать/Перебросить" (см.
+// pendingCollisionRoll там), не только в отладочном логе.
+export const directionLabel = dir;
 
 const STEP_LABEL = ['начало', 'выбор', 'усиление', 'движение', 'выстрел', 'бонус дороги'];
 const step = (s) => STEP_LABEL[s] ?? s;

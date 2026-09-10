@@ -7,7 +7,7 @@ import { DAMAGE_TOKENS, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_STATUS_LABEL } fro
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
- * Карточка одного бегуна (Атлет/Солдат/Скаут) на планшете игрока:
+ * Карточка одного бегуна (Танк/Атлет/Скаут) на планшете игрока:
  * иконка, статус, до 2 ячеек повреждений с типом жетона (см. предупреждение
  * про damageTokens в mockGameData.js — на бэке этого поля пока нет), и зона
  * для кубика хода (RunnerDiceSlot) — перетащи кубик из трея на карточку,

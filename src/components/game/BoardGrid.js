@@ -290,18 +290,67 @@ export default function BoardGrid({
             });
         };
 
+        // hold.until — НЕ ставится в момент создания холда (см. pushPair ниже) —
+        // остаётся null, ПОКА пара РЕАЛЬНО ещё сталкивается (оба всё ещё видны
+        // на одной клетке, т.е. коллизия НЕ разрешена, ждём решение игрока).
+        // Настоящий БАГ №1 (пойман живьём, 2026-09-10: "анимация коллизии
+        // бесконечно повторяется", столкновение разных размеров, где игрок
+        // должен решить "Использовать/Перебросить") — раньше `until`
+        // выставлялся СРАЗУ при создании холда, и цикл ниже безусловно удалял
+        // холд, как только оно истекало (COLLISION_MIN_HOLD_MS=600мс), ДАЖЕ
+        // ЕСЛИ пара всё ещё реально стоит на одной клетке. Таймер минимального
+        // показа стартует ТОЛЬКО в момент, когда пара ДЕЙСТВИТЕЛЬНО разъехалась
+        // (см. ниже), не раньше.
+        //
+        // Настоящий БАГ №2 (пойман живьём, 2026-09-10: "после переброса
+        // анимация коллизии кончилась чуть позже, чем началось передвижение
+        // проигравшего") — "разъехались ли уже" раньше проверялось ПО-РАЗНОМУ
+        // в двух разных местах на РАЗНОМ рендере: вот этот блок в начале
+        // функции читал `collisionHoldsRef` таким, каким он был НА КОНЕЦ
+        // ПРЕДЫДУЩЕГО рендера (until ещё null), а отдельный "стухший" цикл в
+        // самом конце функции (после главного цикла по cellRunners) только
+        // ТУТ ЖЕ обнаруживал реальный разъезд и выставлял until. На ЭТОМ
+        // переходном рендере (первом, где backend уже увёл проигравшего)
+        // heldRunnerIds ещё пуст (по старым данным) — главный цикл ниже
+        // честно находит проигравшего на его НОВОЙ реальной клетке и рисует
+        // как обычный токен (видно начавшееся движение), а "стухший" цикл в
+        // конце ТОГО ЖЕ рендера ЕЩЁ РАЗ пушит его через pushPair на старой
+        // замороженной позиции — тот же runnerId дважды в items за один
+        // рендер, и замороженная поза столкновения продолжает висеть поверх/
+        // рядом с уже реально сдвинувшимся токеном, пока heldRunnerIds не
+        // "догонит" на следующих рендерах (до ~600мс).
+        // Фикс — не ждать следующего рендера: "разъехались ли" определяется
+        // СРАЗУ по актуальному runnersByCell ЭТОГО же рендера (runnerCellOf),
+        // исключение из главного цикла И отрисовка через pushPair происходят
+        // в одном и том же проходе, без разрыва в рендер.
+        const runnerCellOf = new Map();
+        for (const [cellKey, cellRunners] of runnersByCell.entries()) {
+            for (const r of cellRunners) runnerCellOf.set(r.id, cellKey);
+        }
         const heldRunnerIds = new Set();
         for (const pairKey of Object.keys(collisionHoldsRef.current)) {
             const hold = collisionHoldsRef.current[pairKey];
-            if (now >= hold.until) { delete collisionHoldsRef.current[pairKey]; continue; }
+            const leftCell = runnerCellOf.get(hold.leftRunner.id);
+            const rightCell = runnerCellOf.get(hold.rightRunner.id);
+            const stillTogether = leftCell != null && leftCell === rightCell;
+            if (stillTogether) continue; // ещё реально вместе — главный цикл ниже сам найдёт и обновит pushPair
+
+            // Разъехались (сейчас или раньше) — держим на замороженной позиции.
+            if (hold.until == null) {
+                hold.until = now + COLLISION_MIN_HOLD_MS;
+                setTimeout(() => setHoldTick((t) => t + 1), COLLISION_MIN_HOLD_MS + 30);
+            } else if (now >= hold.until) {
+                delete collisionHoldsRef.current[pairKey];
+                continue;
+            }
             heldRunnerIds.add(hold.leftRunner.id);
             heldRunnerIds.add(hold.rightRunner.id);
+            pushPair(hold.leftRunner, hold.rightRunner, hold.x, hold.y, hold.col);
         }
-        const refreshedPairKeys = new Set();
 
         for (const [key, cellRunners] of runnersByCell.entries()) {
             const visible = cellRunners.filter((r) => !heldRunnerIds.has(r.id));
-            if (visible.length === 0) continue; // оба тут заморожены — их рисует второй проход
+            if (visible.length === 0) continue; // оба тут заморожены — уже дорисованы выше (см. runnerCellOf/heldRunnerIds)
 
             // `|`, не `-` — см. lib/board#indexRunnersByCell: значения могут
             // быть отрицательными (бегуна унесло за боковой край трассы), с
@@ -395,9 +444,13 @@ export default function BoardGrid({
                     if (aIsMover && !bIsMover) [leftRunner, rightRunner] = [b, a];
                     else if (bIsMover && !aIsMover) [leftRunner, rightRunner] = [a, b];
                     else [leftRunner, rightRunner] = a.id < b.id ? [a, b] : [b, a];
-                    hold = { until: now + COLLISION_MIN_HOLD_MS, x, y, col: globalCol, leftRunner, rightRunner };
+                    // until: null — таймер минимального показа ЕЩЁ НЕ запущен,
+                    // пара только что столкнулась и всё ещё реально вместе на
+                    // клетке (см. докстринг у heldRunnerIds выше) — запустится
+                    // позже, когда пара реально разъедется (см. runnerCellOf/
+                    // heldRunnerIds в начале функции).
+                    hold = { until: null, x, y, col: globalCol, leftRunner, rightRunner };
                     collisionHoldsRef.current[pairKey] = hold;
-                    setTimeout(() => setHoldTick((t) => t + 1), COLLISION_MIN_HOLD_MS + 30);
                     // Сигнал наружу "поза столкновения только что появилась"
                     // — GameBoardScreen играет звук столкновения РОВНО в этот
                     // момент (жалоба пользователя, 2026-09-07: раньше звук
@@ -413,7 +466,6 @@ export default function BoardGrid({
                 } else {
                     hold.x = x; hold.y = y; hold.col = globalCol; // пока реально вместе — держим позицию свежей
                 }
-                refreshedPairKeys.add(pairKey);
                 pushPair(hold.leftRunner, hold.rightRunner, x, y, globalCol);
                 continue;
             }
@@ -433,13 +485,11 @@ export default function BoardGrid({
             });
         }
 
-        // Пары, которые уже РАЗЪЕХАЛИСЬ по-настоящему (бэк увёл одного из
-        // них в другую клетку), но минимальное время показа ещё не истекло —
-        // дорисовать на замороженной (последней известной вместе) позиции.
-        for (const [pairKey, hold] of Object.entries(collisionHoldsRef.current)) {
-            if (refreshedPairKeys.has(pairKey)) continue;
-            pushPair(hold.leftRunner, hold.rightRunner, hold.x, hold.y, hold.col);
-        }
+        // Пары, разъехавшиеся ПО-НАСТОЯЩЕМУ, уже обнаружены и дорисованы
+        // ВЫШЕ, ДО этого цикла (см. runnerCellOf/heldRunnerIds в начале
+        // функции) — отдельного хвостового прохода больше не нужно, именно
+        // разрыв между "определить здесь" и "дорисовать там" на разных
+        // рендерах и был причиной бага №2 (см. комментарий выше).
 
         return items;
     }, [

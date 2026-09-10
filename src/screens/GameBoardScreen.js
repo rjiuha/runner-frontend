@@ -24,7 +24,7 @@ import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
-import { describeEvent, rawEventFallback } from '../lib/eventLog';
+import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
 import { identifyGhostPass } from '../lib/ghostPairs';
@@ -59,15 +59,20 @@ const COLLISION_STUCK_TIMEOUT = 18000;
 // решения другого игрока.
 const STUCK_ACTION_TIMEOUT = 8000;
 
-// Задержка перед показом кнопок "Использовать/Перебросить" (и перед авто-
-// разрешением "мяча", см. myBallCollision) — чтобы игрок сначала УВИДЕЛ
-// анимацию столкновения, а не решал вслепую в момент, когда extraTurnPlayer
-// только что появился. Раньше 2200мс (с большим запасом сверх
+// Задержка перед показом кнопок "Использовать/Перебросить" — чтобы игрок
+// сначала УВИДЕЛ анимацию столкновения, а не решал вслепую в момент, когда
+// extraTurnPlayer только что появился. Раньше 2200мс (с большим запасом сверх
 // SLIDE_DURATION_MS/ANIM_DURATION_MS.move ~1400мс + COLLISION_MIN_HOLD_MS в
 // BoardGrid) — по прямому запросу пользователя, 2026-09-08, сокращено:
 // 1400мс всё ещё покрывает приезд победителя (~1360-1440мс), просто без
 // лишнего запаса поверх минимального показа самой позы.
 const COLLISION_ANIM_DELAY_MS = 1400;
+
+// Collision — PHP int-backed enum на бэке (Enum/Collision.php: LOWER=1/TOP=2),
+// json_encode сериализует backed enum напрямую в число (не строку) — см.
+// pendingCollisionRoll в теле компонента.
+const COLLISION_LOWER = 1;
+const COLLISION_TOP = 2;
 
 // Хореография сдвига фрагментов трассы (game_track_updated) — по прямому
 // запросу пользователя, 2026-09-08: заход на "пик" 4-го фрагмента (см.
@@ -379,6 +384,22 @@ export default function GameBoardScreen({ route, navigation }) {
         [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound],
     );
 
+    // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
+    // пользователя, 2026-09-10: баннер "Использовать/Перебросить" не
+    // показывал, ЧТО именно произойдёт при "Использовать", решение
+    // принималось вслепую. `CollisionEvent` (бэк, read-only) публикуется
+    // РОВНО в момент броска (до того, как игрок вообще видит баннер —
+    // тот же кубик потом либо применяется, либо перебрасывается заново) —
+    // несёт `{collision, direction}`. `collision` — PHP int-backed enum
+    // (Collision::LOWER=1/TOP=2, см. Enum/Collision.php), json_encode
+    // сериализует backed enum в его value НАПРЯМУЮ (число, не строка) — см.
+    // COLLISION_LOWER/COLLISION_TOP ниже. Не пытаемся определить, ЧЕЙ именно
+    // бегун сдвинется ("мой"/"чужой") — у backend'а есть задокументированный
+    // (см. CLAUDE.md, находка 2026-09-10) баг с перепутанным порядком
+    // lowRunner/topRunner в одной из веток `runnerCollision()`, так что
+    // категория "меньший/больший бегун" (сама по себе корректна — это прямое
+    // значение броска) безопаснее конкретного "твой/их".
+    const [pendingCollisionRoll, setPendingCollisionRoll] = useState(null);
     const onTransient = useCallback(
         (e) => {
             pushLog(e);
@@ -387,6 +408,9 @@ export default function GameBoardScreen({ route, navigation }) {
             if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
             const ghostPass = identifyGhostPass(e, gameRef);
             if (ghostPass) ghostPairs.record(ghostPass.key);
+            if (e.event === 'collision') {
+                setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
+            }
         },
         [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, ghostPairs.record],
     );
@@ -521,22 +545,6 @@ export default function GameBoardScreen({ route, navigation }) {
     }, [game?.status, myPlayer?.status, startRetryNonce]);
     const retryAutoStart = useCallback(() => setStartRetryNonce((n) => n + 1), []);
 
-    // "Мяч" (RUNNER_TYPES.BALL) — неконтролируемая коллизия (побочный эффект
-    // вскрытия danger-клетки, RunnerBallInitService на бэке), в отличие от
-    // контролируемой (игрок сам зашёл на клетку с чужим бегуном). Бэк гонит
-    // ОБЕ через один и тот же Collision::handle() и ОДИНАКОВО выставляет
-    // extraTurnPlayer текущему игроку — отличить их можно только по наличию
-    // в game.runners ничейного бегуна type==='ball' (playerId==null, бэк
-    // никогда не вызывает setPlayer() на нём). Прямого id, КАКОЙ именно мяч
-    // относится к текущей коллизии, бэк не отдаёт — но раз мяч создаётся
-    // непосредственно перед коллизией и потребляется её разрешением, сам
-    // факт присутствия ЛЮБОГО мяча, пока висит extraTurnPlayer, уже
-    // достаточно надёжный сигнал. По прямому запросу пользователя,
-    // 2026-09-02: у "мяча" выбора "принять/перебросить" быть не должно
-    // вообще — см. handleCollision-эффект ниже.
-    const myBallCollision = myCollision
-        && runners.some((r) => r.type === RUNNER_TYPES.BALL && r.playerId == null);
-
     // Можно ли сейчас выбрать этого бегуна дропом кубика — и обычным способом
     // (dice==null), и накатом (dice===0, уже полностью проехал в этом раунде).
     // Накат разрешён, только если среди СВОИХ бегунов не осталось неперемещённых
@@ -651,6 +659,19 @@ export default function GameBoardScreen({ route, navigation }) {
     const currentTurnPlayer = useMemo(
         () => gamePlayers.find((p) => String(p.id) === String(game?.playerOrder)) ?? null,
         [gamePlayers, game?.playerOrder],
+    );
+
+    // Победитель столкновения (см. myCollision выше) — тот, чей бегун крупнее
+    // (бэк выставляет extraTurnPlayer именно ему, независимо от того, с кем
+    // столкновение — с другим игроком или с "мячом", см. RunnerType::getSize()
+    // на бэке, read-only: TANK=3/ATHLETE=2/SPRINTER=1/BALL=1 — "мяч" никогда
+    // структурно не может оказаться крупной стороной, так что extraTurnPlayer
+    // в столкновении с ним всегда указывает на реального игрока). Показываем
+    // его имя в баннере — по прямому запросу пользователя, чтобы было видно,
+    // КТО именно получил выбор "использовать/перебросить", не только сам факт.
+    const collisionWinnerPlayer = useMemo(
+        () => players.find((p) => String(p.id) === String(game?.extraTurnPlayer)) ?? null,
+        [players, game?.extraTurnPlayer],
     );
 
     // game_finish (см. GameFinishService::run() на бэке, read-only) — статус
@@ -993,7 +1014,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // только ни у кого больше нет активной 'move'-позы. 2026-09-03: раньше
     // тут всегда был общий lazer.mp3 для ВСЕХ типов — теперь свой звук на
     // каждый тип (pickMoveSoundSource, см. lib/runnerSoundTriggers.js — для
-    // Солдата/ATHLETE, у которого своего move.wav нет, функция сама вернёт
+    // Атлета/ATHLETE, у которого своего move.wav нет, функция сама вернёт
     // тот же lazer.mp3 как фолбэк). movingRunnerType — тип ПЕРВОГО найденного
     // бегуна с kind==='move' (на практике почти всегда ровно один — если
     // когда-нибудь окажется больше одного одновременно, играем звук только
@@ -1363,6 +1384,14 @@ export default function GameBoardScreen({ route, navigation }) {
         return () => clearTimeout(t);
     }, [game?.extraTurnPlayer]);
 
+    // pendingCollisionRoll (см. onTransient выше) должен пропасть, как только
+    // текущая коллизия разрешилась (extraTurnPlayer снова null) — иначе при
+    // СЛЕДУЮЩЕЙ коллизии баннер на мгновение показал бы результат ПРЕДЫДУЩЕГО
+    // броска, пока новый CollisionEvent ещё не долетел.
+    useEffect(() => {
+        if (game?.extraTurnPlayer == null) setPendingCollisionRoll(null);
+    }, [game?.extraTurnPlayer]);
+
     // Звук столкновения — играет ВСЕМ клиентам партии сразу, как только
     // BoardGrid реально показывает коллизионную позу (не когда
     // game.extraTurnPlayer только появился, см. COLLISION_ANIM_DELAY_MS
@@ -1377,27 +1406,6 @@ export default function GameBoardScreen({ route, navigation }) {
         collisionSound.seekTo(0);
         collisionSound.play();
     }, [collisionSound]);
-
-    // "Мяч" (см. myBallCollision выше) — неконтролируемая коллизия, у игрока
-    // не должно быть выбора вообще (прямой запрос пользователя, 2026-09-02).
-    // Бэк всё равно требует явный вызов /collision, чтобы снять
-    // extraTurnPlayer и применить уже брошенный результат — форсируем
-    // accept=true САМИ, без участия игрока, как только анимация столкновения
-    // успела показаться (тот же collisionDecisionReady, что и у ручного
-    // баннера). ballAutoResolvedRef — защита от повторного вызова: после
-    // runAction busy на мгновение снова станет false, а СЕРВЕРНОЕ
-    // extraTurnPlayer=null может прийти через Mercure с задержкой — без
-    // этой защиты эффект успел бы выстрелить второй раз в этом окне.
-    const ballAutoResolvedRef = useRef(false);
-    useEffect(() => {
-        if (game?.extraTurnPlayer == null) ballAutoResolvedRef.current = false;
-    }, [game?.extraTurnPlayer]);
-    useEffect(() => {
-        if (myBallCollision && collisionDecisionReady && !busy && !ballAutoResolvedRef.current) {
-            ballAutoResolvedRef.current = true;
-            handleCollision(true);
-        }
-    }, [myBallCollision, collisionDecisionReady, busy, handleCollision]);
 
     if (!game) {
         return (
@@ -1636,23 +1644,43 @@ export default function GameBoardScreen({ route, navigation }) {
 
             {game.extraTurnPlayer != null && (
                 <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]}>
-                    <Text style={styles.collisionText}>
-                        {/* Столкновение происходит в любом случае — отказаться от него
-                            нельзя (по правилам выбор есть только у более крупного бегуна
-                            при столкновении разных размеров, см. myCollision выше). Выбор
-                            здесь — использовать уже брошенный кубик или перебросить его
-                            заново, а не "принять/отклонить само столкновение" — прежняя
-                            формулировка вводила в заблуждение (жалоба пользователя,
-                            2026-09-02). Для "мяча" (myBallCollision) выбора нет вообще —
-                            это неконтролируемая коллизия (danger-клетка), не столкновение
-                            с чужим бегуном, разрешается сама (см. эффект выше). */}
-                        {myBallCollision
-                            ? 'Столкновение с препятствием…'
-                            : myCollision
-                                ? 'Столкновение! Использовать бросок или перебросить?'
-                                : 'Ожидаем реакцию игрока на столкновение…'}
-                    </Text>
-                    {myCollision && !myBallCollision && !busy && collisionDecisionReady && (
+                    <View style={styles.collisionTextColumn}>
+                        <Text style={styles.collisionText}>
+                            {/* Столкновение происходит в любом случае — отказаться от него
+                                нельзя (по правилам выбор есть только у более крупного бегуна
+                                при столкновении разных размеров, см. myCollision выше). Выбор
+                                здесь — использовать уже брошенный кубик или перебросить его
+                                заново, а не "принять/отклонить само столкновение" — прежняя
+                                формулировка вводила в заблуждение (жалоба пользователя,
+                                2026-09-02). Имя победителя (collisionWinnerPlayer) — по
+                                прямому запросу пользователя, 2026-09-10: раньше баннер не
+                                говорил, КТО именно получил выбор, только сам факт "ожидаем
+                                реакцию игрока". Столкновение с "мячом" (препятствием) теперь
+                                идёт ЭТИМ ЖЕ путём, без отдельной ветки — по прямому запросу
+                                пользователя, у победителя (тот, чей бегун крупнее — мяч
+                                никогда структурно не бывает крупной стороной, см. коммент у
+                                collisionWinnerPlayer) должен быть тот же выбор, что и при
+                                столкновении с другим игроком. */}
+                            {myCollision
+                                ? `Столкновение! У ${collisionWinnerPlayer?.name ?? 'вас'} бегун крупнее — использовать бросок или перебросить?`
+                                : `Столкновение! У ${collisionWinnerPlayer?.name ?? 'игрока'} бегун крупнее — ждём решение…`}
+                        </Text>
+                        {/* Результат УЖЕ брошенного кубика (см. pendingCollisionRoll выше) —
+                            по прямому запросу пользователя, 2026-09-10: "не вижу результат
+                            первого столкновения, чтобы принять решение". Показывается ВСЕМ
+                            (не только решающему) синхронно с кнопками — до этого момента
+                            решение принималось вслепую. "меньший/больший" — категория
+                            размера из самого броска (Collision::LOWER/TOP), не "мой/чужой"
+                            бегун — см. коммент у pendingCollisionRoll про известный баг
+                            порядка lowRunner/topRunner на бэке в одной из веток. */}
+                        {pendingCollisionRoll && collisionDecisionReady && (
+                            <Text style={styles.collisionRollText}>
+                                Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} бегун
+                                сдвинется {directionLabel(pendingCollisionRoll.direction)}
+                            </Text>
+                        )}
+                    </View>
+                    {myCollision && !busy && collisionDecisionReady && (
                         <>
                             <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.collisionBtn} />
                             <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.collisionBtn} />
@@ -1923,7 +1951,14 @@ const styles = StyleSheet.create({
         backgroundColor: colors.bgLight, borderRadius: radius.pill,
         paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
     },
+    // flex:1 — забирает всю ширину, оставшуюся ПОСЛЕ кнопок (которые не
+    // должны сжиматься), не наоборот — иначе длинный текст с результатом
+    // броска мог бы вытолкнуть кнопки за пределы баннера.
+    collisionTextColumn: { flex: 1 },
     collisionText: { color: colors.textOnDark, fontSize: font.tiny },
+    // Чуть тусклее основного текста — вспомогательная информация, не
+    // основной вопрос баннера.
+    collisionRollText: { color: colors.textOnDark, fontSize: font.tiny, opacity: 0.75, marginTop: 2 },
     collisionBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md },
     turnBanner: {
         position: 'absolute', top: spacing.md, left: spacing.md, zIndex: 20, elevation: 20,

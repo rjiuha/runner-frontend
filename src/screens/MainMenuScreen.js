@@ -9,7 +9,7 @@ import ProfileCard from '../components/menu/ProfileCard';
 import CreateLobbyModal from '../components/menu/CreateLobbyModal';
 import { useAuth } from '../hooks/useAuth';
 import { lobbyApi } from '../api/lobby';
-import { runnerGameApi } from '../api/runnerGame';
+import { meApi } from '../api/me';
 import { ROUTES } from '../navigation/routes';
 import { notify, confirm } from '../lib/notify';
 import { GAME_STATUS } from '../constants/GameConstants';
@@ -23,20 +23,29 @@ const RESUMABLE_GAME_STATUSES = [GAME_STATUS.WAITING, GAME_STATUS.ACTIVE];
 export default function MainMenuScreen({ navigation }) {
   const { user, signOut } = useAuth();
 
-  const [activeLobby, setActiveLobby] = useState(null);
   const [creating, setCreating] = useState(false);
-  // true только до первого резолва проверки активной игры — дальше не блокируем
-  // повторные фокусы экрана (как и лобби-баннер ниже, который не блокирует рендер).
+  // true только до первого резолва проверки активной игры/лобби — дальше не
+  // блокируем повторные фокусы экрана.
   const [checkingSession, setCheckingSession] = useState(true);
   const bootCheckedRef = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
 
   /**
    * useFocusEffect, а не useEffect: проверять активное лобби/партию нужно
-   * при КАЖДОМ возврате на экран (вышел из лобби → баннер должен исчезнуть),
-   * а не только при первом монтировании. Игра приоритетнее лобби: если у
-   * пользователя есть активная партия (например, после reload/relaunch
-   * посреди игры), сразу уводим туда, а не показываем меню с баннером.
+   * при КАЖДОМ возврате на экран (например, вышел из лобби вручную — а
+   * бэк по-прежнему считает его активным, значит сразу вернуть обратно), а
+   * не только при первом монтировании. Один вызов GET /api/me (см.
+   * AuthController::me() на бэке, read-only) вместо прежних ДВУХ отдельных
+   * (runnerGameApi.get()+lobbyApi.mine()) — по прямому запросу пользователя,
+   * "после авторизации фронт вызывал api/me". Игра приоритетнее лобби: если
+   * у пользователя есть активная партия (например, после reload/relaunch
+   * посреди игры), сразу уводим туда. Лобби теперь ТОЖЕ безусловный редирект
+   * (не баннер с ручным тапом, как было раньше) — по прямому требованию
+   * "если есть лобби - то в лобби", той же формулировкой, что и для игры.
+   * `me.lobby`/`me.game` — слим-объекты {id,status} (НЕ полный toArray()) —
+   * этого достаточно, чтобы решить, КУДА направить, полные данные подтянет
+   * сам целевой экран (LobbyScreen/GameBoardScreen) через свой обычный
+   * live-коннект.
    */
   useFocusEffect(
       useCallback(() => {
@@ -44,24 +53,24 @@ export default function MainMenuScreen({ navigation }) {
 
         (async () => {
           try {
-            const game = await runnerGameApi.get();
-            if (!cancelled && game && RESUMABLE_GAME_STATUSES.includes(game.status)) {
+            const me = await meApi.get();
+            if (cancelled) return;
+
+            if (me.game && RESUMABLE_GAME_STATUSES.includes(me.game.status)) {
               navigation.reset({
                 index: 0,
-                routes: [{ name: ROUTES.RUNNER_GAME, params: { gameId: game.id } }],
+                routes: [{ name: ROUTES.RUNNER_GAME, params: { gameId: me.game.id } }],
               });
               return;
             }
-          } catch {
-            // «нет активной игры» бек отдаёт ошибкой — для нас это норма, идём смотреть лобби
-          }
 
-          try {
-            const lobby = await lobbyApi.mine();
-            if (!cancelled) setActiveLobby(lobby);
+            if (me.lobby) {
+              navigation.navigate(ROUTES.LOBBY, { lobbyId: me.lobby.id });
+              return;
+            }
           } catch {
-            // «нет лобби» бек отдаёт ошибкой — тоже норма, а не сбой
-            if (!cancelled) setActiveLobby(null);
+            // Сбой самого /api/me (сеть и т.п.) — не блокируем меню, просто
+            // не редиректим никуда, пользователь может попробовать вручную.
           } finally {
             if (!cancelled && !bootCheckedRef.current) {
               bootCheckedRef.current = true;
@@ -112,16 +121,6 @@ export default function MainMenuScreen({ navigation }) {
   return (
       <Screen dark={false} scroll contentContainerStyle={styles.content}>
         <ProfileCard username={user?.username} />
-
-        {/* Возврат в лобби, если игрок из него выпал */}
-        {activeLobby && (
-            <MenuCard
-                title="🔄 Вернуться в лобби"
-                description={`Игроков: ${activeLobby.players.length}/${activeLobby.maxPlayers}`}
-                color={colors.success}
-                onPress={() => navigation.navigate(ROUTES.LOBBY, { lobbyId: activeLobby.id })}
-            />
-        )}
 
         <MenuCard
             title="🏁 Создать лобби"
