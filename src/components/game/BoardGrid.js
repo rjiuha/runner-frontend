@@ -205,6 +205,24 @@ export default function BoardGrid({
     const collisionHoldsRef = useRef({});
     const [holdTick, setHoldTick] = useState(0);
 
+    // Последняя известная КЛЕТКА (не пиксельная позиция — та меняется вместе
+    // с windowStart) каждого бегуна, { [runnerId]: {segment,positionX,
+    // positionY} } — по прямому запросу пользователя, 2026-09-11: "бегуна
+    // отбросило по диагонали за пределы карты — при отбросе телепортировало
+    // на соседний сегмент, только потом сработала анимация fly". Настоящая
+    // причина: когда клетка бегуна временно оказывается ВНЕ видимого окна
+    // прокрутки (windowStart/windowEnd ниже), главный цикл просто пропускает
+    // его (`continue`) — он выпадает из `items`, React размонтирует его
+    // `RunnerTokenSlide`, тот теряет свою внутреннюю память "откуда ехать"
+    // (`prevPos`, см. компонент). Когда бегун на следующем хопе (multi-hop
+    // отброс — Stupor на бэке шлёт НЕСКОЛЬКО runner_save подряд, по одному на
+    // каждый хоп, см. CLAUDE.md) снова попадает в окно, компонент
+    // монтируется заново — по коду это "первый показ", слайда не будет,
+    // токен просто ставится на новое место (видимо как телепорт). Мутируется
+    // ПРЯМО в теле useMemo (тот же приём, что уже applied для
+    // collisionHoldsRef выше) — не должен сам по себе триггерить ре-рендер.
+    const lastKnownCellRef = useRef({});
+
     // Один элемент — один бегун (см. комментарий выше про плоский список и
     // стабильный key=runner.id). Коллизия (2 бегуна на клетке) — особый
     // случай с двумя доп. требованиями пользователя, 2026-09-01:
@@ -239,13 +257,33 @@ export default function BoardGrid({
         // 09-10: токены обязаны затухать/материализовываться СО СВОЕЙ
         // колонкой, а не отдельно от сетки — иначе Жнец на удаляемом фрагменте
         // снова не исчезнет, как уже было пойманным багом раньше).
-        const pushSolo = (runner, sx, sy, sCol, onTop = false) => {
+        // Пиксельная позиция клетки (segment/positionX/positionY) в ТЕКУЩЕМ
+        // окне прокрутки — та же формула, что и у основного цикла ниже,
+        // вынесена сюда, чтобы её можно было применить и к УЖЕ НЕ видимой
+        // (старой, запомненной в lastKnownCellRef) клетке ради enterFrom.
+        // Специально НЕ клэмпится к видимому диапазону — если клетка сейчас
+        // вне окна, результат будет отрицательным/за пределами сетки, и
+        // RunnerTokenSlide как раз это использует, чтобы токен визуально
+        // "въехал" оттуда, где он реально был.
+        const cellPixelPos = (segment, positionX, positionY) => {
+            const gCol = segment * BOARD_LAYOUT.COLS + positionX;
+            const lCol = gCol - windowStart;
+            return {
+                x: isPortrait ? positionY * segmentW : lCol * segmentW + (positionY % 2 === 0 ? segmentW / 2 : 0),
+                y: isPortrait
+                    ? (cols - 1 - lCol) * segmentH + (positionY % 2 === 0 ? segmentH / 2 : 0)
+                    : positionY * segmentH,
+            };
+        };
+
+        const pushSolo = (runner, sx, sy, sCol, onTop = false, enterFrom = undefined) => {
             items.push({
                 runnerId: runner.id, runner, x: sx, y: sy, col: sCol,
                 boxW: segmentW, boxH: segmentH, tokenSize,
                 anim: runnerAnims?.[runner.id] ?? null,
                 anchorBottom: true,
                 onTop,
+                enterFrom,
             });
         };
         // Бокс пары — ТОТ ЖЕ segmentW×segmentH, что у соло-токена, НИКОГДА
@@ -261,7 +299,7 @@ export default function BoardGrid({
         // Теперь бокс константен при любом переходе — разъезд между двумя
         // персонажами даёт ЧИСТО transform:translateX на самом RunnerToken
         // (innerOffsetX ниже), размер бокса это не трогает вообще.
-        const pushPair = (leftRunner, rightRunner, cellX, cellY, cellCol) => {
+        const pushPair = (leftRunner, rightRunner, cellX, cellY, cellCol, enterFromLeft = undefined, enterFromRight = undefined) => {
             // Расстояние от центра клетки до центра КАЖДОГО токена — уменьшено
             // на 7% (жалоба пользователя, 2026-09-01, третий заход: "чуть
             // сблизь анимации коллизии"). Трогаем именно offset, не pairGap
@@ -280,6 +318,7 @@ export default function BoardGrid({
                 // BOARD_TOKEN_IMAGE_SCALE выше, 2026-09-09).
                 anchorBottom: true,
                 innerOffsetX: -offset,
+                enterFrom: enterFromLeft,
             });
             items.push({
                 runnerId: rightRunner.id, runner: rightRunner,
@@ -287,6 +326,7 @@ export default function BoardGrid({
                 anim: { kind: 'collision', side: 'west' },
                 anchorBottom: true,
                 innerOffsetX: offset,
+                enterFrom: enterFromRight,
             });
         };
 
@@ -358,6 +398,24 @@ export default function BoardGrid({
             const [segStr, rowStr, colStr] = key.split('|');
             const segment = Number(segStr);
             const row = Number(rowStr);
+            const positionX = Number(colStr);
+
+            // Запоминаем последнюю известную клетку каждого бегуна ДО того,
+            // как решаем, попадает ли она в видимое окно (см. докстринг у
+            // lastKnownCellRef выше) — и ЧИТАЕМ старое значение (если было)
+            // ПЕРЕД перезаписью, чтобы использовать его как enterFrom для
+            // RunnerTokenSlide, если этот бегун сейчас монтируется заново
+            // после временного выпадения из `items`. Если позиция не
+            // менялась (bегун и на прошлом, и на этом рендере был тут же),
+            // enterFrom совпадёт с текущим x/y — RunnerTokenSlide его просто
+            // проигнорирует (используется только на ПЕРВОМ рендере компонента).
+            const enterFromByRunnerId = {};
+            for (const r of visible) {
+                const prevKnown = lastKnownCellRef.current[r.id];
+                if (prevKnown) enterFromByRunnerId[r.id] = cellPixelPos(prevKnown.segment, prevKnown.positionX, prevKnown.positionY);
+                lastKnownCellRef.current[r.id] = { segment, positionX, positionY: row };
+            }
+
             // BOARD_LAYOUT.COLS (всегда 8 — реальных колонок в сегменте
             // данных с бэка), НЕ проп cols (viewportCols — сколько колонок
             // видно на экране прямо сейчас, динамическая величина в
@@ -365,9 +423,9 @@ export default function BoardGrid({
             // BOARD_LAYOUT.COLS только пока viewportCols случайно был = 8,
             // и токены уезжали в сторону, как только видно меньше/больше 8
             // колонок (жалоба пользователя, 2026-08-31 — "персонажи вне
-            // сегментов дороги"). colStr (positionX бегуна) — локальная
-            // колонка ВНУТРИ сегмента данных, а не внутри вьюпорта.
-            const globalCol = segment * BOARD_LAYOUT.COLS + Number(colStr);
+            // сегментов дороги"). positionX — локальная колонка ВНУТРИ
+            // сегмента данных, а не внутри вьюпорта.
+            const globalCol = segment * BOARD_LAYOUT.COLS + positionX;
             if (globalCol < windowStart || globalCol >= windowEnd) continue;
             const localCol = globalCol - windowStart;
             const x = isPortrait
@@ -390,9 +448,9 @@ export default function BoardGrid({
                 // GameBoardScreen) — так что если конкретно ЭТА пара помечена
                 // как ghost, рисуем solo/solo безусловно, минуя даже
                 // isArriving-проверку ниже (тот же приём, что у Жнеца).
-                if (ghostPairs?.has(ghostPairKey(a.id, b.id, segment, Number(colStr), row))) {
-                    pushSolo(a, x, y, globalCol);
-                    pushSolo(b, x, y, globalCol);
+                if (ghostPairs?.has(ghostPairKey(a.id, b.id, segment, positionX, row))) {
+                    pushSolo(a, x, y, globalCol, false, enterFromByRunnerId[a.id]);
+                    pushSolo(b, x, y, globalCol, false, enterFromByRunnerId[b.id]);
                     continue;
                 }
                 // Жнец на клетке — это НЕ столкновение, а ловушка (бегун,
@@ -416,8 +474,8 @@ export default function BoardGrid({
                     // порядок в дереве для двух соседних абсолютных View
                     // (см. комментарий у pushSolo).
                     const [victim, reaper] = a.type === RUNNER_TYPES.REAPER ? [b, a] : [a, b];
-                    pushSolo(victim, x, y, globalCol);
-                    pushSolo(reaper, x, y, globalCol, true);
+                    pushSolo(victim, x, y, globalCol, false, enterFromByRunnerId[victim.id]);
+                    pushSolo(reaper, x, y, globalCol, true, enterFromByRunnerId[reaper.id]);
                     continue;
                 }
                 const isArriving = (r) => {
@@ -425,8 +483,8 @@ export default function BoardGrid({
                     return kind === 'move' || kind === 'fly';
                 };
                 if (isArriving(a) || isArriving(b)) {
-                    pushSolo(a, x, y, globalCol);
-                    pushSolo(b, x, y, globalCol);
+                    pushSolo(a, x, y, globalCol, false, enterFromByRunnerId[a.id]);
+                    pushSolo(b, x, y, globalCol, false, enterFromByRunnerId[b.id]);
                     continue;
                 }
 
@@ -466,7 +524,8 @@ export default function BoardGrid({
                 } else {
                     hold.x = x; hold.y = y; hold.col = globalCol; // пока реально вместе — держим позицию свежей
                 }
-                pushPair(hold.leftRunner, hold.rightRunner, x, y, globalCol);
+                pushPair(hold.leftRunner, hold.rightRunner, x, y, globalCol,
+                    enterFromByRunnerId[hold.leftRunner.id], enterFromByRunnerId[hold.rightRunner.id]);
                 continue;
             }
 
@@ -482,6 +541,7 @@ export default function BoardGrid({
                 // native одинаково (см. BOARD_TOKEN_IMAGE_SCALE выше,
                 // 2026-09-09).
                 anchorBottom: true,
+                enterFrom: enterFromByRunnerId[topRunner.id],
             });
         }
 
@@ -755,6 +815,7 @@ export default function BoardGrid({
                                 columnOpacities && { opacity: columnOpacities[item.col] ?? 1 },
                             ]}
                             windowStart={windowStart}
+                            enterFrom={item.enterFrom}
                         >
                             <RunnerToken
                                 type={item.runner.type}

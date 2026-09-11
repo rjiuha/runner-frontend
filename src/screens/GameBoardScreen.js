@@ -1662,8 +1662,8 @@ export default function GameBoardScreen({ route, navigation }) {
                                 collisionWinnerPlayer) должен быть тот же выбор, что и при
                                 столкновении с другим игроком. */}
                             {myCollision
-                                ? `Столкновение! У ${collisionWinnerPlayer?.name ?? 'вас'} бегун крупнее — использовать бросок или перебросить?`
-                                : `Столкновение! У ${collisionWinnerPlayer?.name ?? 'игрока'} бегун крупнее — ждём решение…`}
+                                ? `Столкновение — ${collisionWinnerPlayer?.name ?? 'вы'} крупнее`
+                                : `Столкновение — ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`}
                         </Text>
                         {/* Результат УЖЕ брошенного кубика (см. pendingCollisionRoll выше) —
                             по прямому запросу пользователя, 2026-09-10: "не вижу результат
@@ -1675,15 +1675,14 @@ export default function GameBoardScreen({ route, navigation }) {
                             порядка lowRunner/topRunner на бэке в одной из веток. */}
                         {pendingCollisionRoll && collisionDecisionReady && (
                             <Text style={styles.collisionRollText}>
-                                Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} бегун
-                                сдвинется {directionLabel(pendingCollisionRoll.direction)}
+                                Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} → {directionLabel(pendingCollisionRoll.direction)}
                             </Text>
                         )}
                     </View>
                     {myCollision && !busy && collisionDecisionReady && (
                         <>
-                            <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.collisionBtn} />
-                            <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.collisionBtn} />
+                            <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.collisionBtn} textStyle={styles.collisionBtnText} />
+                            <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.collisionBtn} textStyle={styles.collisionBtnText} />
                         </>
                     )}
                     {!myCollision && showStuckRefresh && (
@@ -1959,7 +1958,12 @@ const styles = StyleSheet.create({
     // Чуть тусклее основного текста — вспомогательная информация, не
     // основной вопрос баннера.
     collisionRollText: { color: colors.textOnDark, fontSize: font.tiny, opacity: 0.75, marginTop: 2 },
-    collisionBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md },
+    // Уменьшено по прямому запросу пользователя, 2026-09-11 — диалог
+    // столкновения на Android был слишком крупным (минимальная высота
+    // Button по умолчанию — 52, шрифт 18 жирным; тут явно меньше через
+    // collisionBtnText).
+    collisionBtn: { minHeight: 26, paddingVertical: 2, paddingHorizontal: spacing.sm },
+    collisionBtnText: { fontSize: font.tiny, fontWeight: '600' },
     turnBanner: {
         position: 'absolute', top: spacing.md, left: spacing.md, zIndex: 20, elevation: 20,
         maxWidth: 280, backgroundColor: colors.bgLight, borderRadius: radius.md,

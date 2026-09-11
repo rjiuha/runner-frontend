@@ -111,17 +111,20 @@ export default function RunnerToken({
 
     const imgBoxStyle = { width: size * imageScale, height: size * imageScale };
 
-    // Своя crossfade-логика (см. CROSSFADE_MS выше) — НЕ завязана на
-    // Platform.OS намеренно (тот же выбор, что и в 2026-09-01: на вебе смена
-    // <img> src мгновенна, лишний 120мс opacity-бленд там просто незаметен,
-    // отдельная ветка ради no-op не нужна). prevSourceRef хранит source
-    // ПРЕДЫДУЩЕГО рендера — как только он реально меняется, старое значение
-    // переезжает в fadingSource (рисуется под новым, статично, без анимации
-    // само по себе) и гаснет по мере роста opacity у нового поверх него.
+    // Своя crossfade-логика (см. CROSSFADE_MS выше) — ТОЛЬКО native
+    // (2026-09-11, по прямому запросу пользователя: на вебе смена <img> src
+    // и так мгновенна, причина кроссфейда — пауза декодирования нового gif
+    // именно на Android/Fresco — там просто не воспроизводится, лишний
+    // Animated-цикл на каждую смену анимации не имеет смысла запускать).
+    // prevSourceRef хранит source ПРЕДЫДУЩЕГО рендера — как только он реально
+    // меняется, старое значение переезжает в fadingSource (рисуется под
+    // новым, статично, без анимации само по себе) и гаснет по мере роста
+    // opacity у нового поверх него.
     const prevSourceRef = useRef(source);
     const [fadingSource, setFadingSource] = useState(null);
     const fadeOpacity = useRef(new Animated.Value(1)).current;
     useEffect(() => {
+        if (Platform.OS === 'web') return;
         if (prevSourceRef.current === source) return;
         setFadingSource(prevSourceRef.current);
         prevSourceRef.current = source;

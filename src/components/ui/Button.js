@@ -22,6 +22,7 @@ export default function Button({
                                    loading = false,
                                    disabled = false,
                                    style,
+                                   textStyle,
                                }) {
     const v = VARIANTS[variant] ?? VARIANTS.primary;
     // Пока идёт запрос — кнопка обязана быть заблокирована,
@@ -38,7 +39,7 @@ export default function Button({
             {loading ? (
                 <ActivityIndicator color={v.fg} />
             ) : (
-                <Text style={[styles.label, { color: v.fg }]}>{title}</Text>
+                <Text style={[styles.label, { color: v.fg }, textStyle]}>{title}</Text>
             )}
         </TouchableOpacity>
     );
