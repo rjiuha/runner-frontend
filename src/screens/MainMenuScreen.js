@@ -7,6 +7,7 @@ import Screen from '../components/ui/Screen';
 import MenuCard from '../components/menu/MenuCard';
 import ProfileCard from '../components/menu/ProfileCard';
 import CreateLobbyModal from '../components/menu/CreateLobbyModal';
+import LoadingTip from '../components/ui/LoadingTip';
 import { useAuth } from '../hooks/useAuth';
 import { lobbyApi } from '../api/lobby';
 import { meApi } from '../api/me';
@@ -114,6 +115,7 @@ export default function MainMenuScreen({ navigation }) {
     return (
         <View style={styles.splash}>
           <ActivityIndicator size="large" color={colors.primary} />
+          <LoadingTip />
         </View>
     );
   }

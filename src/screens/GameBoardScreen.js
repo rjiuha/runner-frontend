@@ -14,6 +14,7 @@ import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
 import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
+import LoadingTip from '../components/ui/LoadingTip';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
@@ -30,7 +31,9 @@ import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/run
 import { identifyGhostPass } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
 import { getRunnerAnimationImage, colorKeyForHex } from '../constants/runnerAnimations';
-import { COLLISION_SOUND, FALLBACK_MOVE_SOUND } from '../constants/runnerSounds';
+import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
+import { COMMENT_SOUNDS } from '../constants/commentSounds';
+import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
 import { notify } from '../lib/notify';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
@@ -272,6 +275,30 @@ export default function GameBoardScreen({ route, navigation }) {
     const shootSound = useAudioPlayer(null);
     const startSound = useAudioPlayer(null);
     const collisionSound = useAudioPlayer(COLLISION_SOUND);
+    // "Комментарии" (2026-09-11) — звуки результатов из assets/sounds/comments/
+    // (старт партии/уничтожение/выбывание/столкновение/аномалия), см.
+    // constants/commentSounds.js. Один общий канал на все 5 категорий — тот
+    // же компромисс, что и у voice/shoot/start чуть выше (если два разных
+    // комментария выпадут почти одновременно, второй оборвёт первый через
+    // .replace() — событие редкое, специально не усложняем множеством
+    // каналов). collisionSound (существующий, .wav вне comments/) теперь
+    // приглушена вдвое и играет ЦИКЛИЧНО, пока видна поза столкновения (см.
+    // handleCollisionPoseStart/End ниже), а не один раз коротким хлопком —
+    // по прямому запросу пользователя.
+    const commentSound = useAudioPlayer(null);
+    useEffect(() => {
+        collisionSound.loop = true;
+        collisionSound.volume = 0.5;
+    }, [collisionSound]);
+    // Считает ОДНОВРЕМЕННО активные пары столкновений (на доске теоретически
+    // может быть больше одной сразу) — collisionSound останавливаем, только
+    // когда ПОСЛЕДНЯЯ пара реально разошлась, не раньше.
+    const activeCollisionPosesRef = useRef(0);
+    // "start"-комментарий должен прозвучать РОВНО один раз за всю партию —
+    // единственный надёжный сигнал "это самый первый ход" — событие
+    // player_roll_move_dice, бэк шлёт его ТОЛЬКО из StepBeginService::start()
+    // (никогда из startNewRound()/resetPlayer()), см. commentSounds.js.
+    const gameStartSoundPlayedRef = useRef(false);
     const playOneShot = useCallback((player, source) => {
         if (!source) return;
         player.replace(source);
@@ -326,9 +353,16 @@ export default function GameBoardScreen({ route, navigation }) {
                 // момента, когда токен реально начинал двигаться визуально).
                 const type = extra?.runnerType ?? gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(startSound, pickStartSoundSource(type));
+            } else if (kind === 'destroyed') {
+                // Любой способ уничтожения (выстрел/стена/ловушка Жнеца/
+                // отброс за край и т.п.) — этот kind триггерится ТОЛЬКО на
+                // реальное ухудшение статуса до 'destroyed', см. statusWorsened
+                // в lib/runnerAnimTriggers.js, повторов на один и тот же
+                // бегун быть не должно.
+                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed));
             }
         },
-        [runnerAnim.trigger, playOneShot, shootSound, startSound],
+        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound],
     );
 
     // Логируем И версионные события (через reduce — вызывается ровно по разу
@@ -339,6 +373,14 @@ export default function GameBoardScreen({ route, navigation }) {
         (state, e) => {
             pushLog(e);
             handleVersionedRunnerAnimEvent(state, e, triggerWithSound);
+            // "Игра стартовала, кубики розданы" — см. gameStartSoundPlayedRef
+            // выше за тем, почему именно player_roll_move_dice (а не
+            // game_active/step_begin) — это событие приходит N раз (по разу
+            // на игрока), звук должен прозвучать один раз на всю партию.
+            if (e.event === 'player_roll_move_dice' && !gameStartSoundPlayedRef.current) {
+                gameStartSoundPlayedRef.current = true;
+                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.start));
+            }
             // Лечение возвращает бегуна к healthy — стираем локально
             // накопленные жетоны повреждений, иначе кружки останутся
             // закрашенными вопреки уже здоровому статусу.
@@ -356,6 +398,19 @@ export default function GameBoardScreen({ route, navigation }) {
                 if (type) runnerDamageTokens.recordToken(worsenedRunnerId, type);
             }
             const nextState = runnerGameReducer(state, e);
+            // Игрок выбыл (player_out) — играет у ВСЕХ клиентов партии, КРОМЕ
+            // случая, когда это выбывание ПОСЛЕДНЕГО соперника и партия тут
+            // же завершилась победой оставшегося (пользователь прямо попросил
+            // не дублировать этот момент отдельным "выбыл", раз сразу следом
+            // придёт game_finish). Считаем активных игроков ПОСЛЕ применения
+            // патча (nextState — этот игрок уже OUT): если остался РОВНО 1 —
+            // по бэковой логике (PlayerOutService::run(), read-only) это и
+            // есть терминальный случай (count($activePlayers)===1 → сразу
+            // GameFinishService) — иначе игра продолжается, звук нужен.
+            if (e.event === 'player_out') {
+                const activeCount = (nextState.gamePlayers ?? []).filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
+                if (activeCount !== 1) playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
+            }
             // Voice-реплика — НЕ в момент выбора бегуна (SELECT), а когда для
             // него РЕАЛЬНО появляются зелёные клетки хода, то есть шаг игрока
             // становится MOVE (по прямому запросу пользователя, 2026-09-07:
@@ -381,7 +436,7 @@ export default function GameBoardScreen({ route, navigation }) {
         // (новый литерал {tokensByRunner,...}), это пересоздавало бы
         // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
         // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
-        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound],
+        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound],
     );
 
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
@@ -411,8 +466,14 @@ export default function GameBoardScreen({ route, navigation }) {
             if (e.event === 'collision') {
                 setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
             }
+            // Опасная клетка вскрылась как Аномалия (чёрная дыра, см.
+            // handleTransientRunnerAnimEvent#case 'anomaly' выше — тот же
+            // транзиент уже триггерит визуальный 'fly', тут только звук).
+            if (e.event === 'anomaly') {
+                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
+            }
         },
-        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, ghostPairs.record],
+        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, ghostPairs.record, playOneShot, commentSound],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -544,6 +605,40 @@ export default function GameBoardScreen({ route, navigation }) {
         });
     }, [game?.status, myPlayer?.status, startRetryNonce]);
     const retryAutoStart = useCallback(() => setStartRetryNonce((n) => n + 1), []);
+
+    // Фолбэк для 'start'-комментария (см. gameStartSoundPlayedRef выше) —
+    // живая жалоба пользователя, 2026-09-12: звук иногда не проигрывался,
+    // хотя доска уже отрисовалась с дорогой и персонажами. Причина — НЕ
+    // транзиентность события (`player_roll_move_dice` версионное, см.
+    // PlayerRollMoveDiceEvent на бэке, read-only), а гонка в
+    // useMercure#sync(): если REST-снапшот резолвится ПОСЛЕ того, как весь
+    // стартовый залп (game_active→player_roll_move_dice×N→step_begin) уже
+    // применился на бэке, снапшот приходит СРАЗУ с game.status=ACTIVE и
+    // назначенными кубиками — sync() считает "всё старше снапшота уже
+    // учтено в нём" и НЕ прогоняет эти события через reduce() повторно
+    // (см. useMercure.js#sync — `pending.filter(e => e.version > ver)`).
+    // Для ДАННЫХ это не проблема (снапшот и так корректен), а вот
+    // одноразовый звук, живущий ТОЛЬКО внутри reduce()/reduceAndLog,
+    // безвозвратно теряется. Особенно вероятно ИМЕННО для игрока, чей
+    // собственный /start-вызов (см. autoStart выше) запускает переход —
+    // его GET-снапшот и его же POST /start могут разрешиться в любом
+    // порядке относительно друг друга.
+    // Фикс — НЕ ждём конкретное событие, сравниваем game.status ДО/ПОСЛЕ:
+    // если КОМПОНЕНТ реально видел WAITING (сидел на спиннере "Начинаем
+    // партию…"), а теперь видит ACTIVE — это точно настоящее начало партии
+    // для этой сессии экрана, не reconnect посреди уже идущей игры (при
+    // reconnect WAITING в этом же mount не наблюдался бы вообще — снапшот
+    // сразу пришёл бы с ACTIVE на первом же рендере). Гейт тем же
+    // gameStartSoundPlayedRef — если событие всё-таки успело сработать
+    // первым (обычный, не-гоночный случай), повторно звук не звучит.
+    const sawWaitingRef = useRef(false);
+    useEffect(() => {
+        if (game?.status === GAME_STATUS.WAITING) sawWaitingRef.current = true;
+        if (game?.status === GAME_STATUS.ACTIVE && sawWaitingRef.current && !gameStartSoundPlayedRef.current) {
+            gameStartSoundPlayedRef.current = true;
+            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.start));
+        }
+    }, [game?.status, playOneShot, commentSound]);
 
     // Можно ли сейчас выбрать этого бегуна дропом кубика — и обычным способом
     // (dice==null), и накатом (dice===0, уже полностью проехал в этом раунде).
@@ -701,6 +796,28 @@ export default function GameBoardScreen({ route, navigation }) {
         const peek = flattenPeekColumn(game?.trackNext, rows, BOARD_LAYOUT.COLS * BOARD_LAYOUT.TOTAL_BLOCKS);
         return [...base, ...peek];
     }, [game?.trackBegin, game?.trackMiddle, game?.trackEnd, game?.trackNext, rows, cols]);
+
+    // Живая жалоба, 2026-09-12: во время исчезновения старого фрагмента 1 на
+    // нём же оказывались и "жители" фрагмента 2 — причина в TrackService::
+    // shift() (бэк, read-only): при сдвиге ВСЕ выжившие на middle/end
+    // получают segment-1 и свой runner_save (перенумерация, они физически не
+    // двигались), а по глобальной колонке (segment*cols+positionX) это
+    // ровно то же окно [0,8), что и замороженный кадр старого фрагмента 1
+    // (камера на нём всю settling/wiping, см. boardGridEl ниже). Раз
+    // паразитная 'fly'-анимация для этого случая уже подавлена (см.
+    // lib/runnerAnimTriggers.js), у перенумерованных выживших НЕТ записи в
+    // runnerAnim.visualPositions — фильтруем `runners` именно по её
+    // наличию: только те, кто реально доигрывает анимацию ухода с
+    // фрагмента 1 (destroy/bomb/жнец-в-резерв), должны быть видны на
+    // замороженном кадре. Хук объявлен ЗДЕСЬ (до ранних `return` ниже по
+    // файлу — `!game`/WAITING), а не рядом с остальной track-shift-логикой
+    // у boardGridEl — иначе он звался бы условно и ловил "Rendered more
+    // hooks than during the previous render" на переходе между этими
+    // early-return состояниями и обычным рендером доски.
+    const trackShiftRunners = useMemo(
+        () => runners.filter((r) => runnerAnim.visualPositions[r.id] != null),
+        [runners, runnerAnim.visualPositions],
+    );
 
     // game_track_updated (см. runnerGameReducer#'game_track_updated' и
     // TrackService::shift()/Move::handle() на бэке, read-only) — заход
@@ -1038,6 +1155,53 @@ export default function GameBoardScreen({ route, navigation }) {
         }
     }, [movingRunnerType, moveSound]);
 
+    // Фоновая музыка активной игровой сессии (2026-09-11) — отдельный,
+    // отдельно управляемый канал (не переиспользует voice/shoot/start —
+    // те гоняют короткие one-shot реплики поверх, музыка должна крутиться
+    // непрерывно и независимо от них). BACKGROUND_MUSIC_TRACKS — статический
+    // список (см. constants/backgroundMusic.js за тем, почему не директория
+    // целиком) из assets/sounds/background_music/, пока там один файл —
+    // пользователь обещал донабрать ещё, механизм уже рассчитан на N треков.
+    // MUSIC_VOLUME приглушена относительно дефолтных 1.0 у звуковых
+    // эффектов, чтобы музыка не перекрикивала голосовые реплики/выстрелы.
+    // Настоящая причина "громкость не применяется" (живая жалоба
+    // пользователя, 2026-09-12): на вебе expo-audio's `.replace()`
+    // (AudioPlayerWeb, node_modules/expo-audio/src/AudioPlayer.web.ts)
+    // выкидывает старый <audio>-элемент и создаёт НОВЫЙ (`_createMediaElement()`)
+    // — громкость сбрасывается на дефолтные 1.0 браузера, `musicSound.volume`,
+    // установленная один раз в отдельном mount-эффекте, тут же перекрывалась
+    // ПЕРВЫМ ЖЕ вызовом playRandomTrack(). Фикс — выставлять volume ПОСЛЕ
+    // КАЖДОГО .replace(), не один раз при монтировании.
+    const MUSIC_VOLUME = 0.1;
+    const musicSound = useAudioPlayer(null);
+    const musicTrackIndexRef = useRef(-1);
+    const playRandomTrack = useCallback(() => {
+        const idx = pickRandomTrackIndex(musicTrackIndexRef.current);
+        musicTrackIndexRef.current = idx;
+        musicSound.replace(BACKGROUND_MUSIC_TRACKS[idx]);
+        musicSound.volume = MUSIC_VOLUME;
+        musicSound.play();
+    }, [musicSound]);
+    // Как только текущий трек доигрывает до конца — сразу следующий
+    // случайный (без паузы/тишины между ними, обычный плейлист-шаффл).
+    useEffect(() => {
+        const sub = musicSound.addListener('playbackStatusUpdate', (status) => {
+            if (status.didJustFinish) playRandomTrack();
+        });
+        return () => sub.remove();
+    }, [musicSound, playRandomTrack]);
+    // Играет ТОЛЬКО пока партия реально идёт (ACTIVE) — молчит в
+    // ready-up-спиннере (WAITING) и на экране победителя (FINISH).
+    useEffect(() => {
+        if (game?.status === GAME_STATUS.ACTIVE) {
+            playRandomTrack();
+        } else {
+            musicSound.pause();
+            musicSound.seekTo(0);
+            musicTrackIndexRef.current = -1;
+        }
+    }, [game?.status, playRandomTrack, musicSound]);
+
     // Watchdog "мой ход завис после успешного действия" (2026-09-07, живая
     // жалоба — "иногда после выбора персонажа ход не продолжается, помогает
     // только рестарт приложения на Android"). Бэковый баг, из-за которого
@@ -1112,9 +1276,22 @@ export default function GameBoardScreen({ route, navigation }) {
     // варианту, так что делаем этот тап сами. autoRollMoveKeyRef — защита от
     // повторного вызова: эффект перезапускается на каждое изменение
     // activeRunner (новый объект на каждое live-обновление), а не только
-    // когда РЕАЛЬНО появляется новая накат-возможность — ключ
-    // "runnerId:rollDice" уникален на каждую конкретную попытку наката
-    // (rollDice меняется между накатами, см. RunnerRollService на бэке).
+    // когда РЕАЛЬНО появляется новая накат-возможность.
+    // Ключ — "runnerId:rollMoves", НЕ "runnerId:rollDice" (было так до
+    // 2026-09-12) — живая жалоба пользователя: "первый накат сработал
+    // автоматом, второй пришлось прожимать рукой" (2 наката доступны,
+    // остался 1 бегун). Причина: `rollDice` — это 1-based ИНДЕКС кубика
+    // игрока (тот же слот, что и в обычном SELECT, см.
+    // StepSelectionService::handleRoll — `$runner->setRollDice($dto->dice)`),
+    // НЕ уникальный номер попытки — если игрок оба раза тащит кубик из
+    // ОДНОГО и того же слота (например, остался последний свободный), у
+    // второго наката `rollDice` совпадает с первым, ключ получается тем же
+    // самым, и эффект молча пропускает автотап, думая, что уже обработал
+    // именно эту попытку. `rollMoves`, наоборот, — счётчик РЕАЛЬНО
+    // ВЫПОЛНЕННЫХ накатов, `RunnerRollService::run()` (бэк, read-only)
+    // увеличивает его на 1 СТРОГО при завершении каждого наката — на
+    // момент SELECT следующего наката это уже другое число, коллизия
+    // невозможна независимо от того, какой кубик перетащил игрок.
     const autoRollMoveKeyRef = useRef(null);
     useEffect(() => {
         if (!myTurn || busy || myStep !== PLAYER_STEP.MOVE || !activeRunner) return;
@@ -1123,7 +1300,7 @@ export default function GameBoardScreen({ route, navigation }) {
             autoRollMoveKeyRef.current = null;
             return;
         }
-        const key = `${activeRunner.id}:${activeRunner.rollDice}`;
+        const key = `${activeRunner.id}:${activeRunner.rollMoves}`;
         if (autoRollMoveKeyRef.current === key) return;
         autoRollMoveKeyRef.current = key;
         runAction(() => runnerGameApi.move(null, 'UP'), { skipStuckWatch: true });
@@ -1403,8 +1580,27 @@ export default function GameBoardScreen({ route, navigation }) {
     // автоматически разрешённых (одинаковый размер/Мяч) — оба идут через
     // ОДИН и тот же механизм пары в BoardGrid.
     const handleCollisionPoseStart = useCallback(() => {
-        collisionSound.seekTo(0);
-        collisionSound.play();
+        // Одноразовый комментарий (collision_1.wav) — независимо от того,
+        // сколько пар столкнулось одновременно, звучит на КАЖДУЮ новую пару
+        // (та же логика, что и раньше была тут единственной операцией).
+        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+        // collisionSound (зацикленная, вдвое приглушённая, см. useEffect у
+        // объявления канала выше) — стартует только на ПЕРВОЙ одновременно
+        // активной паре, остальные лишь увеличивают счётчик (см.
+        // handleCollisionPoseEnd ниже — останавливаем только когда счётчик
+        // возвращается к 0, не раньше).
+        activeCollisionPosesRef.current += 1;
+        if (activeCollisionPosesRef.current === 1) {
+            collisionSound.seekTo(0);
+            collisionSound.play();
+        }
+    }, [collisionSound, playOneShot, commentSound]);
+    const handleCollisionPoseEnd = useCallback(() => {
+        activeCollisionPosesRef.current = Math.max(0, activeCollisionPosesRef.current - 1);
+        if (activeCollisionPosesRef.current === 0) {
+            collisionSound.pause();
+            collisionSound.seekTo(0);
+        }
     }, [collisionSound]);
 
     if (!game) {
@@ -1414,6 +1610,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 <View style={styles.center}>
                     <ActivityIndicator size="large" color={colors.primary} />
                     <Text style={styles.statusText}>{STATUS_LABEL[status] ?? ''}</Text>
+                    <LoadingTip />
                 </View>
             </View>
         );
@@ -1437,6 +1634,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     <Text style={styles.statusText}>
                         Начинаем партию… готовы {readyCount} из {gamePlayers.length}
                     </Text>
+                    <LoadingTip />
                     {autoStartError && (
                         <>
                             <Text style={styles.errorText}>{autoStartError}</Text>
@@ -1553,13 +1751,15 @@ export default function GameBoardScreen({ route, navigation }) {
     // руками в двух местах, см. runnerAnims/currentTurnPlayerId ниже).
     // gridData во время фаз 'settling' И 'wiping' подменяется на замороженный
     // снимок старого фрагмента 1 (trackShiftGridData) — камера уже там
-    // (jumpTo(0) в эффекте выше), а бегуны/анимации остаются ЖИВЫМИ
-    // (runners/runnerAnims/runnerVisualPositions не трогаем), так что
+    // (jumpTo(0) в эффекте выше), runners — тоже на trackShiftRunners (см.
+    // выше, только реально уходящие с фрагмента 1), так что
     // destroy/fly у тех, кто там стоял, доигрывают поверх ПРАВИЛЬНОЙ (старой)
-    // земли. Держим заморозку ВСЮ 'wiping' (не только 'settling', как было
-    // раньше) — волна (columnOpacities ниже) должна гасить именно этот
-    // старый снимок в пустоту, а не открывать под собой уже переключившийся
-    // на новый фрагмент боевой рендер (см. докстринг эффекта выше).
+    // земли, а посторонние (перенумерованные выжившие с других фрагментов)
+    // не примешиваются. Держим заморозку ВСЮ 'wiping' (не только 'settling',
+    // как было раньше) — волна (columnOpacities ниже) должна гасить именно
+    // этот старый снимок в пустоту, а не открывать под собой уже
+    // переключившийся на новый фрагмент боевой рендер (см. докстринг
+    // эффекта выше).
     const boardGridEl = (
         <BoardGrid
             gridData={
@@ -1575,7 +1775,11 @@ export default function GameBoardScreen({ route, navigation }) {
             orientation="portrait"
             containerWidth={roadContainerW}
             containerHeight={roadContainerH}
-            runners={runners}
+            runners={
+                (trackShiftPhase === 'settling' || trackShiftPhase === 'wiping')
+                    ? trackShiftRunners
+                    : runners
+            }
             playerColorById={playerColorById}
             selectedRunnerId={activeRunner?.id ?? null}
             highlightedCells={highlightedCells}
@@ -1585,6 +1789,7 @@ export default function GameBoardScreen({ route, navigation }) {
             hiddenRunnerIds={runnerAnim.hiddenIds}
             ghostPairs={ghostPairs.pairs}
             onCollisionPoseStart={handleCollisionPoseStart}
+            onCollisionPoseEnd={handleCollisionPoseEnd}
             reaperPreview={
                 pendingReaperPlacement
                     ? {

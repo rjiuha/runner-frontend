@@ -5,6 +5,7 @@ import { useFocusEffect } from '@react-navigation/native';
 
 import Screen from '../components/ui/Screen';
 import Button from '../components/ui/Button';
+import LoadingTip from '../components/ui/LoadingTip';
 import { lobbyApi } from '../api/lobby';
 import { ROUTES } from '../navigation/routes';
 import { notify } from '../lib/notify';
@@ -90,6 +91,7 @@ export default function LobbySearchScreen({ navigation }) {
     return (
         <Screen dark={false} contentContainerStyle={styles.center}>
           <ActivityIndicator size="large" color={colors.info} />
+          <LoadingTip dark={false} />
         </Screen>
     );
   }

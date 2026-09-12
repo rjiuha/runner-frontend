@@ -86,6 +86,7 @@ export default function BoardGrid({
     hiddenRunnerIds = null,
     ghostPairs = null,
     onCollisionPoseStart = null,
+    onCollisionPoseEnd = null,
     reaperPreview = null,
     columnOpacities = null,
     onCellPress,
@@ -381,6 +382,14 @@ export default function BoardGrid({
                 setTimeout(() => setHoldTick((t) => t + 1), COLLISION_MIN_HOLD_MS + 30);
             } else if (now >= hold.until) {
                 delete collisionHoldsRef.current[pairKey];
+                // Симметрично onCollisionPoseStart — сигнал "поза столкновения
+                // ЭТОЙ пары только что реально закончилась" (2026-09-11, для
+                // цикличного /sounds/collision.wav в GameBoardScreen — тот
+                // должен звучать РОВНО пока видна поза, не дольше и не
+                // короче). setTimeout(...,0) — та же причина, что и у
+                // onCollisionPoseStart чуть выше: не дёргаем чужой
+                // setState-колбэк прямо в теле useMemo.
+                if (onCollisionPoseEnd) setTimeout(() => onCollisionPoseEnd(pairKey), 0);
                 continue;
             }
             heldRunnerIds.add(hold.leftRunner.id);
@@ -555,7 +564,7 @@ export default function BoardGrid({
     }, [
         runnersByCell, windowStart, windowEnd, cols, segmentW, segmentH, isPortrait,
         currentTurnPlayerId, pairGap, pairSize, tokenSize, runnerAnims, holdTick,
-        onCollisionPoseStart, ghostPairs,
+        onCollisionPoseStart, onCollisionPoseEnd, ghostPairs,
     ]);
 
     // Локальное превью "прилёта" Жнеца ИЗ-ЗА КРАЯ карты (2026-09-07, по

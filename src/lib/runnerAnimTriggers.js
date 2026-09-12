@@ -126,6 +126,20 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         if (prev.segment === patch.segment && prev.positionX === patch.positionX && prev.positionY === patch.positionY) {
             return; // позиция не изменилась — событие не про перемещение (очки/статус и т.п.)
         }
+        // Чистая перенумерация сегмента при сдвиге фрагментов трассы
+        // (TrackService::shift(), бэк, read-only — при удалении фрагмента 1
+        // ВСЕ выжившие на middle/end получают segment-1 и свой runner_save,
+        // хотя физически не сдвинулись ни на клетку) — X и Y те же, поменялся
+        // ТОЛЬКО номер фрагмента. Обычный игровой ход/отброс ВСЕГДА меняет
+        // positionX и/или positionY (это единственный способ сменить segment
+        // по правилам движения) — значит "оба неизменны, а segment другой"
+        // однозначно опознаёт именно этот случай, не совпадение. Без этой
+        // проверки ветка ниже классифицировала бы такое как "не сосед" →
+        // отброс → 'fly' через полдоски, хотя бегун на самом деле стоял на
+        // месте (живая жалоба пользователя, 2026-09-12: во время исчезновения
+        // старого фрагмента 1 на нём оказывались и жители фрагмента 2 —
+        // именно эта паразитная 'fly'-анимация их туда "переносила").
+        if (prev.positionX === patch.positionX && prev.positionY === patch.positionY) return;
 
         const neighbor = forwardNeighbors(prev).find(
             (n) => n.segment === patch.segment && n.positionX === patch.positionX && n.positionY === patch.positionY,

@@ -4,6 +4,7 @@ import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 
 import Screen from '../components/ui/Screen';
 import Button from '../components/ui/Button';
+import LoadingTip from '../components/ui/LoadingTip';
 import { lobbyApi } from '../api/lobby';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
@@ -86,6 +87,7 @@ export default function LobbyScreen({ route, navigation }) {
             <Screen contentContainerStyle={styles.center}>
                 <ActivityIndicator size="large" color={colors.primary} />
                 <Text style={styles.status}>{STATUS_LABEL[status] ?? ''}</Text>
+                <LoadingTip />
             </Screen>
         );
     }
