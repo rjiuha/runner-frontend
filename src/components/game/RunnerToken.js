@@ -47,11 +47,15 @@ const CROSSFADE_MS = 120;
  * отдельный статичный ассет "avatar" вместо игровых анимаций — не связан с
  * `anim` вообще.
  *
- * Для типов без набора анимаций (constants/runnerAnimations — сейчас Скаут/
- * Атлет/Танк, Жнец пока без набора) обе функции возвращают null, и
- * рендерится старая статичная иконка (RUNNER_DISPLAY[type].icon) — новый тип
- * бегуна получает анимации просто добавлением записи в RUNNER_ANIMATION_SETS,
- * без правок этого компонента.
+ * Для типа без набора анимаций (constants/runnerAnimations —
+ * RUNNER_ANIMATION_SETS не содержит запись для него) `display` будет `null`,
+ * компонент рендерит пустоту (см. `if (!display) return null` ниже) — новый
+ * тип бегуна получает анимации просто добавлением записи в
+ * RUNNER_ANIMATION_SETS, без правок этого компонента. Старый статичный
+ * фолбэк на `RUNNER_DISPLAY[type].icon` убран 2026-09-12 (папка ассетов
+ * удалена, а сам фолбэк был мёртв — у ВСЕХ зарегистрированных типов уже есть
+ * полный набор анимаций, `getRunnerAnimationImage`/`getRunnerAvatarImage`
+ * никогда не возвращают null для них).
  *
  * **Перекраска под цвет игрока — готовые ассеты, не рантайм-tintColor**
  * (2026-09-02): раньше каждая анимация была ПАРОЙ {base, mask} — два
@@ -104,7 +108,7 @@ export default function RunnerToken({
     const display = RUNNER_DISPLAY[type];
     const colorKey = colorKeyForHex(color);
     const source = display
-        ? (avatar ? getRunnerAvatarImage(type, status, colorKey) : getRunnerAnimationImage(type, status, anim, colorKey)) ?? display.icon
+        ? (avatar ? getRunnerAvatarImage(type, status, colorKey) : getRunnerAnimationImage(type, status, anim, colorKey))
         : null;
 
     if (!display) return null;

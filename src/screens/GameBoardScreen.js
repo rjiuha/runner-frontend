@@ -20,10 +20,11 @@ import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
+import { useDeathCollisions } from '../hooks/useDeathCollisions';
 import { useGhostPairs } from '../hooks/useGhostPairs';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
-import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands } from '../lib/board';
+import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, cellTypeAt } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
@@ -253,6 +254,26 @@ export default function GameBoardScreen({ route, navigation }) {
     // solo-токена (idle рядом), не коллизионную позу, по прямому запросу
     // пользователя, 2026-09-09.
     const ghostPairs = useGhostPairs();
+    // "Смерть" на клетках wall (2026-09-12) — сигнал конкретной клетке
+    // проиграть свою collision-позу (см. BoardGrid#DeathTile), см.
+    // reduceAndLog#'runner_destroy' ниже.
+    const deathCollisions = useDeathCollisions();
+    // Гейт для GameFinishModal (см. hasDeathAnimPlaying ниже) — живая жалоба,
+    // 2026-09-12: "диалог победы на мгновение появился и исчез, потом
+    // проигралась анимация, потом диалог снова появился (уже валидно)".
+    // Причина — `hasDeathAnimPlaying` смотрел ТОЛЬКО на `runnerAnim.anims`
+    // (то, что УЖЕ реально играется прямо сейчас) — а между `runner_destroy`
+    // (game.status уже FINISH) и РЕАЛЬНЫМ стартом acid/burn-позы есть
+    // задержка, если бегун в этот момент ещё доигрывал предыдущий шаг
+    // очереди (move/fly) — тогда acid/burn просто встаёт в очередь,
+    // `anims` его ещё не отражает, гейт ложно открыт. Этот Set — runnerId,
+    // для которых МЫ УЖЕ ЗНАЕМ, что вот-вот заиграет acid/burn (заполняется
+    // в reduceAndLog в момент детекции wall-death, до реального старта позы),
+    // держит гейт закрытым С МОМЕНТА ОБНАРУЖЕНИЯ, а не с момента, когда
+    // очередь до него реально дойдёт. Очищается в момент, когда поза РЕАЛЬНО
+    // стартует (deathOnStart в triggerWithSound ниже) — дальше эстафету
+    // берёт уже `anims` через обычный hasDeathAnimPlaying.
+    const [pendingDeathRunnerIds, setPendingDeathRunnerIds] = useState(() => new Set());
     // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен для
     // anomaly и для жетонов повреждений — оба берут activeRunner текущего
     // ходящего игрока, ни то ни другое событие не несёт id бегуна само по
@@ -336,8 +357,37 @@ export default function GameBoardScreen({ route, navigation }) {
             // визуальное), так что размещавший игрок иначе вообще не
             // услышал бы этот эффект.
             const suppressAnim = kind === 'start' && Date.now() < reaperStartSkipUntilRef.current;
+            // Синхронизация Death-тайла с терминальной позой бегуна
+            // (2026-09-12, живая жалоба — "collision у death начал играть
+            // сразу, бегун не успел дойти... когда у death анимация
+            // кончилась, у бегуна ещё продолжалась"). Раньше `deathCollisions
+            // .trigger` вызывался НЕЗАВИСИМО, сразу по событию runner_destroy
+            // (см. reduceAndLog) — не дожидаясь, пока очередь АНИМАЦИЙ самого
+            // бегуна реально дойдёт до его acid/burn-шага (тот мог стоять в
+            // очереди позади ещё играющего 'move'/'fly', см. useRunnerAnimations).
+            // Теперь — onStart на runnerAnim.trigger (см. хук), вызывается
+            // РОВНО когда шаг реально начинает играть, cellId выводится из
+            // того же toPosition, что несёт сам шаг (тот же формат ключа,
+            // что раньше собирался отдельно в reduceAndLog).
+            const deathOnStart = (kind === 'acid' || kind === 'burn') && extra?.toPosition
+                ? () => {
+                    deathCollisions.trigger(
+                        `${extra.toPosition.segment}-${extra.toPosition.positionY}-${extra.toPosition.positionX}`,
+                    );
+                    // Поза РЕАЛЬНО стартовала — дальше `hasDeathAnimPlaying`
+                    // отражает её через `runnerAnim.anims` сам, эстафету
+                    // с pendingDeathRunnerIds (см. его докстринг выше) можно
+                    // передать.
+                    setPendingDeathRunnerIds((prev) => {
+                        if (!prev.has(runnerId)) return prev;
+                        const next = new Set(prev);
+                        next.delete(runnerId);
+                        return next;
+                    });
+                }
+                : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
-            else runnerAnim.trigger(runnerId, kind, extra);
+            else runnerAnim.trigger(runnerId, kind, deathOnStart ? { ...extra, onStart: deathOnStart } : extra);
             if (kind === 'attack') {
                 const type = gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(shootSound, pickShootSoundSource(type));
@@ -353,16 +403,20 @@ export default function GameBoardScreen({ route, navigation }) {
                 // момента, когда токен реально начинал двигаться визуально).
                 const type = extra?.runnerType ?? gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(startSound, pickStartSoundSource(type));
-            } else if (kind === 'destroyed') {
+            } else if (kind === 'destroyed' || kind === 'acid' || kind === 'burn') {
                 // Любой способ уничтожения (выстрел/стена/ловушка Жнеца/
                 // отброс за край и т.п.) — этот kind триггерится ТОЛЬКО на
                 // реальное ухудшение статуса до 'destroyed', см. statusWorsened
                 // в lib/runnerAnimTriggers.js, повторов на один и тот же
-                // бегун быть не должно.
+                // бегун быть не должно. 'acid'/'burn' (2026-09-12, по прямому
+                // запросу) — терминальная поза смерти от Death на клетке wall,
+                // это ТОЖЕ уничтожение (см. lib/runnerAnimTriggers.js — оба
+                // kind заменяют обычный 'destroyed', отдельного вызова с
+                // kind==='destroyed' для этого случая никогда не будет).
                 playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed));
             }
         },
-        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound],
+        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, deathCollisions.trigger],
     );
 
     // Логируем И версионные события (через reduce — вызывается ровно по разу
@@ -372,6 +426,26 @@ export default function GameBoardScreen({ route, navigation }) {
     const reduceAndLog = useCallback(
         (state, e) => {
             pushLog(e);
+            // Детекция ДО handleVersionedRunnerAnimEvent (см. докстринг у
+            // pendingDeathRunnerIds выше) — порядок важен: если очередь
+            // анимаций у этого бегуна сейчас пуста, acid/burn стартует
+            // СИНХРОННО прямо внутри вызова handleVersionedRunnerAnimEvent
+            // ниже (advanceQueue вызывает onStart сразу же), и deathOnStart
+            // уже успеет убрать runnerId из этого Set к моменту, когда
+            // управление сюда вернётся — если добавлять ПОСЛЕ вызова, эта
+            // ранняя отписка произошла бы РАНЬШЕ подписки, и флаг завис бы
+            // навсегда. Проверка ТА ЖЕ, что уже используется в
+            // lib/runnerAnimTriggers.js для решения "acid или burn вместо
+            // destroyed" — продублирована намеренно (та же причина, что и у
+            // deathCollisions выше: разные, независимые потребители одного
+            // факта).
+            if (e.event === 'runner_destroy') {
+                const prevRunner = state?.runners?.find((r) => r.id === e.runnerId?.id);
+                if (prevRunner?.segment != null
+                    && cellTypeAt(state, prevRunner.segment, prevRunner.positionX, prevRunner.positionY) === 'wall') {
+                    setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
+                }
+            }
             handleVersionedRunnerAnimEvent(state, e, triggerWithSound);
             // "Игра стартовала, кубики розданы" — см. gameStartSoundPlayedRef
             // выше за тем, почему именно player_roll_move_dice (а не
@@ -383,10 +457,22 @@ export default function GameBoardScreen({ route, navigation }) {
             }
             // Лечение возвращает бегуна к healthy — стираем локально
             // накопленные жетоны повреждений, иначе кружки останутся
-            // закрашенными вопреки уже здоровому статусу.
+            // закрашенными вопреки уже здоровому статусу. Заодно триггерим
+            // 'heal'-анимацию (2026-09-12, новый ассет пользователя) — по
+            // прямому запросу проигрывается МЕЖДУ damaged_idle и healthy_idle
+            // (getRunnerAnimationImage сам достаёт heal-ассет из damaged-
+            // бакета, независимо от уже применённого нового статуса).
             if (e.event === 'ability_heal' && e.runner?.id != null) {
                 runnerDamageTokens.clearRunner(e.runner.id);
+                triggerWithSound(e.runner.id, 'heal', {});
             }
+            // "Смерть" на клетке wall (2026-09-12) — Death-тайл теперь
+            // уведомляется СИНХРОННО с терминальной позой самого бегуна, см.
+            // triggerWithSound#deathOnStart выше (onStart на runnerAnim.trigger,
+            // вызывается когда acid/burn РЕАЛЬНО начинает играть, не раньше) —
+            // отдельный независимый вызов deathCollisions.trigger ЗДЕСЬ,
+            // который срабатывал сразу по событию (до того, как бегун мог
+            // визуально доехать до клетки), убран целиком.
             // Жетон повреждения записываем ТОЛЬКО здесь, на реальном
             // ухудшении статуса — не на самом транзиентном событии с типом
             // (см. lib/runnerDamageTokens.js: 'anomaly' в частности может
@@ -436,7 +522,7 @@ export default function GameBoardScreen({ route, navigation }) {
         // (новый литерал {tokensByRunner,...}), это пересоздавало бы
         // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
         // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
-        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound],
+        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, deathCollisions.trigger, playOneShot, voiceSound, commentSound],
     );
 
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
@@ -1141,6 +1227,21 @@ export default function GameBoardScreen({ route, navigation }) {
         if (movingId == null) return null;
         return runners.find((r) => String(r.id) === String(movingId))?.type ?? null;
     }, [runnerAnim.anims, runners]);
+    // Гейт для GameFinishModal (см. рендер ниже) — по прямому запросу
+    // пользователя, живой тест, 2026-09-12: если бегун гибнет на клетке
+    // Death (burn/acid, см. BoardGrid#DeathTile) РОВНО тем же ходом, что
+    // делает игрока последним активным, диалог "Игрок X победил" не должен
+    // перекрывать ещё не доигранную терминальную позу — тот же приём, что
+    // уже гейтит модалку по trackShiftPhase (хореография сдвига фрагментов).
+    // pendingDeathRunnerIds (см. его докстринг выше) — ЖИВАЯ жалоба,
+    // 2026-09-12: без этого была гонка ("диалог мелькнул, потом анимация,
+    // потом диалог снова появился") — anims отражает ТОЛЬКО уже играющий
+    // шаг, а acid/burn мог ещё стоять в очереди позади предыдущего.
+    const hasDeathAnimPlaying = useMemo(
+        () => Object.values(runnerAnim.anims).some((a) => a?.kind === 'acid' || a?.kind === 'burn')
+            || pendingDeathRunnerIds.size > 0,
+        [runnerAnim.anims, pendingDeathRunnerIds],
+    );
     const moveSound = useAudioPlayer(FALLBACK_MOVE_SOUND);
     useEffect(() => {
         moveSound.loop = true;
@@ -1675,6 +1776,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     onPress={() => {
                         setShowActionStuckRefresh(false);
                         runnerAnim.reset();
+                        setPendingDeathRunnerIds(new Set());
                         resync();
                     }}
                     style={styles.turnSkipBtn}
@@ -1788,6 +1890,7 @@ export default function GameBoardScreen({ route, navigation }) {
             currentTurnPlayerId={game.playerOrder}
             hiddenRunnerIds={runnerAnim.hiddenIds}
             ghostPairs={ghostPairs.pairs}
+            deathCollisionSignals={deathCollisions.signals}
             onCollisionPoseStart={handleCollisionPoseStart}
             onCollisionPoseEnd={handleCollisionPoseEnd}
             reaperPreview={
@@ -1823,9 +1926,12 @@ export default function GameBoardScreen({ route, navigation }) {
                 trackShiftPhase не станет null (хореография доиграла целиком), и только
                 тогда показываем результат. game.status уже реально FINISH всё это
                 время (редьюсер применяет мгновенно, как и везде в проекте) — гейтится
-                только ПОКАЗ модалки, не сам факт завершения игры. */}
+                только ПОКАЗ модалки, не сам факт завершения игры. Гейт hasDeathAnimPlaying
+                (2026-09-12, тот же принцип) — тем же способом ждём, пока не доиграет
+                терминальная поза burn/acid (Death на клетке wall), если она случилась
+                ровно тем же ходом, что и победа. */}
             <GameFinishModal
-                visible={game.status === GAME_STATUS.FINISH && !trackShiftPhase}
+                visible={game.status === GAME_STATUS.FINISH && !trackShiftPhase && !hasDeathAnimPlaying}
                 winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
                 onExit={goToMainMenu}
             />
@@ -1900,6 +2006,7 @@ export default function GameBoardScreen({ route, navigation }) {
                                 // без сброса застрявшая очередь держала бы бегуна в
                                 // визуальной позиции старого (уже неактуального) шага.
                                 runnerAnim.reset();
+                                setPendingDeathRunnerIds(new Set());
                                 resync();
                             }}
                             style={styles.collisionBtn}

@@ -357,20 +357,25 @@ export const RUNNER_TYPES = {
 export const RUNNER_ORDER = [RUNNER_TYPES.TANK, RUNNER_TYPES.ATHLETE, RUNNER_TYPES.SPRINTER];
 
 export const RUNNER_DISPLAY = {
-  [RUNNER_TYPES.TANK]: { label: 'Танк', icon: require('../assets/images/runner/jaggernaut.png'), size: 3 },
-  [RUNNER_TYPES.ATHLETE]: { label: 'Атлет', icon: require('../assets/images/runner/trooper.png'), size: 2 },
-  [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', icon: require('../assets/images/runner/scout.png'), size: 1 },
-  [RUNNER_TYPES.REAPER]: { label: 'Жнец', icon: require('../assets/images/runner/reaper.png'), size: 0 },
+  // `icon` (старая статичная картинка-фолбэк, assets/images/runner/ —
+  // единственное число, не путать с assets/images/runners/) убран 2026-09-12
+  // по прямому запросу пользователя — папка удалена с диска, а фолбэк давно
+  // мёртв: у ВСЕХ типов ниже (включая Мяч/BALL) уже есть полный набор
+  // анимаций в constants/runnerAnimations#RUNNER_ANIMATION_SETS,
+  // getRunnerAnimationImage/getRunnerAvatarImage больше никогда не
+  // возвращают null для них — RunnerToken.js's `?? display.icon` не имел
+  // реального шанса сработать, только тянул мёртвый require() (который и
+  // валил Metro после удаления файлов, "Unable to resolve").
+  [RUNNER_TYPES.TANK]: { label: 'Танк', size: 3 },
+  [RUNNER_TYPES.ATHLETE]: { label: 'Атлет', size: 2 },
+  [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', size: 1 },
+  [RUNNER_TYPES.REAPER]: { label: 'Жнец', size: 0 },
   // "Мяч" — ничейный (playerId всегда null), никогда не показывается в
   // панели игрока (RUNNER_ORDER его не перечисляет, а карточки и так
   // фильтруются по runner.playerId === p.id) — запись тут нужна ТОЛЬКО
   // чтобы RunnerToken (BoardGrid) не бэйлился на `!display` и рисовал токен
-  // на доске. icon — чисто синтаксический фолбэк для getRunnerAnimationImage
-  // (require() статический, вычисляется всегда, даже если ветка ?? не
-  // используется в рантайме) — реальный набор анимаций см.
-  // constants/runnerAnimations#RUNNER_ANIMATION_SETS[BALL], icon почти
-  // никогда фактически не отрисуется.
-  [RUNNER_TYPES.BALL]: { label: 'Мяч', icon: require('../assets/images/runners/obstacle/obstacle_idle.gif'), size: 1 },
+  // на доске.
+  [RUNNER_TYPES.BALL]: { label: 'Мяч', size: 1 },
 };
 
 /** Состояния бегуна — зеркалят RunnerStatus (бэк) */

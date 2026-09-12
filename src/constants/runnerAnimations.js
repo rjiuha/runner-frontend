@@ -39,6 +39,8 @@ const scoutHealthyRed = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_red.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_red.gif'),
+    acid: require('../assets/images/runners/scout/healthy/scout_healthy_acid_red.gif'),
+    burn: require('../assets/images/runners/scout/healthy/scout_healthy_burn_red.gif'),
     start: require('../assets/images/runners/scout/healthy/scout_healthy_start_red.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_red.gif'),
@@ -66,6 +68,8 @@ const scoutHealthyBlue = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_blue.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_blue.gif'),
+    acid: require('../assets/images/runners/scout/healthy/scout_healthy_acid_blue.gif'),
+    burn: require('../assets/images/runners/scout/healthy/scout_healthy_burn_blue.gif'),
     start: require('../assets/images/runners/scout/healthy/scout_healthy_start_blue.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_blue.gif'),
@@ -93,6 +97,8 @@ const scoutHealthyGreen = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_green.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_green.gif'),
+    acid: require('../assets/images/runners/scout/healthy/scout_healthy_acid_green.gif'),
+    burn: require('../assets/images/runners/scout/healthy/scout_healthy_burn_green.gif'),
     start: require('../assets/images/runners/scout/healthy/scout_healthy_start_green.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_green.gif'),
@@ -120,6 +126,8 @@ const scoutHealthyYellow = {
         southWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_south-west_yellow.gif'),
     },
     avatar: require('../assets/images/runners/scout/healthy/scout_healthy_avatar_yellow.gif'),
+    acid: require('../assets/images/runners/scout/healthy/scout_healthy_acid_yellow.gif'),
+    burn: require('../assets/images/runners/scout/healthy/scout_healthy_burn_yellow.gif'),
     start: require('../assets/images/runners/scout/healthy/scout_healthy_start_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/scout/healthy/scout_healthy_collision_east_yellow.gif'),
@@ -148,6 +156,7 @@ const scoutDamagedRed = {
     },
     avatar: require('../assets/images/runners/scout/damaged/scout_damaged_avatar_red.gif'),
     broken: require('../assets/images/runners/scout/damaged/scout_damaged_broken_red.gif'),
+    heal: require('../assets/images/runners/scout/damaged/scout_damaged_heal_red.gif'),
     collision: {
         east: require('../assets/images/runners/scout/damaged/scout_damaged_collision_east_red.gif'),
         west: require('../assets/images/runners/scout/damaged/scout_damaged_collision_west_red.gif'),
@@ -175,6 +184,7 @@ const scoutDamagedBlue = {
     },
     avatar: require('../assets/images/runners/scout/damaged/scout_damaged_avatar_blue.gif'),
     broken: require('../assets/images/runners/scout/damaged/scout_damaged_broken_blue.gif'),
+    heal: require('../assets/images/runners/scout/damaged/scout_damaged_heal_blue.gif'),
     collision: {
         east: require('../assets/images/runners/scout/damaged/scout_damaged_collision_east_blue.gif'),
         west: require('../assets/images/runners/scout/damaged/scout_damaged_collision_west_blue.gif'),
@@ -202,6 +212,7 @@ const scoutDamagedGreen = {
     },
     avatar: require('../assets/images/runners/scout/damaged/scout_damaged_avatar_green.gif'),
     broken: require('../assets/images/runners/scout/damaged/scout_damaged_broken_green.gif'),
+    heal: require('../assets/images/runners/scout/damaged/scout_damaged_heal_green.gif'),
     collision: {
         east: require('../assets/images/runners/scout/damaged/scout_damaged_collision_east_green.gif'),
         west: require('../assets/images/runners/scout/damaged/scout_damaged_collision_west_green.gif'),
@@ -229,6 +240,7 @@ const scoutDamagedYellow = {
     },
     avatar: require('../assets/images/runners/scout/damaged/scout_damaged_avatar_yellow.gif'),
     broken: require('../assets/images/runners/scout/damaged/scout_damaged_broken_yellow.gif'),
+    heal: require('../assets/images/runners/scout/damaged/scout_damaged_heal_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/scout/damaged/scout_damaged_collision_east_yellow.gif'),
         west: require('../assets/images/runners/scout/damaged/scout_damaged_collision_west_yellow.gif'),
@@ -255,6 +267,8 @@ const athletHealthyRed = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_red.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_red.gif'),
+    acid: require('../assets/images/runners/athlet/healthy/athlet_healthy_acid_red.gif'),
+    burn: require('../assets/images/runners/athlet/healthy/athlet_healthy_burn_red.gif'),
     start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_red.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_red.gif'),
@@ -282,6 +296,8 @@ const athletHealthyBlue = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_blue.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_blue.gif'),
+    acid: require('../assets/images/runners/athlet/healthy/athlet_healthy_acid_blue.gif'),
+    burn: require('../assets/images/runners/athlet/healthy/athlet_healthy_burn_blue.gif'),
     start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_blue.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_blue.gif'),
@@ -309,6 +325,8 @@ const athletHealthyGreen = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_green.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_green.gif'),
+    acid: require('../assets/images/runners/athlet/healthy/athlet_healthy_acid_green.gif'),
+    burn: require('../assets/images/runners/athlet/healthy/athlet_healthy_burn_green.gif'),
     start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_green.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_green.gif'),
@@ -336,6 +354,8 @@ const athletHealthyYellow = {
         southWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_south-west_yellow.gif'),
     },
     avatar: require('../assets/images/runners/athlet/healthy/athlet_healthy_avatar_yellow.gif'),
+    acid: require('../assets/images/runners/athlet/healthy/athlet_healthy_acid_yellow.gif'),
+    burn: require('../assets/images/runners/athlet/healthy/athlet_healthy_burn_yellow.gif'),
     start: require('../assets/images/runners/athlet/healthy/athlet_healthy_start_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/healthy/athlet_healthy_collision_east_yellow.gif'),
@@ -364,6 +384,7 @@ const athletDamagedRed = {
     },
     avatar: require('../assets/images/runners/athlet/damaged/athlet_damaged_avatar_red.gif'),
     broken: require('../assets/images/runners/athlet/damaged/athlet_damaged_broken_red.gif'),
+    heal: require('../assets/images/runners/athlet/damaged/athlet_damaged_heal_red.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_red.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_red.gif'),
@@ -391,6 +412,7 @@ const athletDamagedBlue = {
     },
     avatar: require('../assets/images/runners/athlet/damaged/athlet_damaged_avatar_blue.gif'),
     broken: require('../assets/images/runners/athlet/damaged/athlet_damaged_broken_blue.gif'),
+    heal: require('../assets/images/runners/athlet/damaged/athlet_damaged_heal_blue.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_blue.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_blue.gif'),
@@ -418,6 +440,7 @@ const athletDamagedGreen = {
     },
     avatar: require('../assets/images/runners/athlet/damaged/athlet_damaged_avatar_green.gif'),
     broken: require('../assets/images/runners/athlet/damaged/athlet_damaged_broken_green.gif'),
+    heal: require('../assets/images/runners/athlet/damaged/athlet_damaged_heal_green.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_green.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_green.gif'),
@@ -445,6 +468,7 @@ const athletDamagedYellow = {
     },
     avatar: require('../assets/images/runners/athlet/damaged/athlet_damaged_avatar_yellow.gif'),
     broken: require('../assets/images/runners/athlet/damaged/athlet_damaged_broken_yellow.gif'),
+    heal: require('../assets/images/runners/athlet/damaged/athlet_damaged_heal_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_east_yellow.gif'),
         west: require('../assets/images/runners/athlet/damaged/athlet_damaged_collision_west_yellow.gif'),
@@ -471,6 +495,8 @@ const tankHealthyRed = {
         southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_red.gif'),
     },
     avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_red.gif'),
+    acid: require('../assets/images/runners/tank/healthy/tank_healthy_acid_red.gif'),
+    burn: require('../assets/images/runners/tank/healthy/tank_healthy_burn_red.gif'),
     start: require('../assets/images/runners/tank/healthy/tank_healthy_start_red.gif'),
     collision: {
         east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_red.gif'),
@@ -498,6 +524,8 @@ const tankHealthyBlue = {
         southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_blue.gif'),
     },
     avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_blue.gif'),
+    acid: require('../assets/images/runners/tank/healthy/tank_healthy_acid_blue.gif'),
+    burn: require('../assets/images/runners/tank/healthy/tank_healthy_burn_blue.gif'),
     start: require('../assets/images/runners/tank/healthy/tank_healthy_start_blue.gif'),
     collision: {
         east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_blue.gif'),
@@ -525,6 +553,8 @@ const tankHealthyGreen = {
         southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_green.gif'),
     },
     avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_green.gif'),
+    acid: require('../assets/images/runners/tank/healthy/tank_healthy_acid_green.gif'),
+    burn: require('../assets/images/runners/tank/healthy/tank_healthy_burn_green.gif'),
     start: require('../assets/images/runners/tank/healthy/tank_healthy_start_green.gif'),
     collision: {
         east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_green.gif'),
@@ -552,6 +582,8 @@ const tankHealthyYellow = {
         southWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_south-west_yellow.gif'),
     },
     avatar: require('../assets/images/runners/tank/healthy/tank_healthy_avatar_yellow.gif'),
+    acid: require('../assets/images/runners/tank/healthy/tank_healthy_acid_yellow.gif'),
+    burn: require('../assets/images/runners/tank/healthy/tank_healthy_burn_yellow.gif'),
     start: require('../assets/images/runners/tank/healthy/tank_healthy_start_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/tank/healthy/tank_healthy_collision_east_yellow.gif'),
@@ -580,6 +612,7 @@ const tankDamagedRed = {
     },
     avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_red.gif'),
     broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_red.gif'),
+    heal: require('../assets/images/runners/tank/damaged/tank_damaged_heal_red.gif'),
     collision: {
         east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_red.gif'),
         west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_red.gif'),
@@ -607,6 +640,7 @@ const tankDamagedBlue = {
     },
     avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_blue.gif'),
     broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_blue.gif'),
+    heal: require('../assets/images/runners/tank/damaged/tank_damaged_heal_blue.gif'),
     collision: {
         east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_blue.gif'),
         west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_blue.gif'),
@@ -634,6 +668,7 @@ const tankDamagedGreen = {
     },
     avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_green.gif'),
     broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_green.gif'),
+    heal: require('../assets/images/runners/tank/damaged/tank_damaged_heal_green.gif'),
     collision: {
         east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_green.gif'),
         west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_green.gif'),
@@ -661,6 +696,7 @@ const tankDamagedYellow = {
     },
     avatar: require('../assets/images/runners/tank/damaged/tank_damaged_avatar_yellow.gif'),
     broken: require('../assets/images/runners/tank/damaged/tank_damaged_broken_yellow.gif'),
+    heal: require('../assets/images/runners/tank/damaged/tank_damaged_heal_yellow.gif'),
     collision: {
         east: require('../assets/images/runners/tank/damaged/tank_damaged_collision_east_yellow.gif'),
         west: require('../assets/images/runners/tank/damaged/tank_damaged_collision_west_yellow.gif'),
@@ -917,6 +953,25 @@ export function getRunnerAnimationImage(type, status, anim, colorKey) {
     if (anim?.kind === 'destroyed') {
         const destroyedBucket = (set[statusFolder(anim.fromStatus ?? status)][colorKey]) ?? bucket;
         return destroyedBucket.destroyed;
+    }
+    // 'heal' — анимация лечения (2026-09-12): ассет лежит в ДАМАЖ-наборе
+    // (визуально это переход damaged→healthy), но к моменту, когда триггерится
+    // эта анимация, реальный game-стейт (ability_heal уже применён редьюсером)
+    // отражает НОВЫЙ статус — обычно уже healthy. Раз statusFolder(status) в
+    // этот момент дал бы healthy-бакет (там heal-ассета нет), берём damaged-
+    // бакет НАПРЯМУЮ, а не через текущий статус.
+    if (anim?.kind === 'heal') {
+        return set.damaged[colorKey]?.heal ?? bucket.idle;
+    }
+    // 'burn'/'acid' — терминальная поза уничтожения при столкновении со
+    // "смертью" на клетке типа wall (см. GameBoardScreen — механика Death,
+    // 2026-09-12) — САМА ПО СЕБЕ служит финальной позой (по прямому решению
+    // пользователя отдельная 'destroyed' после неё не нужна). Ассетов под
+    // damaged-статус пользователь не добавлял (итог всё равно уничтожение,
+    // текущий статус бегуна в этот момент не важен) — ВСЕГДА берём healthy-
+    // бакет, независимо от statusFolder(status).
+    if (anim?.kind === 'burn' || anim?.kind === 'acid') {
+        return set.healthy[colorKey]?.[anim.kind] ?? bucket.idle;
     }
 
     if (!anim || anim.kind === 'idle') {

@@ -1,6 +1,7 @@
 // src/lib/runnerAnimTriggers.js
 import { statusWorsened } from '../constants/runnerAnimations';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
+import { cellTypeAt, pickDeathVariant } from './board';
 import { RUNNER_TYPES } from '../constants/GameConstants';
 
 // Сколько мс держим "недавно получил выстрел" по runnerId (2026-09-07, живой
@@ -264,6 +265,32 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         if (e.event === 'runner_destroy' && patch.type === RUNNER_TYPES.REAPER && lastKnownPosition) {
             trigger(patch.id, 'fly', { toPosition: lastKnownPosition });
             return;
+        }
+
+        // "Смерть" на клетке типа wall (2026-09-12, по прямому запросу
+        // пользователя) — ВСЕ клетки wall теперь показывают одно из двух
+        // существ (acid/burn, см. lib/board#pickDeathVariant/DeathTile в
+        // BoardGrid.js), и любой бегун, погибающий именно там, получает
+        // терминальную позу 'acid'/'burn' ВМЕСТО обычной 'destroyed' — по
+        // прямому решению пользователя эта поза САМА ПО СЕБЕ служит финальным
+        // кадром, отдельной 'destroyed' после неё не нужно (см.
+        // useRunnerAnimations — оба kind обрабатываются ТЕМ ЖЕ терминальным
+        // путём, что 'destroyed': очередь останавливается, токен прячется
+        // через TERMINAL_HIDE_DELAY_MS). pickDeathVariant(cellId) — ТА ЖЕ
+        // детерминированная функция, что и при рендере самой клетки, поэтому
+        // выбранный вариант гарантированно совпадает с тем, что стоит на
+        // доске (не может разойтись). Проверяем ДО statusWorsened-гейта — тут
+        // это не нужно (destroy всегда "хуже"), но порядок такой же, как у
+        // Жнеца выше, для единообразия.
+        if (e.event === 'runner_destroy' && lastKnownPosition) {
+            const wallType = cellTypeAt(
+                prevGame, lastKnownPosition.segment, lastKnownPosition.positionX, lastKnownPosition.positionY,
+            );
+            if (wallType === 'wall') {
+                const cellId = `${lastKnownPosition.segment}-${lastKnownPosition.positionY}-${lastKnownPosition.positionX}`;
+                trigger(patch.id, pickDeathVariant(cellId), { toPosition: lastKnownPosition });
+                return;
+            }
         }
 
         if (!statusWorsened(prev.status, patch.status)) return;

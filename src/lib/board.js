@@ -55,6 +55,36 @@ export function pickBaseImage(type, cellId) {
 }
 
 /**
+ * Вариант "Смерти" (acid/burn) на клетке типа wall (2026-09-12, по прямому
+ * запросу пользователя — заменяет прежний плоский wall_base-тайл) —
+ * детерминированно по id клетки, ТА ЖЕ схема, что и pickSegmentImage (стабильно
+ * на всю партию, не перевыбирается на каждый рендер/live-обновление стейта).
+ * Используется и при рендере клетки (BoardGrid#DeathTile), и при определении,
+ * какую терминальную позу ('acid'/'burn') получит бегун, погибший на ЭТОЙ
+ * конкретной клетке (см. lib/runnerAnimTriggers.js) — оба места обязаны
+ * получать ОДИН И ТОТ ЖЕ вариант для одного и того же id, что и гарантирует
+ * чистый детерминированный хэш.
+ */
+export function pickDeathVariant(cellId) {
+    return hashString(cellId) % 2 === 0 ? 'acid' : 'burn';
+}
+
+/**
+ * Тип клетки (resolveCellVisual) по абсолютным координатам бегуна в уже
+ * загруженных фрагментах trackBegin/Middle/End (segment 0/1/2). Возвращает
+ * null, если сегмент вне диапазона 0-2 или сетка ещё не загружена (снапшот
+ * ещё не пришёл) — вызывающий код должен трактовать null как "не wall".
+ * Используется в lib/runnerAnimTriggers.js — чтобы понять, погиб ли бегун
+ * ИМЕННО на клетке со "Смертью" (wall), а не по любой другой причине.
+ */
+export function cellTypeAt(game, segment, positionX, positionY) {
+    const seg = [game?.trackBegin, game?.trackMiddle, game?.trackEnd][segment];
+    if (!seg?.grid) return null;
+    const rawType = seg.grid?.[positionX]?.[positionY];
+    return resolveCellVisual(rawType);
+}
+
+/**
  * Разворачивает 3 фрагмента трассы (trackBegin/trackMiddle/trackEnd — форма
  * {name, grid}, см. RunnerGame::toArray() на бэке) в плоский список ячеек для
  * BoardGrid. Сетка на бэке — grid[X][Y]: X (0..cols-1) — позиция вперёд по
@@ -82,6 +112,7 @@ export function flattenTrackSegments(segments, rows, cols) {
                     type,
                     image: pickSegmentImage(type, id),
                     baseImage: pickBaseImage(type, id),
+                    deathVariant: type === 'wall' ? pickDeathVariant(id) : null,
                 });
             }
         }
@@ -124,6 +155,7 @@ export function flattenPeekColumn(trackNext, rows, peekCol) {
             type,
             image: pickSegmentImage(type, id),
             baseImage: pickBaseImage(type, id),
+            deathVariant: type === 'wall' ? pickDeathVariant(id) : null,
         });
     }
     return data;
