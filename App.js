@@ -5,11 +5,31 @@ import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, NavigationContainer } from '@react-navigation/native';
 
 import { AuthProvider } from './src/context/AuthContext';
 import RootNavigator from './src/navigation/RootNavigator';
+import ParallaxBackground from './src/components/ui/ParallaxBackground';
+import AppModal from './src/components/ui/AppModal';
 import { fontFamily as CUSTOM_FONT_FAMILY, colors } from './src/theme';
+
+/**
+ * Тема навигатора — только чтобы обнулить `colors.background` у
+ * @react-navigation/native-stack. На native та автоматически подмешивает
+ * ЭТОТ цвет как `contentStyle` КАЖДОМУ экрану стека (см. `NativeStackView
+ * .native.tsx` — `backgroundColor: colors.background` из useTheme(),
+ * дефолт без явной темы — светло-серый из DefaultTheme), рисуя его ПОД
+ * содержимым экрана, но НАД общим фоном — без этой правки общий
+ * ParallaxBackground (см. ниже) был бы не виден вообще ни на одном
+ * реальном экране на Android/iOS (на вебе этого слоя нет, там
+ * contentContainer и так прозрачен). Остальные поля темы (`dark`/шрифты/
+ * прочие цвета) не используются нигде в приложении — берём `DarkTheme`
+ * просто как основу, чтобы не собирать объект с нуля.
+ */
+const TRANSPARENT_NAV_THEME = {
+    ...DarkTheme,
+    colors: { ...DarkTheme.colors, background: 'transparent' },
+};
 
 /**
  * Кастомный шрифт (spaceranger-rus.otf, 2026-09-13, по прямому запросу
@@ -36,29 +56,20 @@ import { fontFamily as CUSTOM_FONT_FAMILY, colors } from './src/theme';
  * стороннего кода, который зовёт `React.createElement(Text, ...)` напрямую,
  * в обход JSX — вреда от него нет, даже если он не сработает.
  *
- * `color: colors.neonCyan` (2026-09-13, по прямому запросу — "буквально весь
- * текст в приложении", подтверждено после явного предупреждения о риске
- * нечитаемости на светлых экранах типа MainMenu/LobbySearch) — в отличие от
- * `fontFamily` (которую ничего в проекте раньше не задавало, поэтому её
- * достаточно было подставить ПЕРВОЙ в массиве style — "мягкий" дефолт), цвет
- * почти ВЕЗДЕ уже задан явно через `theme.colors` в собственных стилях
- * экранов — чтобы реально перекрасить "буквально весь текст", а не только
- * те немногие места без своего цвета, наш объект стоит ПОСЛЕДНИМ в массиве
- * (`config.style` первым) — так наш `color` побеждает ЛЮБОЙ явно заданный
- * компонентом. Цвет снят напрямую с пикселей неоновых полосок бегуна
- * (`theme.colors.neonCyan`, см. её докстринг) — не выдуман.
- *
- * **Проп `noGlobalTint` (2026-09-13, живая жалоба — "cyan не виден на
- * некоторых цветах кнопок")**: циан читается отлично на тёмном фоне игры, но
- * сливается/теряет контраст на НАСЫЩЕННЫХ цветных фонах кнопок/карточек меню
- * (`Button`/`MenuCard` — там текст лежит поверх `colors.info`/`colors.danger`
- * и т.п., не поверх `colors.bg`). Эти компоненты уже осознанно подбирают
- * контрастный цвет текста сами (`v.fg` в Button.js, `colors.textOnDark` в
- * MenuCard.js) — форсить cyan поверх их выбора и есть причина жалобы. Компонент
- * помечает СВОЙ `<Text>` пропом `noGlobalTint` — патч это видит и НЕ
- * подставляет color (fontFamily всё равно применяется, он не конфликтует ни с
- * чем). Проп вырезается из `config` перед передачей дальше — реальный `<Text>`
- * его не видит и не ругается на неизвестный проп.
+ * **Глобальный форсинг `color: colors.neonCyan` УБРАН (2026-09-14, по
+ * прямому запросу пользователя)** — раньше цвет форсился на КАЖДЫЙ `<Text>`
+ * во всём приложении (введено 2026-09-13), а обратный опт-аут через
+ * `noGlobalTint` пришлось расставлять по ~20 файлам, где циан не подходил
+ * (кнопки/карточки/подсказки/пульсирующие заголовки и т.д.) — то есть циан
+ * был дефолтом, а "нормальный" цвет — исключением. Пользователь развернул
+ * это: циан должен быть ТОЛЬКО в паре мест (сейчас — заголовок "Star Runners"
+ * на AuthScreen, см. его собственный стиль), остальной текст — свой обычный
+ * цвет, который и так уже был задан явно в стилях экранов до 2026-09-13 (тот
+ * форсинг просто больше не перекрывает его). `noGlobalTint`-проп остался
+ * проставлен в тех же ~20 местах (вреда как дохлый проп не несёт — патч
+ * по-прежнему вырезает его из `config`, чтобы не утёк в реальный `<Text>`),
+ * заново вычищать по всем файлам не стал — переживший смысл использования
+ * не нанёс ущерба, просто больше ничего не переключает.
  *
  * **`fontWeight: 'normal'` — ОБЯЗАТЕЛЬНО форсим вместе с fontFamily
  * (2026-09-13, живая жалоба + скриншот с реального Android: заголовок
@@ -77,34 +88,26 @@ import { fontFamily as CUSTOM_FONT_FAMILY, colors } from './src/theme';
  * (fake bold), либо игнорируется, поэтому там бага не было видно вообще.
  * Раз другого начертания шрифта нет и не будет, форсим 'normal' ВСЕГДА,
  * СИЛЬНЕЕ любого fontWeight, который выставил сам компонент (наш объект —
- * ПОСЛЕДНИЙ в style-массиве в ОБОИХ ветках, noGlobalTint тоже, иначе именно
- * там `Button`'s `fontWeight:'bold'` продолжил бы ломать шрифт даже после
- * того как noGlobalTint уже чинит цвет). Подтверждено на реальном Android
- * (adb) — обычный Fast Refresh это НЕ подхватывает, нужен полный холодный
+ * ПОСЛЕДНИЙ в style-массиве). Подтверждено на реальном Android (adb) —
+ * обычный Fast Refresh это НЕ подхватывает, нужен полный холодный
  * перезапуск приложения (force-stop + релонч).
  *
- * **`TextInput` — цвет НИКОГДА не форсим, только fontFamily/fontWeight**
- * (2026-09-13, живая жалоба — "при вводе текста в поля логина/пароля и
- * других цвет меняется на cyan"). В отличие от `Text` (статичный UI-текст,
- * где циан — осознанный редизайн), `TextInput` — это то, что НАБИРАЕТ сам
- * пользователь (email, пароль, поиск и т.п.) — свой цвет там уже задан
- * осознанно (`Input.js` — `colors.textOnDark`) и перекраска ВВОДИМОГО текста
- * в акцентный цвет никем не запрашивалась, только всплыла как побочный
- * эффект правила "весь текст". `TextInput` в проекте используется РОВНО в
- * одном месте (`components/ui/Input.js`, проверено grep'ом) — безопасно
- * исключить его из форсинга цвета целиком, без пропа-переключателя на
- * каждом отдельном месте использования.
+ * **Проп `noGlobalFont` (2026-09-13, по прямому запросу — "в полях для
+ * ввода на экранах логина и регистрации сам вводимый текст пусть будет
+ * обычным")** — полностью выключает форсинг для конкретного
+ * `<TextInput>`: ни `fontFamily`, ни `fontWeight` не добавляются вообще,
+ * стиль компонента идёт как есть (значит текст рисуется системным шрифтом
+ * ОС). `TextInput` в проекте используется РОВНО в одном месте
+ * (`components/ui/Input.js`, использует ТОЛЬКО AuthScreen) — проставлен
+ * там, остальной форсинг шрифта (`Text`, дефолт `TextInput` через
+ * `defaultProps` ниже — фолбэк на случай `React.createElement` в обход
+ * JSX) не трогаем.
  *
- * **Проп `noGlobalFont` (2026-09-13, третий заход, по прямому запросу —
- * "в полях для ввода на экранах логина и регистрации сам вводимый текст
- * пусть будет обычным")** — в отличие от `noGlobalTint` (тот гасит только
- * `color`), этот полностью выключает форсинг для конкретного `<TextInput>`:
- * ни `fontFamily`, ни `fontWeight` не добавляются вообще, стиль компонента
- * идёт как есть (значит текст рисуется системным шрифтом ОС — обычным).
- * `TextInput` в проекте используется РОВНО в одном месте (`components/ui/
- * Input.js`, использует ТОЛЬКО AuthScreen) — проставлен там, остальной
- * форсинг (`Text`, дефолт `TextInput` через `defaultProps` ниже — фолбэк на
- * случай `React.createElement` в обход JSX) не трогаем.
+ * `noGlobalTint` вырезается из `config` по-прежнему (см. деструктуризацию
+ * ниже) — сам он больше НИЧЕГО не переключает (цвет нигде не форсится, см.
+ * выше), но проп по-прежнему проставлен в ~20 файлах с прошлого захода и
+ * должен не утекать в реальный `<Text>` (на вебе react-native-web иначе
+ * попытался бы прокинуть неизвестный атрибут в DOM).
  */
 function patchJsxForFont(mod) {
     if (!mod) return;
@@ -114,20 +117,9 @@ function patchJsxForFont(mod) {
         mod[fnName] = function patchedJsx(type, config, ...rest) {
             if ((type === Text || type === TextInput) && config) {
                 const { noGlobalTint, noGlobalFont, ...rest2 } = config;
-                if (noGlobalFont) {
-                    config = rest2;
-                } else {
-                    const skipColor = noGlobalTint || type === TextInput;
-                    config = {
-                        ...rest2,
-                        style: [
-                            rest2.style,
-                            skipColor
-                                ? { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal' }
-                                : { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal', color: colors.neonCyan },
-                        ],
-                    };
-                }
+                config = noGlobalFont
+                    ? rest2
+                    : { ...rest2, style: [rest2.style, { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal' }] };
             }
             return original.call(this, type, config, ...rest);
         };
@@ -137,7 +129,7 @@ patchJsxForFont(require('react/jsx-runtime'));
 patchJsxForFont(require('react/jsx-dev-runtime'));
 
 Text.defaultProps = Text.defaultProps || {};
-Text.defaultProps.style = [Text.defaultProps.style, { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal', color: colors.neonCyan }];
+Text.defaultProps.style = [Text.defaultProps.style, { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal' }];
 TextInput.defaultProps = TextInput.defaultProps || {};
 TextInput.defaultProps.style = [TextInput.defaultProps.style, { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal' }];
 
@@ -149,55 +141,80 @@ TextInput.defaultProps.style = [TextInput.defaultProps.style, { fontFamily: CUST
  * GestureHandlerRootView — снаружи всего: без него Pan-жесты (перетаскивание
  * кубиков на игровой доске) молча не работают на Android, а иногда и на вебе.
  *
- * Шрифт грузится ДО рендера остального приложения (тот же приём, что и у
- * RootNavigator#isLoading — сплэш вместо мигания системным шрифтом на первом
- * кадре, до того как SpaceRanger встанет в defaultProps выше).
+ * **`ParallaxBackground` — ОДИН экземпляр на всё приложение (2026-09-14, по
+ * прямому запросу пользователя — "анимация фона не должна зависеть от
+ * перехода между экранами").** Раньше каждый экран (через `Screen.js`) и
+ * отдельно `GameBoardScreen` монтировали СВОЙ instance — при любой навигации
+ * между экранами старый размонтировался, новый стартовал анимацию с нуля
+ * (offsetX/offsetY обнулялись, случайная цель выбиралась заново). Теперь
+ * компонент рендерится здесь, ВЫШЕ `NavigationContainer`, и живёт весь
+ * жизненный цикл приложения — экраны просто должны быть прозрачными, чтобы
+ * его было видно (см. `Screen.js`/`GameBoardScreen.js` — там фон убран,
+ * `TRANSPARENT_NAV_THEME` выше гасит автоматический непрозрачный
+ * `contentStyle` у native-stack). `styles.root.backgroundColor` — фоллбэк
+ * НА СЛУЧАЙ, если сама картинка почему-то не отрисуется (тот же приём,
+ * что раньше был точечно на `GameBoardScreen.wrapper`, теперь общий для
+ * всего приложения, а не только одного экрана).
+ *
+ * Рендерится ДАЖЕ на сплэше загрузки шрифта (`!fontsLoaded`) — картинка
+ * фона не зависит от кастомного шрифта, а анимация должна идти буквально
+ * с первого кадра, а не после.
+ *
+ * `AppModal` — тем же приёмом, единственный хост для notify()/confirm()
+ * (см. lib/notify.js, 2026-09-14, "не хочу стандартные диалоги в общем") —
+ * заменяет платформенный Alert.alert/window.alert/window.confirm везде в
+ * приложении одним кастомным Modal. Смонтирован БЕЗУСЛОВНО (даже во время
+ * сплэша загрузки шрифта) — registerModalHandler должен успеть отработать
+ * раньше первого возможного вызова notify()/confirm() откуда угодно.
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
     SpaceRanger: require('./src/assets/fonts/spaceranger-rus.otf'),
   });
 
-  if (!fontsLoaded) {
-    return (
-        <View style={styles.splash}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-    );
-  }
-
   return (
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <AuthProvider>
-            <NavigationContainer
-                // На вебе @react-navigation/native сам управляет
-                // document.title (useDocumentTitle, включён по умолчанию) —
-                // без явного documentTitle он берёт options.title экрана,
-                // а если тот не задан — имя РОУТА ("Auth", "MainMenu" и
-                // т.п., см. navigation/routes.js), поэтому вкладка браузера
-                // показывала служебное имя экрана вместо названия игры
-                // (2026-09-13, по прямому запросу пользователя). Фиксируем
-                // на одно и то же значение для любого экрана — это НЕ
-                // трогает options.title отдельных экранов (тот по-прежнему
-                // рисует текст в шапке нативного стека, см. LobbyScreen/
-                // LobbySearchScreen).
-                documentTitle={{ formatter: () => 'Star Runners' }}
-            >
-              <StatusBar style="light" />
-              <RootNavigator />
-            </NavigationContainer>
-          </AuthProvider>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
+      <View style={styles.root}>
+        <ParallaxBackground />
+        <AppModal />
+
+        {!fontsLoaded ? (
+            <View style={styles.splash}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+        ) : (
+            <GestureHandlerRootView style={{ flex: 1 }}>
+              <SafeAreaProvider>
+                <AuthProvider>
+                  <NavigationContainer
+                      theme={TRANSPARENT_NAV_THEME}
+                      // На вебе @react-navigation/native сам управляет
+                      // document.title (useDocumentTitle, включён по умолчанию) —
+                      // без явного documentTitle он берёт options.title экрана,
+                      // а если тот не задан — имя РОУТА ("Auth", "MainMenu" и
+                      // т.п., см. navigation/routes.js), поэтому вкладка браузера
+                      // показывала служебное имя экрана вместо названия игры
+                      // (2026-09-13, по прямому запросу пользователя). Фиксируем
+                      // на одно и то же значение для любого экрана — это НЕ
+                      // трогает options.title отдельных экранов (тот по-прежнему
+                      // рисует текст в шапке нативного стека, см. LobbyScreen/
+                      // LobbySearchScreen).
+                      documentTitle={{ formatter: () => 'Star Runners' }}
+                  >
+                    <StatusBar style="light" />
+                    <RootNavigator />
+                  </NavigationContainer>
+                </AuthProvider>
+              </SafeAreaProvider>
+            </GestureHandlerRootView>
+        )}
+      </View>
   );
 }
 
 const styles = StyleSheet.create({
-  splash: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: colors.bg,
-  },
+  // Фоллбэк-цвет на случай, если ParallaxBackground почему-то не отрисуется
+  // (единственное место в приложении, где он теперь нужен — раньше был
+  // продублирован по экранам, см. докстринг App() выше).
+  root: { flex: 1, backgroundColor: colors.bg },
+  splash: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 });

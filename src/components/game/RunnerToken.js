@@ -130,6 +130,26 @@ export default function RunnerToken({
     useEffect(() => {
         if (Platform.OS === 'web') return;
         if (prevSourceRef.current === source) return;
+        // Возврат в idle (anim===null) — БЕЗ кроссфейда (2026-09-13, живая
+        // жалоба "при переходе от move к idle наслоение анимаций" — на
+        // Android виден момент, где старая (move — силуэт на бегу) и новая
+        // (idle — стоящий силуэт) картинки полупрозрачно наложены друг на
+        // друга: это ДВЕ визуально РАЗНЫЕ позы, альфа-блендинг между ними
+        // выглядит двойной экспозицией, а не плавным переходом. Оригинальная
+        // причина кроссфейда (маскировать паузу декодирования НОВОГО gif на
+        // Android) тут не актуальна — idle к моменту ЛЮБОГО перехода "к
+        // idle" уже гарантированно был показан РАНЬШЕ (переход в idle
+        // происходит только ПОСЛЕ того, как какая-то другая поза уже
+        // отыгралась на этом же бегуне — а до неё он уже был в idle или
+        // только что вышел из start, который сам показывает idle сразу
+        // после себя) — decode уже случился, маскировать нечего. Кроссфейд
+        // между ДРУГИМИ позами (idle→move, move→attack и т.п., где новый gif
+        // РЕАЛЬНО ещё не декодирован) не тронут — там альфа-блендинг между
+        // похожими по силуэту кадрами не даёт такого выраженного двоения.
+        if (anim == null) {
+            prevSourceRef.current = source;
+            return;
+        }
         setFadingSource(prevSourceRef.current);
         prevSourceRef.current = source;
         fadeOpacity.setValue(0);
@@ -138,7 +158,7 @@ export default function RunnerToken({
             duration: CROSSFADE_MS,
             useNativeDriver: true,
         }).start(() => setFadingSource(null));
-    }, [source, fadeOpacity]);
+    }, [source, anim, fadeOpacity]);
 
     // Вращение ореола — ОДИН Animated.Value, растёт линейно 0→1 и сразу
     // зацикливается (не туда-обратно, как было бы у пульса) — стабильное

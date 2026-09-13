@@ -12,7 +12,6 @@ import FragmentLabelStrip from '../components/game/FragmentLabelStrip';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
 import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
-import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
 import LoadingCard from '../components/ui/LoadingCard';
 import PulseText from '../components/ui/PulseText';
@@ -36,6 +35,7 @@ import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/r
 import { COMMENT_SOUNDS } from '../constants/commentSounds';
 import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
 import { notify } from '../lib/notify';
+import { createLogger } from '../lib/logger';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import { ROUTES } from '../navigation/routes';
@@ -214,6 +214,12 @@ function stepInstruction(
  * не туда кубик иначе было бы не вернуть, реальный /select уходит только по
  * кнопке "Подтвердить"/повторному тапу по той же карточке — см. handleConfirmSelect).
  */
+// Логируем сам факт "игрок совершил действие" (2026-09-14, по прямому запросу
+// пользователя) — отдельно от [API] (тот уже логирует конкретный HTTP-вызов
+// внутри), этот тег про игровую семантику: началось/успех/провал, привязано к
+// шагу игрока на момент вызова (см. runAction).
+const gameLog = createLogger('GAME');
+
 export default function GameBoardScreen({ route, navigation }) {
     useAdaptiveOrientation();
     // GameBoardScreen сознательно без SafeAreaView (см. шапку файла) — без
@@ -1357,8 +1363,10 @@ export default function GameBoardScreen({ route, navigation }) {
         // шагом (первый баг того же живого теста, 2026-09-08).
         const stepBeforeAction = myStepRef.current;
         setBusy(true);
+        gameLog(`действие: старт (шаг=${stepBeforeAction})`);
         try {
             await fn();
+            gameLog('действие: успех');
             if (actionStuckTimerRef.current) clearTimeout(actionStuckTimerRef.current);
             if (!skipStuckWatch) {
                 actionStuckTimerRef.current = setTimeout(() => {
@@ -1366,6 +1374,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 }, STUCK_ACTION_TIMEOUT);
             }
         } catch (e) {
+            gameLog('действие: ПРОВАЛ —', e.userMessage ?? e.message);
             notify('Не удалось выполнить действие', e.userMessage ?? e.message);
         } finally {
             setBusy(false);
@@ -1710,7 +1719,6 @@ export default function GameBoardScreen({ route, navigation }) {
     if (!game) {
         return (
             <View style={styles.wrapper}>
-                <ParallaxBackground />
                 <View style={styles.center}>
                     <LoadingCard label={STATUS_LABEL[status] ?? ''} />
                 </View>
@@ -1730,7 +1738,6 @@ export default function GameBoardScreen({ route, navigation }) {
         const readyCount = gamePlayers.filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
         return (
             <View style={styles.wrapper}>
-                <ParallaxBackground />
                 <View style={styles.center}>
                     <LoadingCard label={`Начинаем партию… готовы ${readyCount} из ${gamePlayers.length}`}>
                         {autoStartError && (
@@ -1973,8 +1980,6 @@ export default function GameBoardScreen({ route, navigation }) {
 
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
-            <ParallaxBackground />
-
             {/* Гейт trackShiftPhase — по прямому запросу пользователя, 2026-09-09: если
                 game_finish пришёл ОДНОВременно со сдвигом фрагмента (типовой случай —
                 сдвиг уничтожает свободных бегунов соперника, тот уходит в OUT, у
@@ -2252,19 +2257,19 @@ export default function GameBoardScreen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-    // backgroundColor — та же тёмная тема, что Screen.js подставляет под
-    // ParallaxBackground на всех остальных экранах (SafeAreaView с
-    // {backgroundColor: bg}). У GameBoardScreen своего Screen-каркаса нет
-    // (полноэкранный экран, фон вставляет вручную), и без этого фолбэка,
-    // если Animated.Image парallax-фона не успевает/не может отрисоваться
-    // (тяжёлый экран, много одновременных картинок, смена ориентации на
-    // Android через useAdaptiveOrientation), из-под него на Android
-    // просвечивает белый фон Activity по умолчанию — раньше сквозь пустоту
-    // ничего не было видно, кроме белого.
+    // БЕЗ backgroundColor (2026-09-14) — раньше тут стоял colors.bg как
+    // фолбэк на случай, если Animated.Image параллакс-фона не успевает/не
+    // может отрисоваться (тяжёлый экран, много одновременных картинок, смена
+    // ориентации через useAdaptiveOrientation), чтобы из-под него на Android
+    // не просвечивал белый фон Activity по умолчанию. Теперь ParallaxBackground
+    // ОДИН на всё приложение (App.js, живёт выше этого экрана) — свой
+    // непрозрачный фон тут перекрывал бы его ПОЛНОСТЬЮ на каждом рендере
+    // этого экрана, что и обесценивало бы саму идею общего непрерывного
+    // фона. Фолбэк-цвет теперь ОДИН, на корневом View в App.js.
     // flexDirection:'row' — альбомная раскладка (панель слева, доска справа).
     // Портретная (wrapperPortrait) переключает на column — доска сверху,
     // панель снизу (см. useBoardLayout.orientation).
-    wrapper: { flex: 1, flexDirection: 'row', backgroundColor: colors.bg },
+    wrapper: { flex: 1, flexDirection: 'row' },
     wrapperPortrait: { flexDirection: 'column' },
     // Обёртки под MobileFrameOverlay — ТОЛЬКО position:'relative', БЕЗ
     // overflow:'hidden'. Рамка сама заполняет их РОВНО (не вылезает за

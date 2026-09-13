@@ -2,14 +2,17 @@
 import React from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import ParallaxBackground from './ParallaxBackground';
-import { colors } from '../../theme';
 
 /**
- * Каркас экрана: безопасные зоны + общий Parallax-фон + опциональный скролл +
- * уход от клавиатуры. Фон один на все экраны — рендерится здесь, а не в
- * каждом экране по отдельности, чтобы не разъезжались version'ы и не было
- * дублей (как раньше было только на AuthScreen).
+ * Каркас экрана: безопасные зоны + опциональный скролл + уход от клавиатуры.
+ *
+ * **Свой ParallaxBackground/фон тут больше НЕ рендерится (2026-09-14)** — фон
+ * теперь ОДИН на всё приложение, живёт в App.js выше NavigationContainer, не
+ * пересоздаётся между экранами (см. докстринг App#App() — раньше на каждой
+ * навигации анимация перезапускалась с нуля). SafeAreaView здесь ДОЛЖЕН
+ * оставаться прозрачным, иначе он перекроет этот общий фон непрозрачным
+ * цветом — именно так когда-то выглядел баг на экране проверки сессии в
+ * MainMenuScreen (сплошной фон вместо звёзд).
  *
  * SafeAreaView берём из react-native-safe-area-context, а не из react-native:
  * встроенный устарел в RN 0.85, работает только на iOS и игнорирует
@@ -18,13 +21,10 @@ import { colors } from '../../theme';
 export default function Screen({
                                    children,
                                    scroll = false,
-                                   dark = true,
                                    edges,
                                    style,
                                    contentContainerStyle,
                                }) {
-    const bg = dark ? colors.bg : colors.surface;
-
     const body = scroll ? (
         <ScrollView
             contentContainerStyle={[styles.scrollContent, contentContainerStyle]}
@@ -38,8 +38,7 @@ export default function Screen({
     );
 
     return (
-        <SafeAreaView style={[styles.flex, { backgroundColor: bg }, style]} edges={edges}>
-            <ParallaxBackground />
+        <SafeAreaView style={[styles.flex, style]} edges={edges}>
             <KeyboardAvoidingView
                 style={styles.flex}
                 // На iOS клавиатура наезжает на контент — сдвигаем всё вверх.

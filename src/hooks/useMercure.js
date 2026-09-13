@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { MERCURE_URL } from '../config/env';
 import { createEventSource, closeEventSource } from '../lib/eventSource';
+import { createLogger } from '../lib/logger';
+
+const log = createLogger('MERCURE');
 
 const backoff = (n) => {
     const max = Math.min(1000 * 2 ** n, 30000);
@@ -62,10 +65,14 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
         if (syncingRef.current) return;
         syncingRef.current = true;
         setStatus('syncing');
+        log(`sync() старт gen=${gen}`);
 
         try {
             const snap = await cb.current.fetchSnapshot();
-            if (gen !== genRef.current) return;
+            if (gen !== genRef.current) {
+                log(`sync() gen=${gen} устарел (текущий=${genRef.current}), игнор`);
+                return;
+            }
 
             let cur = snap.state;
             let ver = snap.version;
@@ -85,9 +92,11 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
             commit(cur, ver);
             attemptRef.current = 0;
             setStatus('live');
-        } catch {
+            log(`sync() OK gen=${gen} version=${ver} (из буфера доиграно ${pending.filter((e) => e.version <= ver).length})`);
+        } catch (e) {
             if (gen !== genRef.current) return;
             setStatus('error');
+            log(`sync() ПРОВАЛ gen=${gen}:`, e?.userMessage ?? e?.message ?? e, `— ретрай через ${Math.round(backoff(attemptRef.current))}мс`);
             timerRef.current = setTimeout(() => {
                 syncingRef.current = false;
                 sync(genRef.current);
@@ -101,20 +110,24 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
     const handleEvent = useCallback((e) => {
         // транзиентные (chat_message, lobby_closed) — мимо версий
         if (typeof e.version !== 'number') {
+            log(`transient: ${e.event ?? '?'}`);
             cb.current.onTransient?.(e);
             return;
         }
         if (stateRef.current === null || syncingRef.current) {
+            log(`event v${e.version} (${e.event ?? '?'}) — в буфер (стейт ещё null/идёт sync)`);
             bufferRef.current.push(e);
             return;
         }
 
         const cur = versionRef.current;
-        if (e.version <= cur) return;                       // дубль после реконнекта
+        if (e.version <= cur) { log(`event v${e.version} — дубль (уже на v${cur}), игнор`); return; }
         if (e.version === cur + 1) {
+            log(`event v${e.version} (${e.event ?? '?'}) — применено`);
             commit(cb.current.reduce(stateRef.current, e), e.version);
             return;
         }
+        log(`event v${e.version} — ПРОПУСК (жду v${cur + 1}), в буфер + форс sync()`);
         bufferRef.current.push(e);   // пропуск — не угадываем
         sync(genRef.current);
     }, [sync]);
@@ -134,6 +147,7 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
 
         const gen = genRef.current;
         setStatus('connecting');
+        log(`connect() gen=${gen} topic=${topic}`);
 
         const es = createEventSource(
             `${MERCURE_URL}?topic=${encodeURIComponent(topic)}`,
@@ -148,17 +162,24 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
         // события, пришедшие до/во время sync, так что запуск здесь безопасен.
         sync(gen);
 
+        es.addEventListener('open', () => log(`SSE open gen=${gen}`));
+
         es.addEventListener('message', (ev) => {
             if (gen !== genRef.current || !ev?.data) return;
-            try { handleEvent(JSON.parse(ev.data)); } catch {}
+            try { handleEvent(JSON.parse(ev.data)); } catch (parseErr) {
+                log('message: не удалось распарсить JSON:', parseErr?.message, String(ev.data).slice(0, 200));
+            }
         });
 
         es.addEventListener('error', () => {
             if (gen !== genRef.current) return;
             setStatus('error');
+            const delay = backoff(attemptRef.current);
+            log(`SSE error gen=${gen} — реконнект через ${Math.round(delay)}мс (попытка №${attemptRef.current + 1})`);
             timerRef.current = setTimeout(() => {
                 if (gen === genRef.current) connect();
-            }, backoff(attemptRef.current++));
+            }, delay);
+            attemptRef.current += 1;
         });
     }, [topic, token, enabled, disconnect, sync, handleEvent]);
 
@@ -181,8 +202,10 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
             if (syncingRef.current || stateRef.current === null) return;
             try {
                 const snap = await cb.current.fetchSnapshot();
+                log(`stale-check: локально v${versionRef.current}, на бэке v${snap.version}`, snap.version > versionRef.current ? '— ОТСТАЛИ, форс-реконнект' : '— норма');
                 if (snap.version > versionRef.current) connect();
-            } catch {
+            } catch (e) {
+                log('stale-check: сам REST недоступен:', e?.userMessage ?? e?.message ?? e);
                 // REST сам недоступен — не забота этой проверки, тем и
                 // занимается обычный error-хендлер EventSource/его backoff.
             }
@@ -194,6 +217,7 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
     useEffect(() => {
         const sub = AppState.addEventListener('change', (s) => {
             if (s === 'active' && enabled && topic) {
+                log('AppState active — форс-реконнект');
                 attemptRef.current = 0;
                 connect();
             }

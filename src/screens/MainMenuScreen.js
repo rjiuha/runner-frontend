@@ -120,38 +120,40 @@ export default function MainMenuScreen({ navigation }) {
   // содержимым меню перед возможным авторедиректом в игру.
   if (checkingSession) {
     return (
-        <View style={styles.splash}>
+        <Screen contentContainerStyle={styles.splash}>
           <LoadingCard />
-        </View>
+        </Screen>
     );
   }
 
   return (
       <Screen scroll contentContainerStyle={styles.content}>
-        <ProfileCard username={user?.username} />
+        <View style={styles.column}>
+          <ProfileCard username={user?.username} />
 
-        <MenuCard
-            title="🏁 Создать лобби"
-            description="Собрать игроков и начать партию"
-            color={colors.danger}
-            onPress={() => setModalOpen(true)}
-        />
+          <MenuCard
+              title="Создать лобби"
+              description="Собрать игроков и начать партию"
+              color={colors.primary}
+              onPress={() => setModalOpen(true)}
+          />
 
-        <MenuCard
-            title="🔍 Найти лобби"
-            description="Присоединиться к открытой игре"
-            color={colors.info}
-            onPress={() => navigation.navigate(ROUTES.LOBBY_SEARCH)}
-        />
+          <MenuCard
+              title="Найти лобби"
+              description="Присоединиться к открытой игре"
+              color={colors.primary}
+              onPress={() => navigation.navigate(ROUTES.LOBBY_SEARCH)}
+          />
 
-        {/* Заготовки под MVP-2 — оставлены намеренно, чтобы был виден план */}
-        <View style={styles.soonBlock}>
-          <Text style={styles.soonLabel} noGlobalTint>Скоро</Text>
-          <MenuCard title="🛒 Магазин" description="Скины и бонусы" color={colors.muted} disabled />
-          <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
+          {/* Заготовки под MVP-2 — оставлены намеренно, чтобы был виден план */}
+          <View style={styles.soonBlock}>
+            <Text style={styles.soonLabel} noGlobalTint>Скоро</Text>
+            <MenuCard title="🛒 Магазин" description="Скины и бонусы" color={colors.muted} disabled />
+            <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
+          </View>
+
+          <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
         </View>
-
-        <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
 
         <CreateLobbyModal
             visible={modalOpen}
@@ -164,8 +166,13 @@ export default function MainMenuScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  splash: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg },
-  content: { padding: spacing.lg },
+  splash: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  // alignItems:'center' + column.width — тот же паттерн, что уже у AuthScreen
+  // (styles.content/styles.form) — по прямому запросу пользователя,
+  // 2026-09-14: "кнопки главного меню и лобби центрировать и по ширине
+  // сделать как окно авторизации в браузере".
+  content: { padding: spacing.lg, alignItems: 'center' },
+  column: { width: '80%', maxWidth: 300 },
   soonBlock: { marginTop: spacing.sm, opacity: 0.7 },
   soonLabel: {
     fontSize: font.tiny, color: colors.textOnDarkSecondary,

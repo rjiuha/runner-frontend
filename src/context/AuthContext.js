@@ -6,8 +6,20 @@ import React, {
 import { authApi } from '../api/auth';
 import { clearTokens, loadTokens, setOnAuthLost, getAccessToken } from '../api/client';
 import { userFromToken } from '../lib/jwt';
+import { createLogger, setLoggerUser } from '../lib/logger';
 
 const AuthContext = createContext(null);
+const log = createLogger('AUTH');
+
+// Единственное место, где меняется React-состояние `user` — заодно всегда
+// синхронизируем логгеру, ЧЕЙ сейчас клиент (см. lib/logger.js), и логируем
+// сам факт смены (2026-09-14, по прямому запросу пользователя — "хочу видеть
+// всё в терминале").
+function applyUser(setUser, user, reason) {
+    setLoggerUser(user?.username ?? null);
+    log(reason, user ? `id=${user.id} username=${user.username}` : '(вышел/не авторизован)');
+    setUser(user);
+}
 
 export function AuthProvider({ children }) {
     const [isLoading, setIsLoading] = useState(true); // читаем хранилище при старте
@@ -18,12 +30,12 @@ export function AuthProvider({ children }) {
         let cancelled = false;
 
         // Клиент сообщит, если рефреш провалился — тогда выкидываем на логин
-        setOnAuthLost(() => setUser(null));
+        setOnAuthLost(() => applyUser(setUser, null, 'auth-lost (рефреш токена не удался)'));
 
         loadTokens()
             .then(({ accessToken }) => {
                 if (cancelled) return;
-                setUser(accessToken ? userFromToken(accessToken) : null);
+                applyUser(setUser, accessToken ? userFromToken(accessToken) : null, 'restore-session');
             })
             .finally(() => {
                 if (!cancelled) setIsLoading(false);
@@ -34,7 +46,7 @@ export function AuthProvider({ children }) {
 
     const signIn = useCallback(async (email, password) => {
         const { token } = await authApi.login(email, password);
-        setUser(userFromToken(token));
+        applyUser(setUser, userFromToken(token), 'sign-in');
     }, []);
 
     const signUp = useCallback(async (email, password, username) => {
@@ -42,12 +54,12 @@ export function AuthProvider({ children }) {
         // Регистрация не выдаёт токенов, поэтому сразу логинимся:
         // пользователю не нужно вводить те же данные второй раз
         await authApi.login(email, password);
-        setUser(userFromToken(getAccessToken()));
+        applyUser(setUser, userFromToken(getAccessToken()), 'sign-up');
     }, []);
 
     const signOut = useCallback(async () => {
         await clearTokens();
-        setUser(null);
+        applyUser(setUser, null, 'sign-out');
     }, []);
 
     const value = useMemo(

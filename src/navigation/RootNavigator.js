@@ -33,6 +33,21 @@ export default function RootNavigator() {
                 headerTitleAlign: 'center',
                 headerStyle: { backgroundColor: '#2c3e50' },
                 headerTintColor: '#fff',
+                // 'fade' вместо дефолтного 'slide_from_right' — по прямому
+                // запросу пользователя, 2026-09-14: "плавное одновременное
+                // исчезание элементов экрана... плавное возникновение элементов
+                // нового экрана" вместо слайда. Встроенный пресет native-stack
+                // (react-native-screens) — ближайшее РЕАЛЬНО поддерживаемое
+                // приближение: кросс-фейд старого/нового экрана целиком, не
+                // покадрово настраиваемая 3-фазная последовательность (fade-out
+                // → спиннер → fade-in отдельными шагами) — для ТАКОГО уровня
+                // контроля нужен JS-driven `@react-navigation/stack`
+                // (cardStyleInterpolator) вместо нативного стека, это отдельная,
+                // более рискованная замена навигатора, не делал без отдельного
+                // запроса. На вебе `NativeStackView.tsx`/`ScreenStack.web.tsx`
+                // не реализуют переходы вообще (см. исходники) — эффект будет
+                // виден только на native (Android/iOS).
+                animation: 'fade',
             }}
         >
             {!isAuthenticated ? (
@@ -57,16 +72,32 @@ export default function RootNavigator() {
                     <Stack.Screen
                         name={ROUTES.LOBBY_SEARCH}
                         component={LobbySearchScreen}
-                        options={{ title: 'Поиск лобби' }}
+                        // headerShown:false — та же правка, что и у LOBBY
+                        // (2026-09-14, по прямому запросу пользователя,
+                        // "по аналогии с лобби"): свой заголовок рисует сам
+                        // экран, см. LobbySearchScreen#screenTitle.
+                        options={{ headerShown: false }}
                     />
 
                     {
                         <Stack.Screen
                             name={ROUTES.LOBBY}
                             component={LobbyScreen}
-                            // выход из лобби — только через POST /api/lobby/leave,
-                            // случайный свайп не должен уводить с экрана
-                            options={{ title: 'Лобби', gestureEnabled: false }}
+                            // headerShown:false (2026-09-14, по прямому запросу
+                            // пользователя) — нативная шапка стека рисовалась на
+                            // всю ширину экрана сплошным непрозрачным цветом
+                            // (перекрывала общий ParallaxBackground) и обычным
+                            // системным шрифтом текста (мимо глобального
+                            // JSX-патча в App.js — шапка рисуется библиотекой
+                            // напрямую, не через наш `<Text>`). Заголовок теперь
+                            // рисует сам LobbyScreen внутри центрированного блока
+                            // (свой шрифт/цвет). gestureEnabled:false оставлен —
+                            // выход из лобби только через POST /api/lobby/leave
+                            // (кнопка «Покинуть лобби»), случайный свайп-назад
+                            // не должен уводить с экрана в обход этого вызова —
+                            // это верно независимо от видимости шапки (на iOS
+                            // жест работает по краю экрана сам по себе).
+                            options={{ headerShown: false, gestureEnabled: false }}
                         />
 
 
@@ -87,10 +118,12 @@ export default function RootNavigator() {
 }
 
 const styles = StyleSheet.create({
+    // Без backgroundColor — под этим спиннером теперь общий ParallaxBackground
+    // (App.js), а не свой сплошной цвет. Тот же приём, что и во всех
+    // остальных загрузочных экранах приложения, см. App.js#TRANSPARENT_NAV_THEME.
     splash: {
         flex: 1,
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: '#2c3e50',
     },
 });

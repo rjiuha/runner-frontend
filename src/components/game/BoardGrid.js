@@ -732,12 +732,14 @@ export default function BoardGrid({
                                     >
                                         <Animated.View style={{ width: segmentW, height: segmentH, opacity: cellOpacity }}>
                                         {cell.baseImage && (
-                                            // Подложка (road под danger/anomaly, sand под mud, см.
+                                            // Подложка (road под danger/anomaly/wall, sand под mud, см.
                                             // lib/board#pickBaseImage) — во весь слот, БЕЗ инсета и
                                             // БЕЗ уменьшенной прозрачности (это "земля", она всегда
-                                            // непрозрачна) — сама клетка (danger/anomaly/mud, см. ниже)
-                                            // рисуется поверх с меньшей opacity, поэтому подложка
-                                            // просвечивает сквозь неё.
+                                            // непрозрачна) — сама клетка рисуется поверх С ИНСЕТОМ (см.
+                                            // ниже), так что подложка в любом случае видна в зазоре по
+                                            // краю; для danger/anomaly/mud она ЕЩЁ и просвечивает сквозь
+                                            // саму картинку клетки (меньшая opacity), для wall — нет
+                                            // (opacity:1, см. CELL_OPACITY).
                                             <Image
                                                 source={cell.baseImage}
                                                 style={{

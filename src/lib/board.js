@@ -39,26 +39,46 @@ function hashString(str) {
  * бегуна, см. lib/runnerAnimTriggers.js), потом конкретный файл внутри него.
  * Так картинка стены и анимация гибели на ней гарантированно совпадают по
  * варианту (acid/burn) — оба берут вариант из ОДНОГО и того же вызова.
+ *
+ * **Реальный баг, найденный живьём (2026-09-13: "везде одинаковый
+ * wall_acid")** — индекс файла ВНУТРИ варианта считался как
+ * `hashString(cellId + ':' + variant) % variants.length`. hashString — по
+ * сути XOR чётностей charCode всех символов (умножение на 31, нечётное
+ * число, сохраняет чётность на каждом шаге) — а `pickDeathVariant` уже решает
+ * acid/burn ПО ЧЁТНОСТИ `hashString(cellId)`. Внутри ветки acid эта чётность
+ * ВСЕГДА 0 (это и есть условие входа в acid) — добавленный константный
+ * суффикс `':acid'` даёт ОДНУ И ТУ ЖЕ добавку чётности для любого cellId,
+ * так что итоговый индекс (при 2 файлах, mod 2) оказывался КОНСТАНТОЙ для
+ * всех acid-клеток разом — подтверждено симуляцией по реальным id клеток
+ * (144 клетки, все 72 acid дали index=1, ни одной с index=0). Фикс — индекс
+ * файла берём из СТАРШИХ бит ТОГО ЖЕ хэша (`Math.floor(h / 2)`), не через
+ * конкатенацию с константным суффиксом — эти биты не участвовали в выборе
+ * ветки (та смотрела только на младший бит), поэтому реально варьируются от
+ * клетки к клетке независимо от того, какая ветка (acid/burn) выбрана.
  */
 export function pickSegmentImage(type, cellId) {
     if (type === 'wall') {
-        const variant = pickDeathVariant(cellId);
+        const h = hashString(cellId);
+        const variant = h % 2 === 0 ? 'acid' : 'burn';
         const variants = SEGMENT_IMAGES.wall[variant];
-        return variants[hashString(`${cellId}:${variant}`) % variants.length];
+        return variants[Math.floor(h / 2) % variants.length];
     }
     const variants = SEGMENT_IMAGES[type] || SEGMENT_IMAGES.road;
     return variants[hashString(cellId) % variants.length];
 }
 
 /**
- * Тип "подложки" под клетки danger/anomaly/mud — по прямому запросу
+ * Тип "подложки" под клетки danger/anomaly/mud/wall — по прямому запросу
  * пользователя, 2026-08-30/31: под danger и anomaly кладём road, под mud
  * (грязь/dirt) — случайный (детерминированно по id клетки, как и сам
- * pickSegmentImage) sand. wall — БЕЗ подложки (2026-09-13, стена теперь
- * непрозрачна целиком, класть под неё road больше незачем). Остальные типы
- * (road/sand) — это они сами и есть "земля", подложки не нужно.
+ * pickSegmentImage) sand. wall — ВЕРНУЛИ road под низ (2026-09-13, второй
+ * раз за день — стена сама непрозрачна, но у неё, как и у остальных типов,
+ * есть SEGMENT_INSET-зазор по краю слота, и под ним по прямому запросу
+ * пользователя должна быть видна дорога, не пустой фон экрана — "wall
+ * отображался над road_base"). Остальные типы (road/sand) — это они сами и
+ * есть "земля", подложки не нужно.
  */
-const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', mud: 'sand' };
+const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', mud: 'sand', wall: 'road' };
 
 /** Картинка подложки для типа клетки, или null если подложка не нужна (см. BASE_IMAGE_TYPE). */
 export function pickBaseImage(type, cellId) {

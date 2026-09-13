@@ -203,7 +203,10 @@ const styles = StyleSheet.create({
   content: { alignItems: 'center', paddingHorizontal: spacing.lg, paddingBottom: spacing.xxl },
 
   header: { marginTop: spacing.xxl, marginBottom: spacing.xxl, alignItems: 'center' },
-  title: { fontSize: font.h1, color: colors.textOnDark, fontWeight: 'bold' },
+  // color: colors.neonCyan — точечно, ЯВНО (2026-09-14). Раньше это давал
+  // глобальный jsx-патч в App.js (форсил циан на любой Text) — по прямому
+  // решению пользователя патч убран, циан остаётся ТОЛЬКО тут.
+  title: { fontSize: font.h1, color: colors.neonCyan, fontWeight: 'bold' },
   subtitle: { fontSize: font.body, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
 
   tabBar: {
@@ -221,5 +224,9 @@ const styles = StyleSheet.create({
   activeLabel: { color: colors.textOnDark, fontWeight: 'bold' },
 
   form: { width: '80%', maxWidth: 300, alignSelf: 'center' },
-  submit: { marginTop: spacing.sm, borderRadius: radius.md },
+  // backgroundColor явно (2026-09-14, по прямому запросу пользователя) —
+  // дефолтный variant="primary" у Button даёт полупрозрачный
+  // colors.primaryTranslucent, тут перекрываем сплошным colors.primary (тот
+  // же приём, что и у кнопки "Обновить" на LobbySearchScreen).
+  submit: { marginTop: spacing.sm, borderRadius: radius.md, backgroundColor: colors.primary },
 });

@@ -75,9 +75,15 @@ export default function LobbyScreen({ route, navigation }) {
         }
     };
 
+    // Отдельный от `busy` флаг (2026-09-14, по прямому запросу пользователя) —
+    // раньше "Покинуть лобби" делила один и тот же `busy` с "Готов"/"Не готов",
+    // и нажатие "Покинуть лобби" во время READY заодно включало спиннер на
+    // кнопке готовности, хотя её запрос никто не делал.
+    const [leaving, setLeaving] = useState(false);
+
     const leave = async () => {
         leftRef.current = true;
-        setBusy(true);
+        setLeaving(true);
         try { await lobbyApi.leave(); } catch {} // лобби могло уже исчезнуть
         goMenu();
     };
@@ -94,56 +100,78 @@ export default function LobbyScreen({ route, navigation }) {
 
     return (
         <Screen scroll contentContainerStyle={styles.content}>
-            <View style={styles.headRow}>
-                <Text style={styles.title} noGlobalTint>
-                    {lobby.players.length}/{lobby.maxPlayers} игроков
+            <View style={styles.column}>
+                {/* Заменяет убранную нативную шапку стека (headerShown:false в
+                    RootNavigator, 2026-09-14) — та рисовалась на всю ширину
+                    экрана системным шрифтом, мимо общего стиля приложения. */}
+                <Text style={styles.screenTitle} noGlobalTint>Лобби #{lobbyId}</Text>
+
+                <View style={styles.headRow}>
+                    <Text style={styles.title} noGlobalTint>
+                        {lobby.players.length}/{lobby.maxPlayers} игроков
+                    </Text>
+                    <View style={styles.statusRow}>
+                        <View style={[styles.dot, status === 'live' && styles.dotLive]} />
+                        <Text style={styles.status} noGlobalTint>{STATUS_LABEL[status] ?? ''}</Text>
+                    </View>
+                </View>
+
+                {lobby.players.map((p) => (
+                    <View key={p.id} style={styles.player}>
+                        <Text style={styles.playerName} noGlobalTint>
+                            {p.username}
+                            {p.id === lobby.host?.id ? '  👑' : ''}
+                            {p.id === user?.id ? '  (ты)' : ''}
+                        </Text>
+                        <Text style={[styles.badge, p.isReady && styles.badgeReady]} noGlobalTint>
+                            {p.isReady ? 'готов' : 'ждёт'}
+                        </Text>
+                    </View>
+                ))}
+
+                {/* Свободные слоты */}
+                {Array.from({ length: Math.max(0, lobby.maxPlayers - lobby.players.length) }).map((_, i) => (
+                    <View key={`slot${i}`} style={[styles.player, styles.slotEmpty]}>
+                        <Text style={styles.slotText} noGlobalTint>Ожидание игрока…</Text>
+                    </View>
+                ))}
+
+                <Text style={styles.hint} noGlobalTint>
+                    Готовы {readyCount} из {lobby.maxPlayers}. Игра начнётся автоматически.
                 </Text>
-                <View style={styles.statusRow}>
-                    <View style={[styles.dot, status === 'live' && styles.dotLive]} />
-                    <Text style={styles.status} noGlobalTint>{STATUS_LABEL[status] ?? ''}</Text>
-                </View>
+
+                <Button
+                    title={me?.isReady ? 'Не готов' : 'Готов'}
+                    variant={me?.isReady ? 'muted' : 'success'}
+                    onPress={toggleReady}
+                    loading={busy}
+                    disabled={!me || leaving}
+                    style={styles.action}
+                />
+                <Button
+                    title="Покинуть лобби"
+                    variant="danger"
+                    onPress={leave}
+                    loading={leaving}
+                    disabled={busy}
+                    style={styles.action}
+                />
             </View>
-
-            {lobby.players.map((p) => (
-                <View key={p.id} style={styles.player}>
-                    <Text style={styles.playerName} noGlobalTint>
-                        {p.username}
-                        {p.id === lobby.host?.id ? '  👑' : ''}
-                        {p.id === user?.id ? '  (ты)' : ''}
-                    </Text>
-                    <Text style={[styles.badge, p.isReady && styles.badgeReady]} noGlobalTint>
-                        {p.isReady ? 'готов' : 'ждёт'}
-                    </Text>
-                </View>
-            ))}
-
-            {/* Свободные слоты */}
-            {Array.from({ length: Math.max(0, lobby.maxPlayers - lobby.players.length) }).map((_, i) => (
-                <View key={`slot${i}`} style={[styles.player, styles.slotEmpty]}>
-                    <Text style={styles.slotText} noGlobalTint>Ожидание игрока…</Text>
-                </View>
-            ))}
-
-            <Text style={styles.hint} noGlobalTint>
-                Готовы {readyCount} из {lobby.maxPlayers}. Игра начнётся автоматически.
-            </Text>
-
-            <Button
-                title={me?.isReady ? 'Не готов' : 'Готов'}
-                variant={me?.isReady ? 'muted' : 'success'}
-                onPress={toggleReady}
-                loading={busy}
-                disabled={!me}
-                style={styles.action}
-            />
-            <Button title="Покинуть лобби" variant="danger" onPress={leave} disabled={busy} style={styles.action} />
         </Screen>
     );
 }
 
 const styles = StyleSheet.create({
     center: { alignItems: 'center', justifyContent: 'center' },
-    content: { padding: spacing.lg },
+    // alignItems:'center' + column.width — тот же паттерн, что уже у
+    // AuthScreen (styles.content/styles.form) и MainMenuScreen, по прямому
+    // запросу пользователя, 2026-09-14.
+    content: { padding: spacing.lg, alignItems: 'center' },
+    column: { width: '80%', maxWidth: 300 },
+    screenTitle: {
+        fontSize: font.h1, fontWeight: 'bold', color: colors.textOnDark,
+        marginTop: spacing.md, marginBottom: spacing.lg, textAlign: 'center',
+    },
     headRow: { marginBottom: spacing.md },
     title: { fontSize: font.h2, fontWeight: 'bold', color: colors.textOnDark },
     statusRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.xs },
