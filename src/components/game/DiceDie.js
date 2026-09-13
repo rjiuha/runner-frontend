@@ -46,7 +46,7 @@ const IS_WEB = Platform.OS === 'web';
  * draggable=false — кубик виден (не отдан), но жест выключен: не мой ход
  * или не тот шаг хода (см. dragMode в PlayerInfoPanel).
  */
-export default function DiceDie({ value, draggable = true, onDragMove, onDrop, size = 44 }) {
+export default function DiceDie({ value, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size = 44 }) {
     const originX = useSharedValue(0);
     const originY = useSharedValue(0);
     const translateX = useSharedValue(0);
@@ -68,6 +68,11 @@ export default function DiceDie({ value, draggable = true, onDragMove, onDrop, s
         .enabled(value != null && draggable)
         .onStart(() => {
             dragging.value = true;
+            // onDragStart/onDragEnd (2026-09-14) — сигнал ВЫШЕ (PlayerInfoPanel),
+            // что кубик СЕЙЧАС реально тащат, и каким значением — нужен только
+            // для подсветки следующего шага (см. PulseHighlight/PulseText), сама
+            // логика драга/дропа этих колбэков не касается вообще.
+            if (onDragStart) runOnJS(onDragStart)(value);
         })
         .onUpdate((e) => {
             if (IS_WEB) {
@@ -92,6 +97,7 @@ export default function DiceDie({ value, draggable = true, onDragMove, onDrop, s
             dragging.value = false;
             translateX.value = withSpring(0);
             translateY.value = withSpring(0);
+            if (onDragEnd) runOnJS(onDragEnd)();
         });
 
     const animatedStyle = useAnimatedStyle(() => ({

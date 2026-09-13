@@ -5,7 +5,15 @@ import AbilityZone from './AbilityZone';
 import { PLAYER_ABILITY_ORDER } from '../../constants/GameConstants';
 import { spacing } from '../../theme';
 
-/** 4 зоны усилений (Буст/Лечение/Жнец/Призрак) в сетке 2×2. */
+/**
+ * 4 зоны усилений (Буст/Лечение/Жнец/Призрак) в сетке 2×2.
+ *
+ * `pulseKeys` (2026-09-14, по прямому запросу пользователя) — Set ключей
+ * усилений, которые нужно подсветить "дышащей" рамкой ПРЯМО СЕЙЧАС (см.
+ * AbilityZone#pulseHighlight) — PlayerInfoPanel сам решает, пуст он или нет
+ * (пока не тащат кубик — пуст, во время драга — ключи, чей min/max подходит
+ * под конкретное перетаскиваемое значение).
+ */
 export default function AbilityZones({
     assignments,
     hoverKey,
@@ -15,6 +23,7 @@ export default function AbilityZones({
     remeasureTick,
     compact = false,
     color,
+    pulseKeys = null,
 }) {
     return (
         <View style={styles.grid}>
@@ -29,6 +38,7 @@ export default function AbilityZones({
                     remeasureTick={remeasureTick}
                     compact={compact}
                     color={color}
+                    pulseHighlight={!!pulseKeys?.has(key)}
                 />
             ))}
         </View>

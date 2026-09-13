@@ -1,9 +1,9 @@
 {
   "name": "runner-game",
-  "displayName": "Runner Game",
+  "displayName": "Star Runners",
   "expo": {
     "slug": "runner-game",
-    "name": "Runner Game",
+    "name": "Star Runners",
     "description": "Рейс на выживание",
     "version": "1.0.0",
     "orientation": "portrait",

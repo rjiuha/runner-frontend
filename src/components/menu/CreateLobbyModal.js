@@ -17,8 +17,8 @@ export default function CreateLobbyModal({ visible, onClose, onSubmit, busy }) {
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={styles.backdrop}>
                 <View style={styles.sheet}>
-                    <Text style={styles.title}>Новое лобби</Text>
-                    <Text style={styles.label}>Сколько игроков?</Text>
+                    <Text style={styles.title} noGlobalTint>Новое лобби</Text>
+                    <Text style={styles.label} noGlobalTint>Сколько игроков?</Text>
 
                     <View style={styles.options}>
                         {OPTIONS.map((n) => {
@@ -30,13 +30,13 @@ export default function CreateLobbyModal({ visible, onClose, onSubmit, busy }) {
                                     onPress={() => setMaxPlayers(n)}
                                     disabled={busy}
                                 >
-                                    <Text style={[styles.optionText, active && styles.optionTextActive]}>{n}</Text>
+                                    <Text style={[styles.optionText, active && styles.optionTextActive]} noGlobalTint>{n}</Text>
                                 </TouchableOpacity>
                             );
                         })}
                     </View>
 
-                    <Text style={styles.hint}>
+                    <Text style={styles.hint} noGlobalTint>
                         Игра начнётся автоматически, когда все {maxPlayers} игроков будут готовы
                     </Text>
 

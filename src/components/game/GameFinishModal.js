@@ -17,7 +17,7 @@ export default function GameFinishModal({ visible, winnerName, onExit }) {
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onExit}>
             <View style={styles.backdrop}>
                 <View style={styles.sheet}>
-                    <Text style={styles.title}>
+                    <Text style={styles.title} noGlobalTint>
                         {winnerName ? `Игрок ${winnerName} победил!` : 'Игра завершена'}
                     </Text>
                     <Button title="Выйти" onPress={onExit} style={styles.exitBtn} />

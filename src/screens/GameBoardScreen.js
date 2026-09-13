@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Animated, Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, Platform, StyleSheet, Text, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -14,7 +14,8 @@ import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
 import ParallaxBackground from '../components/ui/ParallaxBackground';
 import Button from '../components/ui/Button';
-import LoadingTip from '../components/ui/LoadingTip';
+import LoadingCard from '../components/ui/LoadingCard';
+import PulseText from '../components/ui/PulseText';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
@@ -138,7 +139,7 @@ function rawCellType(game, segment, positionX, positionY) {
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
 function stepInstruction(
-    step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, trackGain,
+    step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
     pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
 ) {
     if (pendingReaperPlacement) {
@@ -159,18 +160,23 @@ function stepInstruction(
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
         // ("Бегун выбран"), и на карточках с одинаковой иконкой/цветом (или просто
         // издалека) не всегда было очевидно, кого именно выбрали.
+        // Сокращено по прямому запросу пользователя (2026-09-14) — кнопки
+        // теперь сами по себе понятны (✓/✕, см. ниже), длинная инструкция
+        // "подтверди или тапни бегуна ещё раз, чтобы отменить" избыточна,
+        // но короткое "подтверди действие" оставлено — по отдельному прямому
+        // запросу тем же днём, добавить обратно в ту же строку.
         const label = pendingRunnerName ? `«${pendingRunnerName}»` : 'Бегун';
         return pendingSelect.type === 'ROLL'
-            ? `Накат для ${label} выбран — подтверди или тапни бегуна ещё раз, чтобы отменить`
-            : `${label} выбран — подтверди или тапни бегуна ещё раз, чтобы отменить`;
+            ? `Накат для ${label} выбран — подтверди действие`
+            : `${label} выбран — подтверди действие`;
     }
     switch (step) {
         case PLAYER_STEP.SELECT:
-            return 'Перетащи кубик перемещения на карточку бегуна, чтобы выбрать его для хода';
+            return 'Перетащи кубик на карточку бегуна';
         case PLAYER_STEP.ABILITY:
             if (pendingAbility?.ability === 'heal') return 'Тапни карточку своего повреждённого бегуна';
             if (pendingAbility?.ability === 'reaper') return 'Тапни подсвеченную клетку, чтобы поставить Жнеца';
-            return 'Перетащи кубик на усиление или нажми «Пропустить усиление»';
+            return 'Выбери усиление, если хочешь';
         case PLAYER_STEP.MOVE:
             // activeRunner может быть неизвестен клиенту сразу после
             // reconnect/резинка — RunnerPlayer::toArray() на бэке не отдаёт
@@ -183,12 +189,12 @@ function stepInstruction(
             if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — дождись следующего события или обнови соединение';
             return activeRunner.segment == null
                 ? 'Тапни подсвеченную клетку в заднем ряду — это выход на трассу'
-                : 'Тапни подсвеченную клетку, чтобы переместиться';
+                : 'Выбери доступную клетку для хода';
         case PLAYER_STEP.SHOOT:
             if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — доступно только «Пропустить выстрел»';
             return 'Тапни подсвеченную цель или нажми «Пропустить выстрел»';
         case PLAYER_STEP.ROAD_BONUS:
-            return `Бегун не покидал дорогу — использовать бонус кубика дороги (+${trackGain ?? '?'} очков) или пропустить?`;
+            return 'Применить бонус кубика дороги?';
         default:
             return null;
     }
@@ -1203,6 +1209,29 @@ export default function GameBoardScreen({ route, navigation }) {
         return { highlightedCells: new Set(), tapMode: null };
     }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, trackShiftPhase]);
 
+    // Первый выход бегуна из резерва на трассу (tapMode==='start' выше) —
+    // подсвеченные клетки ВСЕГДА на segment=0/positionX=0 (globalCol=0), но
+    // камера могла быть проскроллена куда угодно с прошлого хода — по
+    // прямому запросу пользователя, 2026-09-13, автоматически подводим окно
+    // прокрутки к началу трассы, как только это состояние наступает, чтобы
+    // подсветку было видно сразу, без ручного скролла. `startTapJumpedRef` —
+    // прыгаем ОДИН раз на активацию (не на каждый рендер, пока tapMode
+    // остаётся 'start') — иначе это спорило бы с любой попыткой игрока
+    // прокрутить дальше вручную, пока он ещё не тапнул. Сбрасывается, как
+    // только tapMode уходит от 'start' (бегун разместился/сменился шаг) —
+    // готово сработать заново для следующего такого бегуна.
+    const startTapJumpedRef = useRef(false);
+    useEffect(() => {
+        if (tapMode === 'start') {
+            if (!startTapJumpedRef.current) {
+                startTapJumpedRef.current = true;
+                jumpToStart(0);
+            }
+        } else {
+            startTapJumpedRef.current = false;
+        }
+    }, [tapMode, jumpToStart]);
+
     // Есть ли у Жнеца реальный выстрел ПРЯМО СЕЙЧАС (раунд>0 И подсвеченная
     // клетка реально нашлась, см. reaperShoot-ветку useMemo выше) — общий
     // источник истины для подсказки (stepInstruction) и для авто-подтверждения
@@ -1709,9 +1738,7 @@ export default function GameBoardScreen({ route, navigation }) {
             <View style={styles.wrapper}>
                 <ParallaxBackground />
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={styles.statusText}>{STATUS_LABEL[status] ?? ''}</Text>
-                    <LoadingTip />
+                    <LoadingCard label={STATUS_LABEL[status] ?? ''} />
                 </View>
             </View>
         );
@@ -1731,17 +1758,14 @@ export default function GameBoardScreen({ route, navigation }) {
             <View style={styles.wrapper}>
                 <ParallaxBackground />
                 <View style={styles.center}>
-                    <ActivityIndicator size="large" color={colors.primary} />
-                    <Text style={styles.statusText}>
-                        Начинаем партию… готовы {readyCount} из {gamePlayers.length}
-                    </Text>
-                    <LoadingTip />
-                    {autoStartError && (
-                        <>
-                            <Text style={styles.errorText}>{autoStartError}</Text>
-                            <Button title="Повторить" variant="danger" onPress={retryAutoStart} style={styles.retryBtn} />
-                        </>
-                    )}
+                    <LoadingCard label={`Начинаем партию… готовы ${readyCount} из ${gamePlayers.length}`}>
+                        {autoStartError && (
+                            <>
+                                <Text style={styles.errorText} noGlobalTint>{autoStartError}</Text>
+                                <Button title="Повторить" variant="danger" onPress={retryAutoStart} style={styles.retryBtn} />
+                            </>
+                        )}
+                    </LoadingCard>
                 </View>
                 <EventLogPanel entries={eventLog} />
             </View>
@@ -1751,6 +1775,13 @@ export default function GameBoardScreen({ route, navigation }) {
     const showShootSkip = myTurn && myStep === PLAYER_STEP.SHOOT && !busy;
     const showAbilitySkip = myTurn && myStep === PLAYER_STEP.ABILITY && !busy && !pendingAbility && !pendingReaperPlacement;
     const showRoadBonusChoice = myTurn && myStep === PLAYER_STEP.ROAD_BONUS && !busy;
+    // Подсказка "что делать дальше" (2026-09-14, по прямому запросу
+    // пользователя) — SELECT: пока кубик хода не тащат никуда, подсвечиваем
+    // заголовок+панель кубиков в PlayerInfoPanel (см. highlightSelectIdle
+    // там). ABILITY переиспользует УЖЕ существующий showAbilitySkip — то же
+    // самое условие одновременно подсвечивает и панель кубиков (та же логика
+    // в PlayerInfoPanel), и саму кнопку "Пропустить усиление" ниже.
+    const highlightSelectIdle = myTurn && myStep === PLAYER_STEP.SELECT && !busy && !pendingSelect;
 
     // Раньше на экране не было видно вообще, чей ход и что делать дальше — см.
     // живой прогон в CLAUDE.md. Один банер: чей ход + подсказка по шагу + кнопка
@@ -1760,15 +1791,70 @@ export default function GameBoardScreen({ route, navigation }) {
     // где раньше было крупное имя игрока (см. PlayerInfoPanel.headerContent) —
     // отдельный плавающий банер над узкой доской либо перекрывал её, либо
     // занимал место, которое теперь отдано доске/панели.
+    const turnHintText = stepInstruction(
+        myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
+        pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
+    );
+    // pendingSelect (карточка выбрана, ждём ✓/✕) — кнопки ПРАВЕЕ текста, в
+    // одну строку с ним, а не отдельным рядом ниже (по прямому запросу
+    // пользователя, 2026-09-14, "чтобы сократить размер плитки диалога" —
+    // после того как сам текст уже укоротили, а кнопки стали иконками,
+    // отдельная строка под ними тратила высоту зря). Остальные состояния
+    // (ABILITY/MOVE/SHOOT/Жнец/бонус дороги) — без изменений, текст и кнопки
+    // по-прежнему на разных строках (там текст длиннее, в строку не влезет).
     const turnBannerInner = myTurn ? (
         <>
-            <Text style={styles.turnTitleMine}>Твой ход</Text>
-            <Text style={styles.turnHint}>
-                {stepInstruction(
-                    myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName, game.trackGain,
-                    pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
-                )}
-            </Text>
+            {/* Пульсирует бело↔зелёным всё время, пока myTurn (весь этот блок
+                рендерится только тогда) — по прямому запросу пользователя,
+                2026-09-14, тем же общим механизмом, что и подсказки "что
+                делать дальше" (см. usePulse/PulseText, CLAUDE.md). */}
+            <PulseText active baseColor={colors.textOnDark} toColor={colors.success} style={styles.turnTitleMine}>
+                Твой ход
+            </PulseText>
+            {!pendingReaperPlacement && pendingSelect && !busy ? (
+                <View style={styles.turnHintRow}>
+                    <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
+                    <View style={styles.turnBtnRow}>
+                        <Button title="✓" variant="success" onPress={handleConfirmSelect} style={styles.turnSkipBtnCompact} />
+                        <Button title="✕" variant="danger" onPress={handleCancelSelect} style={styles.turnSkipBtnCompact} />
+                    </View>
+                </View>
+            ) : showRoadBonusChoice ? (
+                // Тот же приём, что и у pendingSelect/showAbilitySkip выше —
+                // текст+кнопки в одну строку, кнопки справа (по прямому
+                // запросу пользователя, 2026-09-14). "Пропустить" заменена на
+                // красную кнопку с крестиком (была variant="muted" с текстом)
+                // — тот же язык, что уже используют ✓/✕ у pendingSelect.
+                <View style={styles.turnHintRow}>
+                    <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
+                    <View style={styles.turnBtnRow}>
+                        <Button
+                            title={`Бонус +${game.trackGain ?? ''}`}
+                            variant="success"
+                            onPress={() => handleRoadBonus(true)}
+                            style={styles.turnSkipBtnCompact}
+                        />
+                        <Button title="✕" variant="danger" onPress={() => handleRoadBonus(false)} style={styles.turnSkipBtnCompact} />
+                    </View>
+                </View>
+            ) : showAbilitySkip ? (
+                // Тот же приём, что и у pendingSelect выше — текст+кнопка в
+                // одну строку, кнопка справа (по прямому запросу пользователя,
+                // 2026-09-14, "по аналогии с предыдущим диалогом"). Без
+                // пульсации (была раньше, PulseHighlight active={showAbilitySkip})
+                // — убрана по прямому запросу, тут больше не подсвечиваем.
+                <View style={styles.turnHintRow}>
+                    <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
+                    <Button title="Пропустить" variant="muted" onPress={handleAbilitySkip} style={styles.turnSkipBtnCompact} />
+                </View>
+            ) : (
+                // Центрировано (по прямому запросу пользователя, 2026-09-14) —
+                // ТОЛЬКО этот, безкнопочный случай (MOVE/SHOOT/ABILITY heal-
+                // reaper и т.п.). Строки с кнопками (turnHintFlex выше) не
+                // трогали — там текст рядом с кнопкой, левое выравнивание там
+                // читается естественнее.
+                <Text style={[styles.turnHint, styles.turnHintCenter]} noGlobalTint>{turnHintText}</Text>
+            )}
             {showActionStuckRefresh && !busy && (
                 <Button
                     title="Обновить состояние"
@@ -1818,34 +1904,32 @@ export default function GameBoardScreen({ route, navigation }) {
                     <Button title="Отмена" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtn} />
                 </View>
             )}
-            {!pendingReaperPlacement && pendingSelect && !busy && (
-                <View style={styles.turnBtnRow}>
-                    <Button title="Подтвердить" variant="success" onPress={handleConfirmSelect} style={styles.turnSkipBtn} />
-                    <Button title="Отмена" variant="muted" onPress={handleCancelSelect} style={styles.turnSkipBtn} />
-                </View>
-            )}
-            {!pendingReaperPlacement && !pendingSelect && showRoadBonusChoice && (
-                <View style={styles.turnBtnRow}>
-                    <Button
-                        title={`Бонус +${game.trackGain ?? ''}`}
-                        variant="success"
-                        onPress={() => handleRoadBonus(true)}
-                        style={styles.turnSkipBtn}
-                    />
-                    <Button title="Пропустить" variant="muted" onPress={() => handleRoadBonus(false)} style={styles.turnSkipBtn} />
-                </View>
-            )}
-            {!pendingSelect && !showRoadBonusChoice && (showShootSkip || showAbilitySkip) && (
+            {/* Бонус дороги и усиление теперь в строке с текстом выше (см.
+                showRoadBonusChoice/showAbilitySkip в ветке turnHintRow) —
+                здесь остался только выстрел. */}
+            {!pendingSelect && !showRoadBonusChoice && !showAbilitySkip && showShootSkip && (
                 <Button
-                    title={showShootSkip ? 'Пропустить выстрел' : 'Пропустить усиление'}
+                    title="Пропустить выстрел"
                     variant="muted"
-                    onPress={showShootSkip ? handleShootSkip : handleAbilitySkip}
+                    onPress={handleShootSkip}
                     style={styles.turnSkipBtn}
                 />
             )}
         </>
     ) : (
-        <Text style={styles.turnTitle}>Ход игрока: {currentTurnPlayer?.user?.username ?? '—'}</Text>
+        // Центрировано + имя в цвете игрока, чей сейчас ход — по прямому
+        // запросу пользователя, 2026-09-14, тот же playerColorById, что уже
+        // красит кубики/обводку на доске/пилюлю переключателя (не выдуманный
+        // отдельный акцент).
+        <Text style={[styles.turnTitle, styles.turnHintCenter]} noGlobalTint>
+            Ход игрока:{' '}
+            <Text
+                style={{ color: playerColorById[currentTurnPlayer?.id] ?? colors.textOnDark }}
+                noGlobalTint
+            >
+                {currentTurnPlayer?.user?.username ?? '—'}
+            </Text>
+        </Text>
     );
 
     // Общий элемент для обеих раскладок (было продублировано дважды —
@@ -1947,16 +2031,23 @@ export default function GameBoardScreen({ route, navigation }) {
                 (см. highlightedCells), banner объясняет почему. */}
             {trackShiftPhase && (
                 <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]} pointerEvents="none">
-                    <Text style={styles.collisionText}>Трасса смещается…</Text>
+                    <Text style={styles.collisionText} noGlobalTint>Трасса смещается…</Text>
                 </View>
             )}
 
-            {!isPortrait && <View style={styles.turnBanner}>{turnBannerInner}</View>}
+            {/* width = leftPanelW (2026-09-14, по прямому запросу пользователя) —
+                раньше был отдельный, НЕ связанный с шириной панели maxWidth:280
+                (turnBanner — position:'absolute', плавает НАД доской, это не
+                часть PlayerInfoPanel и не подхватывает её ширину сама по себе;
+                правка ширины RunnerCard этим же днём тут ни при чём — другой
+                компонент). Теперь плитка "Твой ход"/"Ход игрока" всегда РОВНО
+                той же ширины, что и левая панель под ней. */}
+            {!isPortrait && <View style={[styles.turnBanner, { width: leftPanelW }]}>{turnBannerInner}</View>}
 
             {game.extraTurnPlayer != null && (
                 <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]}>
                     <View style={styles.collisionTextColumn}>
-                        <Text style={styles.collisionText}>
+                        <Text style={styles.collisionText} noGlobalTint>
                             {/* Столкновение происходит в любом случае — отказаться от него
                                 нельзя (по правилам выбор есть только у более крупного бегуна
                                 при столкновении разных размеров, см. myCollision выше). Выбор
@@ -1985,7 +2076,7 @@ export default function GameBoardScreen({ route, navigation }) {
                             бегун — см. коммент у pendingCollisionRoll про известный баг
                             порядка lowRunner/topRunner на бэке в одной из веток. */}
                         {pendingCollisionRoll && collisionDecisionReady && (
-                            <Text style={styles.collisionRollText}>
+                            <Text style={styles.collisionRollText} noGlobalTint>
                                 Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} → {directionLabel(pendingCollisionRoll.direction)}
                             </Text>
                         )}
@@ -2021,11 +2112,14 @@ export default function GameBoardScreen({ route, navigation }) {
                     activePlayerId={activePlayerId}
                     onSelectPlayer={setActivePlayerId}
                     myPlayerId={myPlayer?.id ?? null}
+                    currentTurnPlayerId={game.playerOrder}
                     canAct={myTurn && !busy}
                     myStep={myStep}
                     pendingAbility={pendingAbility}
                     pendingSelect={pendingSelect}
                     canSelectRunner={canSelectRunner}
+                    highlightSelectIdle={highlightSelectIdle}
+                    highlightAbilityIdle={showAbilitySkip}
                     onDropOnAbility={handleDropOnAbility}
                     onPressAbilityZone={handlePressAbilityZone}
                     onDropOnRunner={handleDropOnRunner}
@@ -2125,11 +2219,14 @@ export default function GameBoardScreen({ route, navigation }) {
                         activePlayerId={activePlayerId}
                         onSelectPlayer={setActivePlayerId}
                         myPlayerId={myPlayer?.id ?? null}
+                    currentTurnPlayerId={game.playerOrder}
                         canAct={myTurn && !busy}
                         myStep={myStep}
                         pendingAbility={pendingAbility}
                         pendingSelect={pendingSelect}
                         canSelectRunner={canSelectRunner}
+                    highlightSelectIdle={highlightSelectIdle}
+                    highlightAbilityIdle={showAbilitySkip}
                         onDropOnAbility={handleDropOnAbility}
                         onPressAbilityZone={handlePressAbilityZone}
                         onDropOnRunner={handleDropOnRunner}
@@ -2250,7 +2347,6 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    statusText: { fontSize: font.small, color: colors.textOnDarkSecondary, marginTop: spacing.sm },
     errorText: { fontSize: font.small, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
     retryBtn: { marginTop: spacing.sm },
     collisionBanner: {
@@ -2277,14 +2373,43 @@ const styles = StyleSheet.create({
     collisionBtn: { minHeight: 26, paddingVertical: 2, paddingHorizontal: spacing.sm },
     collisionBtnText: { fontSize: font.tiny, fontWeight: '600' },
     turnBanner: {
-        position: 'absolute', top: spacing.md, left: spacing.md, zIndex: 20, elevation: 20,
-        maxWidth: 280, backgroundColor: colors.bgLight, borderRadius: radius.md,
+        // left:0, было spacing.md (2026-09-14) — панель под ней начинается
+        // РОВНО у левого края экрана (wrapper), а ширина банера теперь =
+        // leftPanelW (см. место рендера) — старый отступ слева сдвигал ВЕСЬ
+        // блок вправо, из-за чего справа он вылезал за пределы панели ровно
+        // на ту же величину (живая жалоба пользователя, скриншот с разметкой).
+        position: 'absolute', top: spacing.md, left: 0, zIndex: 20, elevation: 20,
+        // maxWidth убран (2026-09-14) — width теперь передаётся явно
+        // (={leftPanelW}) в месте рендера; maxWidth:280, оставленный тут,
+        // ограничивал бы её сверху и на широких панелях (leftPanelW обычно
+        // заметно больше 280) банер продолжал бы выглядеть узким.
+        backgroundColor: colors.bgLight, borderRadius: radius.md,
         paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
     },
     turnTitle: { color: colors.textOnDarkSecondary, fontSize: font.small, fontWeight: 'bold' },
-    turnTitleMine: { color: colors.success, fontSize: font.small, fontWeight: 'bold' },
+    // color тут больше не используется (PulseText сам управляет цветом, см.
+    // выше) — оставлен как безопасный дефолт на случай, если PulseText
+    // почему-то не смонтируется. textAlign:'center' — по прямому запросу
+    // пользователя, 2026-09-14, тайтл был прижат влево.
+    turnTitleMine: { color: colors.success, fontSize: font.small, fontWeight: 'bold', textAlign: 'center' },
     turnHint: { color: colors.textOnDark, fontSize: font.tiny, marginTop: 2 },
+    // Только для безкнопочного случая (см. turnBannerInner) — строки с
+    // кнопками справа (turnHintFlex) не центрируем, там текст рядом с кнопкой.
+    turnHintCenter: { textAlign: 'center' },
+    // pendingSelect — текст+кнопки ✓/✕ в ОДНУ строку (см. turnBannerInner
+    // выше), не друг под другом — сокращает высоту плитки диалога.
+    turnHintRow: { flexDirection: 'row', alignItems: 'center', marginTop: 2, gap: spacing.xs },
+    turnHintFlex: { flex: 1, marginTop: 0 },
     turnSkipBtn: { minHeight: 32, paddingVertical: spacing.xs, paddingHorizontal: spacing.md, marginTop: spacing.xs },
+    // Компактный вариант turnSkipBtn для ✓/✕ рядом с текстом — без
+    // marginTop (уже выровнены по строке через alignItems:'center' в
+    // turnHintRow) и с меньшим горизонтальным паддингом (иконка уже сама по
+    // себе узкая, полноразмерный паддинг кнопки тут ни к чему).
+    // Ниже, чем обычный turnSkipBtn (minHeight:32) — по прямому запросу
+    // пользователя, 2026-09-14 (сначала сказал "поуже", имел в виду "пониже").
+    // Та же величина, что уже используется для компактных кнопок в этом
+    // файле (см. collisionBtn).
+    turnSkipBtnCompact: { minHeight: 26, paddingVertical: 2, paddingHorizontal: spacing.md },
     turnBtnRow: { flexDirection: 'row', gap: spacing.xs },
     // Тот же баннер хода, что в альбомной раскладке плавает над доской
     // (styles.turnBanner), но встроенный в обычный поток панели (портретная

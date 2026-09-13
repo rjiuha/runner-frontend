@@ -16,9 +16,13 @@ export default function MenuCard({ title, description, color, onPress, loading, 
             {loading ? (
                 <ActivityIndicator color={colors.textOnDark} />
             ) : (
+                // noGlobalTint (2026-09-13, см. App.js) — карточка сама решает
+                // цвет текста под СВОЙ (насыщенный, разный на каждой карточке)
+                // цветной фон, а не глобальный циан: тот сливался/терял
+                // контраст на некоторых цветах (живая жалоба пользователя).
                 <>
-                    <Text style={styles.title}>{title}</Text>
-                    {!!description && <Text style={styles.desc}>{description}</Text>}
+                    <Text style={styles.title} noGlobalTint>{title}</Text>
+                    {!!description && <Text style={styles.desc} noGlobalTint>{description}</Text>}
                 </>
             )}
         </TouchableOpacity>

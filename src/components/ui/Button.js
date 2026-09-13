@@ -39,7 +39,11 @@ export default function Button({
             {loading ? (
                 <ActivityIndicator color={v.fg} />
             ) : (
-                <Text style={[styles.label, { color: v.fg }, textStyle]}>{title}</Text>
+                // noGlobalTint (2026-09-13, см. App.js) — кнопка сама выбирает
+                // контрастный цвет текста под СВОЙ фон (v.fg), а не глобальный
+                // циан: на насыщенных вариантах (info и т.п.) циан сливался с
+                // фоном (живая жалоба пользователя).
+                <Text style={[styles.label, { color: v.fg }, textStyle]} noGlobalTint>{title}</Text>
             )}
         </TouchableOpacity>
     );

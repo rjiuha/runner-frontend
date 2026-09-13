@@ -9,7 +9,7 @@ import { spacing } from '../../theme';
  * что dice1..dice4 на бэке (1-based при вызове API, см. GameBoardScreen).
  * draggable=false — не мой ход/не тот шаг: кубики видны, но не тащатся.
  */
-export default function DiceTray({ dice, draggable = true, onDragMove, onDrop, size }) {
+export default function DiceTray({ dice, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size }) {
     return (
         <View style={styles.row}>
             {dice.map((value, index) => (
@@ -17,8 +17,10 @@ export default function DiceTray({ dice, draggable = true, onDragMove, onDrop, s
                     key={index}
                     value={value}
                     draggable={draggable}
+                    onDragStart={onDragStart}
                     onDragMove={(x, y, v) => onDragMove(index, x, y, v)}
                     onDrop={(x, y, v) => onDrop(index, x, y, v)}
+                    onDragEnd={onDragEnd}
                     {...(size != null ? { size } : {})}
                 />
             ))}

@@ -1,6 +1,7 @@
 // src/components/game/AbilityZone.js
 import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity } from 'react-native';
+import PulseHighlight from '../ui/PulseHighlight';
 import { PLAYER_ABILITIES } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
@@ -9,6 +10,12 @@ import { colors, font, radius, spacing } from '../../theme';
  * кубик, — только измеряет себя в оконных координатах (measureInWindow) и
  * подсвечивается по hoverState, который считает PlayerInfoPanel.
  * Тап по уже занятой зоне снимает с неё кубик обратно в трей.
+ *
+ * `pulseHighlight` (2026-09-14, по прямому запросу пользователя) — во время
+ * ABILITY, пока игрок тащит кубик, у зон, куда ЭТОТ конкретный кубик реально
+ * подходит по номиналу (min/max, см. PlayerInfoPanel), медленно "дышит"
+ * зелёная рамка — гасится для уже занятых зон и для той, что под курсором
+ * прямо сейчас (hoverState там уже даёт более сильную обратную связь).
  *
  * `remeasureTick` — живой прогон вскрыл реальный баг: зона лежит внутри
  * скроллящегося списка (та же ScrollView, что и карточки бегунов, см.
@@ -28,6 +35,7 @@ export default function AbilityZone({
     remeasureTick = 0,
     compact = false,
     color,
+    pulseHighlight = false,
 }) {
     const ref = useRef(null);
     const ability = PLAYER_ABILITIES[abilityKey];
@@ -65,8 +73,13 @@ export default function AbilityZone({
                 highlight,
             ]}
         >
-            <Text style={[styles.label, compact && styles.labelCompact]}>{ability.label}</Text>
-            <Text style={styles.hint}>{compact ? ability.shortHint : ability.hint}</Text>
+            <PulseHighlight
+                active={pulseHighlight && !filled && hoverState == null}
+                borderRadius={radius.md}
+                borderWidth={2}
+            />
+            <Text style={[styles.label, compact && styles.labelCompact]} noGlobalTint>{ability.label}</Text>
+            <Text style={styles.hint} noGlobalTint>{compact ? ability.shortHint : ability.hint}</Text>
             {/* Число/галочка при занятой зоне убраны целиком (были — только
                 для Лечения, min===max) по прямому запросу пользователя,
                 2026-09-01: подсветка рамки (filled-стиль выше) уже сама по

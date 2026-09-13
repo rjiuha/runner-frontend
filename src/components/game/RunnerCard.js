@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useRef } from 'react';
 import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import RunnerDiceSlot from './RunnerDiceSlot';
+import PulseHighlight from '../ui/PulseHighlight';
 import { DAMAGE_TOKENS, RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_STATUS_LABEL } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
@@ -13,7 +14,21 @@ import { colors, font, radius, spacing } from '../../theme';
  * для кубика хода (RunnerDiceSlot) — перетащи кубик из трея на карточку,
  * чтобы выбрать бегуна на этот ход (реальный POST /runner_game/select,
  * см. GameBoardScreen). `active` — это бегун, которого игрок выбрал в этом
- * ходу (player.activeRunner с бэка), `healTarget` — сейчас ждём тап по
+ * ходу (player.activeRunner с бэка) — держит рамку карточки в цвете игрока и
+ * НЕ сбрасывается автоматически, когда ход переходит к другому игроку (само
+ * поле на бэке живёт до следующего SELECT этого же игрока). `pulseHighlight`
+ * (2026-09-14, по прямому запросу пользователя — пошаговая подсказка "что
+ * делать дальше") — во время SELECT, пока игрок тащит кубик (см.
+ * PlayerInfoPanel), у карточек, куда этот кубик реально можно бросить
+ * (`canSelectRunner`), медленно "дышит" зелёная рамка поверх обычной —
+ * гасится, как только карточка под курсором (`hoverState` уже даёт более
+ * сильную обратную связь), см. условие в PlayerInfoPanel. `turnActive`
+ * (2026-09-13, по прямому запросу пользователя) — ДОПОЛНИТЕЛЬНОЕ условие
+ * поверх active: сейчас РЕАЛЬНО ход именно этого игрока (`currentTurnPlayerId
+ * === activePlayer.id`, см. PlayerInfoPanel) — красит ИМЯ бегуна в
+ * `colors.success` (зелёный), пока и то и другое верно разом; как только ход
+ * уходит к другому игроку, имя возвращается к обычному цвету, даже если
+ * `active` формально всё ещё true. `healTarget` — сейчас ждём тап по
  * карточке как цель для команды "Лечение" (pendingAbility в GameBoardScreen).
  * `pending` — на карточку брошен кубик (обычный выбор или накат), но
  * POST /select ещё не отправлен: тап по карточке ЕЩЁ РАЗ отменяет — это уже
@@ -58,6 +73,8 @@ export default function RunnerCard({
     runner,
     color,
     active,
+    turnActive = false,
+    pulseHighlight = false,
     pending,
     healTarget,
     onPress,
@@ -137,7 +154,7 @@ export default function RunnerCard({
                             meta && { backgroundColor: meta.color, borderColor: meta.color },
                         ]}
                     >
-                        {meta && <Text style={styles.slotText}>{meta.short}</Text>}
+                        {meta && <Text style={styles.slotText} noGlobalTint>{meta.short}</Text>}
                     </View>
                 );
             })}
@@ -168,6 +185,11 @@ export default function RunnerCard({
             onPress={handlePress}
             activeOpacity={0.8}
         >
+            <PulseHighlight
+                active={pulseHighlight && hoverState == null}
+                borderRadius={radius.md}
+                borderWidth={2}
+            />
             <View style={styles.cardRow}>
                 <View style={styles.leftArea}>
                     <View style={styles.headRow}>
@@ -182,7 +204,11 @@ export default function RunnerCard({
                         />
 
                         <View style={styles.info}>
-                            <Text style={[styles.name, compact && styles.nameCompact]} numberOfLines={1}>
+                            <Text
+                                style={[styles.name, compact && styles.nameCompact, turnActive && styles.nameTurnActive]}
+                                numberOfLines={1}
+                                noGlobalTint
+                            >
                                 {display?.label ?? runner.type}
                             </Text>
                             {/* Статус текстом ("Исправен"/"Повреждён"...) убран — кружки
@@ -195,7 +221,7 @@ export default function RunnerCard({
                                 другого — без явной проверки статуса уничтоженный бегун
                                 молча показывался бы как "в резерве". */}
                             {!compact && (
-                                <Text style={styles.placement}>
+                                <Text style={styles.placement} noGlobalTint>
                                     {destroyed
                                         ? RUNNER_STATUS_LABEL[RUNNER_STATUS.DESTROYED]
                                         : pending ? 'выбран — тапни ещё раз для отмены' : placed ? 'на поле' : 'в резерве'}
@@ -223,6 +249,15 @@ export default function RunnerCard({
 
 const styles = StyleSheet.create({
     card: {
+        // width:'100%' явно (2026-09-14, живая жалоба — "в браузере размер
+        // плиток постоянно скачет в зависимости от наполнения") — на
+        // react-native-web `TouchableOpacity` без явного width не всегда
+        // надёжно растягивается на всю ширину родителя через alignItems:
+        // 'stretch' (тот же класс проблемы, что уже не раз ловился в этом
+        // проекте на других компонентах, см. CLAUDE.md — absolute-fill/Image
+        // без явных width/height), особенно когда контент карточки (длина
+        // имени, число кружков повреждений и т.п.) меняется между рендерами.
+        width: '100%',
         backgroundColor: colors.bgLight,
         borderRadius: radius.md,
         padding: spacing.sm,
@@ -256,6 +291,7 @@ const styles = StyleSheet.create({
     info: { flex: 1, marginLeft: spacing.sm },
     name: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     nameCompact: { fontSize: font.tiny },
+    nameTurnActive: { color: colors.success },
     placement: { fontSize: 10, color: colors.textOnDarkSecondary, marginTop: 1 },
     slots: { flexDirection: 'row', marginTop: spacing.xs },
     slotsCompact: { marginTop: 3, marginLeft: 0 },

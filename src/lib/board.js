@@ -55,15 +55,15 @@ export function pickBaseImage(type, cellId) {
 }
 
 /**
- * Вариант "Смерти" (acid/burn) на клетке типа wall (2026-09-12, по прямому
- * запросу пользователя — заменяет прежний плоский wall_base-тайл) —
- * детерминированно по id клетки, ТА ЖЕ схема, что и pickSegmentImage (стабильно
- * на всю партию, не перевыбирается на каждый рендер/live-обновление стейта).
- * Используется и при рендере клетки (BoardGrid#DeathTile), и при определении,
- * какую терминальную позу ('acid'/'burn') получит бегун, погибший на ЭТОЙ
- * конкретной клетке (см. lib/runnerAnimTriggers.js) — оба места обязаны
- * получать ОДИН И ТОТ ЖЕ вариант для одного и того же id, что и гарантирует
- * чистый детерминированный хэш.
+ * Вариант "Смерти" (acid/burn), проигрываемый на клетке типа wall в момент
+ * гибели на ней бегуна (2026-09-12/13) — детерминированно по id клетки, ТА ЖЕ
+ * схема, что и pickSegmentImage (стабильно на всю партию, не перевыбирается
+ * на каждый рендер/live-обновление стейта). Используется и в BoardGrid.js
+ * (какую collision-гиф показать поверх временно скрытого wall-тайла, см.
+ * activeDeathCells), и при определении, какую терминальную позу
+ * ('acid'/'burn') получит сам погибший бегун (см. lib/runnerAnimTriggers.js)
+ * — оба места обязаны получать ОДИН И ТОТ ЖЕ вариант для одного и того же id,
+ * что и гарантирует чистый детерминированный хэш.
  */
 export function pickDeathVariant(cellId) {
     return hashString(cellId) % 2 === 0 ? 'acid' : 'burn';
@@ -112,7 +112,6 @@ export function flattenTrackSegments(segments, rows, cols) {
                     type,
                     image: pickSegmentImage(type, id),
                     baseImage: pickBaseImage(type, id),
-                    deathVariant: type === 'wall' ? pickDeathVariant(id) : null,
                 });
             }
         }
@@ -155,7 +154,6 @@ export function flattenPeekColumn(trackNext, rows, peekCol) {
             type,
             image: pickSegmentImage(type, id),
             baseImage: pickBaseImage(type, id),
-            deathVariant: type === 'wall' ? pickDeathVariant(id) : null,
         });
     }
     return data;

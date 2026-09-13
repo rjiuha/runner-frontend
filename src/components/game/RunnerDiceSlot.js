@@ -29,9 +29,9 @@ export default function RunnerDiceSlot({ label, value, size = 40, color }) {
                     filled && { borderStyle: 'solid', borderColor: color, backgroundColor: `${color}b8` },
                 ]}
             >
-                <Text style={styles.value}>{filled ? value : '—'}</Text>
+                <Text style={styles.value} noGlobalTint>{filled ? value : '—'}</Text>
             </View>
-            <Text style={styles.label} numberOfLines={1}>
+            <Text style={styles.label} numberOfLines={1} noGlobalTint>
                 {label}
             </Text>
         </View>

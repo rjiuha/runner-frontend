@@ -15,8 +15,10 @@ const ROTATE_INTERVAL_MS = 5000;
  * (не общий таймер на всё приложение), не мешает соседним экранам.
  *
  * @param {boolean} [dark=true] — фон экрана: true (по умолчанию, как у
- *   Screen.js) — светлый текст для тёмного фона (colors.bg); false — тёмный
- *   текст для светлого фона (colors.surface, см. LobbySearchScreen).
+ *   Screen.js, теперь используется ВЕЗДЕ — 2026-09-13, приведение MainMenu/
+ *   LobbySearch к единой тёмной палитре) — светлый текст для тёмного фона
+ *   (colors.bg); false — тёмный текст для светлого фона (colors.surface),
+ *   на случай если какой-то экран снова станет светлым.
  */
 export default function LoadingTip({ dark = true, style }) {
     const [tip, setTip] = useState(() => pickRandomTip());
@@ -30,7 +32,7 @@ export default function LoadingTip({ dark = true, style }) {
         return () => clearInterval(id);
     }, []);
 
-    return <Text style={[styles.tip, dark ? styles.tipOnDark : styles.tipOnLight, style]}>{tip}</Text>;
+    return <Text style={[styles.tip, dark ? styles.tipOnDark : styles.tipOnLight, style]} noGlobalTint>{tip}</Text>;
 }
 
 const styles = StyleSheet.create({

@@ -6,6 +6,8 @@ import DiceTray from './DiceTray';
 import AbilityZones from './AbilityZones';
 import RunnerCard from './RunnerCard';
 import RunnerToken from './RunnerToken';
+import PulseText from '../ui/PulseText';
+import PulseHighlight from '../ui/PulseHighlight';
 import { DICE_FACE_IMAGES, PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
@@ -31,6 +33,7 @@ export default function PlayerInfoPanel({
     activePlayerId,
     onSelectPlayer,
     myPlayerId,
+    currentTurnPlayerId = null,
     canAct,
     myStep,
     pendingAbility,
@@ -41,6 +44,8 @@ export default function PlayerInfoPanel({
     onDropOnRunner,
     onRunnerCardPress,
     onRunnerCardDoubleTap,
+    highlightSelectIdle = false,
+    highlightAbilityIdle = false,
     width,
     height,
     switcherHeight,
@@ -82,6 +87,12 @@ export default function PlayerInfoPanel({
 
     const activePlayer = players.find((p) => p.id === activePlayerId) ?? players[0];
     const isMyPanel = canAct && activePlayer.id === myPlayerId;
+    // Панель показывает игрока activePlayer (переключатель), а не обязательно
+    // того, чей сейчас реальный игровой ход (game.playerOrder) — см.
+    // RunnerCard#turnActive, зелёное имя бегуна должно гаснуть, как только ход
+    // уходит к другому игроку, даже если player.activeRunner у ЭТОГО игрока
+    // ещё не сброшен (бэк не чистит его автоматически при смене хода).
+    const isActivePlayerTurn = currentTurnPlayerId != null && String(activePlayer.id) === String(currentTurnPlayerId);
     // Что можно тащить прямо сейчас: SELECT — на карточку бегуна, ABILITY — на зону усиления.
     const dragMode = isMyPanel
         ? myStep === PLAYER_STEP.SELECT
@@ -100,6 +111,32 @@ export default function PlayerInfoPanel({
         isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i) ? null : v,
     );
 
+    // Подсказка "что делать дальше" (2026-09-14, по прямому запросу
+    // пользователя) — `draggingValue` живёт ЗДЕСЬ (не в GameBoardScreen):
+    // всё, что от неё зависит (заголовки/панель кубиков, рамки карточек
+    // бегунов, рамки зон усилений), рендерится внутри этой же панели.
+    // `null` — кубик сейчас НЕ тащат, число — значение того, что тащат
+    // (см. onDragStart/onDragEnd, проброшенные в DiceTray ниже).
+    const [draggingValue, setDraggingValue] = useState(null);
+    const handleDieDragStart = useCallback((value) => setDraggingValue(value), []);
+    const handleDieDragEnd = useCallback(() => setDraggingValue(null), []);
+
+    // Пока кубик НЕ тащат — подсвечиваем ИСТОЧНИК (панель+заголовок кубиков):
+    // на SELECT — "Кубики перемещения/Кубики", на ABILITY — то же самое (та
+    // же панель), плюс кнопка "Пропустить усиление" (см. GameBoardScreen,
+    // highlightAbilityIdle туда и сюда — одно и то же условие). Как только
+    // кубик взяли в драг — подсветка ПЕРЕКЛЮЧАЕТСЯ на ЦЕЛЬ (бегуны/усиления,
+    // см. runnersHighlight/abilityPulseKeys ниже) — источник гаснет, там
+    // уже давно всё понятно (кубик виден зажатым под пальцем).
+    const diceHighlight = isMyPanel && draggingValue == null && (
+        (dragMode === 'select' && highlightSelectIdle) ||
+        (dragMode === 'ability' && highlightAbilityIdle)
+    );
+    // SELECT, кубик в драге — подсветка ВСЕХ карточек, куда его реально можно
+    // бросить (любой кубик годится любому бегуну, см. handleDragMove выше —
+    // конкретное ЗНАЧЕНИЕ роли не играет, только canSelectRunner(runnerId)).
+    const runnersHighlight = isMyPanel && draggingValue != null && dragMode === 'select';
+
     const abilityAssignments = useMemo(() => {
         const map = {};
         for (const key of Object.keys(PLAYER_ABILITIES)) {
@@ -109,6 +146,21 @@ export default function PlayerInfoPanel({
         }
         return map;
     }, [isMyPanel, pendingAbility, activePlayer.ability]);
+
+    // ABILITY, кубик в драге — какие зоны реально примут ИМЕННО ЭТО значение
+    // (min/max, та же формула, что уже использует handleDragMove/handleDrop
+    // выше) и ещё не заняты ('used') — Set ключей, AbilityZones сам решает,
+    // какую из своих 4 зон подсветить.
+    const abilityPulseKeys = useMemo(() => {
+        if (!isMyPanel || draggingValue == null || dragMode !== 'ability') return null;
+        const keys = new Set();
+        for (const key of Object.keys(PLAYER_ABILITIES)) {
+            const ability = PLAYER_ABILITIES[key];
+            if (abilityAssignments[key] === 'used') continue;
+            if (draggingValue >= ability.min && draggingValue <= ability.max) keys.add(key);
+        }
+        return keys;
+    }, [isMyPanel, draggingValue, dragMode, abilityAssignments]);
 
     const zoneLayoutsRef = useRef({});
     const [hover, setHover] = useState({ key: null, valid: false });
@@ -208,7 +260,15 @@ export default function PlayerInfoPanel({
                 selected={String(reaper.id) === String(activePlayer.activeRunnerId)}
                 showRing={false}
             />
-            <Text style={styles.reaperText} numberOfLines={1}>
+            {/* Зелёный НАВСЕГДА, пока Жнец стоит на поле — по прямому запросу
+                пользователя, БЕЗ пульсации (в отличие от turnActive у обычных
+                бегунов, тут не привязано к тому, чей сейчас ход, см.
+                CLAUDE.md, 2026-09-14). */}
+            <Text
+                style={[styles.reaperText, reaper.segment != null && styles.reaperTextOnField]}
+                numberOfLines={1}
+                noGlobalTint
+            >
                 {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
             </Text>
         </View>
@@ -230,6 +290,8 @@ export default function PlayerInfoPanel({
                 runner={runner}
                 color={activePlayer.color}
                 active={String(runner.id) === String(activePlayer.activeRunnerId)}
+                turnActive={isActivePlayerTurn && String(runner.id) === String(activePlayer.activeRunnerId)}
+                pulseHighlight={runnersHighlight && canSelectRunner(runner.id)}
                 pending={isPending}
                 healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
                 onPress={() => onRunnerCardPress(runner)}
@@ -246,7 +308,7 @@ export default function PlayerInfoPanel({
 
     const abilitiesNode = (
         <>
-            <Text style={styles.sectionTitle}>
+            <Text style={styles.sectionTitle} noGlobalTint>
                 {compactColumns ? 'Усиления' : 'Усиления — перетащи кубик на зону'}
             </Text>
             <AbilityZones
@@ -258,6 +320,7 @@ export default function PlayerInfoPanel({
                 remeasureTick={remeasureTick}
                 compact={compactColumns}
                 color={activePlayer.color}
+                pulseKeys={abilityPulseKeys}
             />
         </>
     );
@@ -282,13 +345,18 @@ export default function PlayerInfoPanel({
                     шапкой, не терять место под общий на всю ширину трей. */}
                 {!compactColumns && (
                     <>
-                        <Text style={styles.sectionTitle}>Кубики перемещения</Text>
-                        <DiceTray
-                            dice={trayDice}
-                            draggable={dragMode != null}
-                            onDragMove={handleDragMove}
-                            onDrop={handleDrop}
-                        />
+                        <PulseText active={diceHighlight} style={styles.sectionTitle}>Кубики перемещения</PulseText>
+                        <View style={styles.diceTrayWrap}>
+                            <PulseHighlight active={diceHighlight} borderRadius={radius.md} showBackground showBorder={false} />
+                            <DiceTray
+                                dice={trayDice}
+                                draggable={dragMode != null}
+                                onDragStart={handleDieDragStart}
+                                onDragMove={handleDragMove}
+                                onDrop={handleDrop}
+                                onDragEnd={handleDieDragEnd}
+                            />
+                        </View>
                     </>
                 )}
 
@@ -332,16 +400,21 @@ export default function PlayerInfoPanel({
                             onScrollEndDrag={bumpRemeasure}
                             onMomentumScrollEnd={bumpRemeasure}
                         >
-                            <Text style={styles.sectionTitle}>Кубики</Text>
-                            <DiceTray
-                                dice={trayDice}
-                                draggable={dragMode != null}
-                                onDragMove={handleDragMove}
-                                onDrop={handleDrop}
-                                // Правая колонка теперь заметно уже — мельче кубики
-                                // и разрешаем им переноситься в 2 ряда (см. DiceTray).
-                                size={28}
-                            />
+                            <PulseText active={diceHighlight} style={styles.sectionTitle}>Кубики</PulseText>
+                            <View style={styles.diceTrayWrap}>
+                                <PulseHighlight active={diceHighlight} borderRadius={radius.md} showBackground showBorder={false} />
+                                <DiceTray
+                                    dice={trayDice}
+                                    draggable={dragMode != null}
+                                    onDragStart={handleDieDragStart}
+                                    onDragMove={handleDragMove}
+                                    onDrop={handleDrop}
+                                    onDragEnd={handleDieDragEnd}
+                                    // Правая колонка теперь заметно уже — мельче кубики
+                                    // и разрешаем им переноситься в 2 ряда (см. DiceTray).
+                                    size={28}
+                                />
+                            </View>
                             {abilitiesNode}
                         </ScrollView>
                     </View>
@@ -360,7 +433,11 @@ export default function PlayerInfoPanel({
                     >
                         {abilitiesNode}
                         {reaperNode}
-                        <Text style={styles.sectionTitle}>Бегуны — перетащи кубик хода на бегуна</Text>
+                        {/* Текст "— перетащи кубик хода на бегуна" убран (по прямому
+                            запросу пользователя) — то же самое теперь показывает
+                            подсказка-пульсация (см. runnersHighlight выше), отдельная
+                            инструкция в заголовке стала избыточна. */}
+                        <PulseText active={runnersHighlight} style={styles.sectionTitle}>Бегуны</PulseText>
                         {runnerCards}
                     </ScrollView>
                 )}
@@ -432,9 +509,13 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
         marginBottom: spacing.xs,
     },
+    // Обёртка вокруг DiceTray — только чтобы дать PulseHighlight
+    // (position:'absolute') родителя (2026-09-14, см. diceHighlight выше).
+    diceTrayWrap: { borderRadius: radius.md },
     reaperRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.sm },
     reaperRowCompact: { marginTop: 2, marginBottom: 4 },
     reaperText: { color: colors.textOnDark, fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
+    reaperTextOnField: { color: colors.success },
     // compactColumns (портретная раскладка) — бегуны+жнец слева (основное
     // пространство — flex:2), кубики+усиления справа, заметно уже (flex:1 —
     // по прямому запросу пользователя "сделать зону усилений поуже, дать

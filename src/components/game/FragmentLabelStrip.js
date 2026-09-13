@@ -44,7 +44,7 @@ export default function FragmentLabelStrip({ bands, width, segmentSize, totalHei
                         ]}
                     >
                         {heightPx >= MIN_LABEL_BAND_PX && (
-                            <Text numberOfLines={1} style={[styles.label, { width: heightPx - 8 }]}>
+                            <Text numberOfLines={1} style={[styles.label, { width: heightPx - 8 }]} noGlobalTint>
                                 {label}
                             </Text>
                         )}

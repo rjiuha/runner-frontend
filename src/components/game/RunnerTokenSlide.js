@@ -1,5 +1,5 @@
 // src/components/game/RunnerTokenSlide.js
-import React, { useLayoutEffect, useRef } from 'react';
+import React, { useLayoutEffect, useRef, useEffect } from 'react';
 import { Animated } from 'react-native';
 
 // Длительность слайда между клетками — примерно совпадает с длительностью
@@ -68,12 +68,39 @@ export const SLIDE_DURATION_MS = 1360;
  * (см. BoardGrid#reaperPreviewItem), которую по прямому запросу пользователя
  * замедлили вдвое относительно обычного шага, не касаясь скорости шагов
  * остальных бегунов.
+ *
+ * **"Дёрганье": едет → на мгновение откатывается назад → резко продолжает с
+ * середины** (2026-09-13, живая жалоба, идентичный паттерн уже не раз
+ * встречался в этом проекте под разными масками — см. CLAUDE.md). Настоящая
+ * причина именно ЭТОГО симптома — `fromPos = prevPos.current` брал
+ * ЛОГИЧЕСКУЮ предыдущую цель (куда токен ДОЛЖЕН был доехать), а не ту точку,
+ * где он ВИЗУАЛЬНО находится ПРЯМО СЕЙЧАС. Если новая x/y (см.
+ * `visualPositions`/очередь в useRunnerAnimations) приходит РАНЬШЕ, чем
+ * предыдущий `Animated.timing` успел доехать до 0 (два шага очереди почти
+ * подряд — обычное дело для составного хода), `translate.setValue({x:dx,...})`
+ * БЕЗУСЛОВНО ПЕРЕЗАПИСЫВАЛ текущее (ещё ненулевое, "в полёте") значение —
+ * визуально это и есть "откат назад" (токен скачком уезжает в точку,
+ * рассчитанную от СТАРОЙ цели, а не от того места, где он летел долю секунды
+ * назад), после чего новая анимация везёт его дальше — "резкое продолжение".
+ * Фикс — следим за РЕАЛЬНЫМ (а не только логическим) значением translate через
+ * `addListener` (общепринятый способ прочитать текущее число из Animated.Value
+ * — даже под `useNativeDriver`, RN периодически синхронизирует JS-значение
+ * обратно) и, начиная новый слайд, ДОБАВЛЯЕМ его к вычисленной дельте, а не
+ * заменяем целиком — если предыдущая анимация уже осела в 0 (обычный случай),
+ * это ничего не меняет (0+dx=dx, как и было), а если ещё в полёте — сохраняет
+ * визуальную непрерывность вместо скачка.
  */
 export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart, enterFrom, duration = SLIDE_DURATION_MS }) {
     const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
     const prevPos = useRef(null);
     const prevWindowStart = useRef(windowStart);
     const prevSize = useRef({ width, height });
+    const currentTranslateRef = useRef({ x: 0, y: 0 });
+
+    useEffect(() => {
+        const id = translate.addListener((value) => { currentTranslateRef.current = value; });
+        return () => translate.removeListener(id);
+    }, [translate]);
 
     useLayoutEffect(() => {
         const scrolled = prevWindowStart.current !== windowStart;
@@ -96,7 +123,12 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
             return;
         }
 
-        translate.setValue({ x: dx, y: dy });
+        // ДОБАВЛЯЕМ к текущему (возможно ещё "в полёте") значению, а не
+        // заменяем — см. докстринг компонента про "дёрганье".
+        translate.setValue({
+            x: dx + currentTranslateRef.current.x,
+            y: dy + currentTranslateRef.current.y,
+        });
         Animated.timing(translate, {
             toValue: { x: 0, y: 0 },
             duration,

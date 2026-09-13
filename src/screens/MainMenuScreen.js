@@ -1,13 +1,13 @@
 // src/screens/MainMenuScreen.js
 import React, { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import Screen from '../components/ui/Screen';
 import MenuCard from '../components/menu/MenuCard';
 import ProfileCard from '../components/menu/ProfileCard';
 import CreateLobbyModal from '../components/menu/CreateLobbyModal';
-import LoadingTip from '../components/ui/LoadingTip';
+import LoadingCard from '../components/ui/LoadingCard';
 import { useAuth } from '../hooks/useAuth';
 import { lobbyApi } from '../api/lobby';
 import { meApi } from '../api/me';
@@ -69,9 +69,16 @@ export default function MainMenuScreen({ navigation }) {
               navigation.navigate(ROUTES.LOBBY, { lobbyId: me.lobby.id });
               return;
             }
-          } catch {
+          } catch (e) {
             // Сбой самого /api/me (сеть и т.п.) — не блокируем меню, просто
             // не редиректим никуда, пользователь может попробовать вручную.
+            // Залогировано (2026-09-13, по жалобе "иногда не находит активную
+            // игру, хотя она есть") — раньше ошибка проглатывалась молча,
+            // отличить "игры действительно нет" от "запрос упал" было
+            // невозможно. Проверка кода (токен-тайминг при логине/перезапуске,
+            // бэковый getActiveGamePlayer) не выявила очевидного бага — нужен
+            // реальный лог с устройства, когда это повторится.
+            console.warn('[MainMenuScreen] GET /me failed:', e?.status, e?.code, e?.message);
           } finally {
             if (!cancelled && !bootCheckedRef.current) {
               bootCheckedRef.current = true;
@@ -114,14 +121,13 @@ export default function MainMenuScreen({ navigation }) {
   if (checkingSession) {
     return (
         <View style={styles.splash}>
-          <ActivityIndicator size="large" color={colors.primary} />
-          <LoadingTip />
+          <LoadingCard />
         </View>
     );
   }
 
   return (
-      <Screen dark={false} scroll contentContainerStyle={styles.content}>
+      <Screen scroll contentContainerStyle={styles.content}>
         <ProfileCard username={user?.username} />
 
         <MenuCard
@@ -140,7 +146,7 @@ export default function MainMenuScreen({ navigation }) {
 
         {/* Заготовки под MVP-2 — оставлены намеренно, чтобы был виден план */}
         <View style={styles.soonBlock}>
-          <Text style={styles.soonLabel}>Скоро</Text>
+          <Text style={styles.soonLabel} noGlobalTint>Скоро</Text>
           <MenuCard title="🛒 Магазин" description="Скины и бонусы" color={colors.muted} disabled />
           <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
         </View>
@@ -162,7 +168,7 @@ const styles = StyleSheet.create({
   content: { padding: spacing.lg },
   soonBlock: { marginTop: spacing.sm, opacity: 0.7 },
   soonLabel: {
-    fontSize: font.tiny, color: colors.textSecondary,
+    fontSize: font.tiny, color: colors.textOnDarkSecondary,
     textTransform: 'uppercase', marginBottom: spacing.sm, letterSpacing: 1,
   },
 });

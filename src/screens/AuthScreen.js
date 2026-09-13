@@ -174,7 +174,7 @@ export default function AuthScreen() {
   return (
       <Screen scroll contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.title}>Runner Game</Text>
+          <Text style={styles.title}>Star Runners</Text>
           <Text style={styles.subtitle}>Игра на выживание</Text>
         </View>
 

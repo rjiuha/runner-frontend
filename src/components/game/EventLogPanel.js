@@ -37,7 +37,7 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
 
     const toggle = (
         <TouchableOpacity style={styles.toggle} onPress={() => setOpen((v) => !v)} activeOpacity={0.8}>
-            <Text style={styles.toggleText}>{open ? 'Скрыть лог ▾' : `Лог событий (${entries.length}) ▸`}</Text>
+            <Text style={styles.toggleText} noGlobalTint>{open ? 'Скрыть лог ▾' : `Лог событий (${entries.length}) ▸`}</Text>
         </TouchableOpacity>
     );
 
@@ -48,11 +48,11 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
             contentContainerStyle={styles.panelContent}
         >
             {entries.length === 0 ? (
-                <Text style={styles.empty}>Событий пока не было</Text>
+                <Text style={styles.empty} noGlobalTint>Событий пока не было</Text>
             ) : (
                 entries.map((e) => (
-                    <Text key={e.id} style={styles.line}>
-                        <Text style={styles.time}>{e.time}</Text> {e.text}
+                    <Text key={e.id} style={styles.line} noGlobalTint>
+                        <Text style={styles.time} noGlobalTint>{e.time}</Text> {e.text}
                     </Text>
                 ))
             )}

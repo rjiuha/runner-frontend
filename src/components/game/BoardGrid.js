@@ -3,146 +3,44 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
 import { DEATH_COLLISION_MS, DEATH_VARIANTS } from '../../constants/deathAnimations';
-import { indexRunnersByCell } from '../../lib/board';
+import { indexRunnersByCell, pickDeathVariant } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
 import RunnerToken from './RunnerToken';
 import RunnerTokenSlide, { SLIDE_DURATION_MS } from './RunnerTokenSlide';
 
 /**
- * "Смерть" на клетке типа wall (2026-09-12) — заменяет статичную картинку
- * типа клетки существом, которое обычно тихо стоит в idle (случайный
- * idle_1/idle_2, АНИМИРОВАННЫЙ gif — см. отдельную запись ниже про
- * idleStatic/риск производительности, почему это не статика). Когда
- * снаружи (см. GameBoardScreen — тот же момент, что убивает бегуна на этой
- * клетке, см. lib/runnerAnimTriggers.js) приходит НОВОЕ значение
- * `collisionSignal` (монотонно растущий nonce — сравнение "!== последнего
- * увиденного", не сам факт "не null", т.к. 0 тоже валидное значение) —
- * прерывает idle и играет 'collision' один раз, потом возвращается к idle.
- * Сдвиг влево (`offsetPx`) — ТОЛЬКО во
- * время collision, чтобы освободить правую половину клетки для умирающего
- * бегуна (тот сам сдвигается вправо на ТУ ЖЕ величину, см. pushSolo/main loop
- * выше) — "слева death, справа бегун", по прямому запросу пользователя.
+ * "Смерть" на клетке типа wall (2026-09-13, откат к точечной анимации по
+ * прямому запросу пользователя — постоянно стоящее существо, введённое
+ * 2026-09-12, убрано целиком). Клетка типа wall всегда показывает обычный
+ * wall_base-тайл (см. рендер ячейки ниже — картинка типа клетки больше НЕ
+ * скрывается по признаку wall). DeathTile теперь ВООБЩЕ не рендерится, пока
+ * BoardGrid не увидит активное столкновение на этой клетке (см.
+ * activeDeathCells ниже) — в этот момент wall-тайл прячется, а тут ОДИН РАЗ
+ * проигрывается collision-гиф случайно выбранного (детерминированно по id
+ * клетки, см. lib/board#pickDeathVariant) варианта acid/burn; по истечении
+ * DEATH_COLLISION_MS элемент просто перестаёт попадать в deathOverlayItems
+ * (см. activeDeathCells) и unmount'ится — своего внутреннего таймера/state
+ * компоненту больше не нужно, всей его "активностью" целиком управляет
+ * родитель.
  *
  * Рендерится ВНУТРИ tokenOverlayLayer (см. deathOverlayItems ниже), тем же
- * "бегунским" размером/прижатием к низу клетки, что и RunnerToken — раньше
- * жил ВНУТРИ самой ячейки (contain, целиком в пределах сегмента) и выглядел
- * заметно мельче любого бегуна (жалоба пользователя, живой тест: "должен
- * быть как бегуны размерами и расположением относительно сегмента").
- * `boxW`/`boxH` тут — та же величина, что singleImageSize у токенов (не
- * boxW/boxH сегмента), позиционирование снаружи (родитель — плоский
- * tokenLayerBottom-бокс размера сегмента, см. рендер ниже).
- *
- * КРИТИЧНО про transform: конкретно `mode==='collision' ? [...] :
- * undefined` НАПРЯМУЮ в объекте style (а не композицией через массив
- * style=[a,b&&c]) — реальный краш на Android живьём ("Render Error: Cannot
- * read property 'forEach' of null", processTransform.js#_validateTransforms),
- * пойман сразу после победы (переход collision→idle у Death). Явный ключ
- * `transform` со значением `undefined` (не ОТСУТСТВИЕ ключа) на некоторых
- * версиях RN диффится в native `null` вместо "убрать transform" — валидатор
- * потом падает на `null.forEach`. Фикс — держать ключ `transform` ЦЕЛИКОМ
- * отсутствующим, когда его не должно быть (композиция через массив style,
- * второй элемент — `false`, а не `{transform: undefined}`).
- *
- * **"Рывок влево-вверх в конце анимации" — НЕ код, а данные** (2026-09-12).
- * Первая гипотеза (платформенный кросс-фейд Android, `fadeDuration={0}`) не
- * подтвердилась. Вторая гипотеза (силуэт РЕАЛЬНО крупнее/смещён на последнем
- * кадре — "часть замысла анимации") тоже оказалась НЕВЕРНОЙ: пользователь
- * прямо указал, что размер персонажа между кадрами НЕ меняется, дёргается
- * ЦЕЛИКОМ и ЦЕЛИКОМ возвращается — что и подтвердилось точным замером
- * bounding-box непрозрачных пикселей по всем кадрам (не на глаз): у 8 из 10
- * файлов (ровно тех, что нормализовались по канве в сессии 2026-09-08)
- * ПОСЛЕДНИЙ кадр анимации содержал силуэт ТОГО ЖЕ размера, что и соседние
- * кадры, но сдвинутый в буквальный угол канвы (0,0) вместо реальной позиции
- * (~20-35, там же, где и остальные кадры). Настоящая причина — регресс той
- * самой сессии 2026-09-08: канвас-нормализация (кадры МЕНЬШЕГО размера
- * "перекомпонованы на прозрачный холст в offset 0,0") оказалась НЕВЕРНОЙ
- * именно для последнего кадра каждой из этих анимаций — там исходный
- * маленький кадр НЕ был предназначен для offset (0,0), просто у него не было
- * достоверных xOffset/yOffset ПОСЛЕ той нормализации (перезаписаны нулями),
- * и скрипт молча поставил его в угол вместо реальной позиции. Почищено ОДИН
- * РАЗ статическим скриптом (сдвиг контента последнего кадра на позицию,
- * подсказанную предпоследним кадром, во всех 8 файлах) — кросс-фейд, который
- * был добавлен ПОД ЭТУ (неверную) вторую гипотезу, больше не нужен и убран
- * целиком: раз кадры данных больше не бьются, дёргаться нечему, а много
- * одновременных `Animated.timing`-кросс-фейдов (Death-тайлов на доске может
- * быть десяток+ разом) — лишняя нагрузка без всякой пользы, к тому же
- * подозреваемая в наводке на видимые "блики" у самих бегунов (жалоба
- * пользователя сразу следом — слишком много параллельных анимаций разом).
- * `fadeDuration={0}` оставлен как дешёвая защита от платформенного
- * авто-фейда Android (тот же приём, что и в RunnerToken), сам кросс-фейд —
- * нет.
- *
- * **`prepare`-цикл убран целиком** (2026-09-12, по прямому запросу
- * пользователя) — то же семейство таймингового бага, что и у терминальной
- * позы бегуна (JS `setTimeout` не гарантированно синхронизирован с "часами"
- * нативного gif-плеера): длительность prepare несколько раз перенастраивалась
- * (то обрыв раньше конца, то риск переигрывания цикла), и живой тест
- * продолжал ловить обрывы даже после увеличения запаса. Обсудили
- * альтернативы (flipbook по отдельным PNG-кадрам — даёт точный контроль над
- * концом анимации, но кадры вместе весят В 2.5+ РАЗА больше исходного gif —
- * измерено живьём — и требуют собственного JS-таймера на КАЖДЫЙ кадр вместо
- * одного нативного decode на всю анимацию, то есть больше нагрузки именно
- * там, где уже боролись с производительностью, см. idleStatic ниже) —
- * решили, что раз `idle` и `collision` (уже работает без жалоб) закрывают
- * львиную долю впечатления от Death, `prepare` не стоит той возни.
- * `prepare_N.gif`-файлы удалены из assets, `DEATH_PREPARE_MS`/`prepare` в
- * DEATH_VARIANTS — тоже.
- *
- * **`idle` ВЕРНУЛИ обратно на анимированный gif** (2026-09-12, тем же днём,
- * ПОСЛЕ удаления prepare) — по прямому запросу пользователя: "в последнем
- * прогоне в idle персонажи death вообще не двигались", статика мешала
- * ощущению живого существа. Прямо предупредил про риск (idle-static был
- * введён как гипотетическая мера против регресса "блики/телепорты у
- * бегунов при движении", связь НЕ подтверждена и НЕ опровергнута отдельным
- * живым тестом) — пользователь риск принял осознанно ("всё равно верни
- * анимацию"). `idleStatic`-ассеты (PNG) остаются в `constants/
- * deathAnimations.js`/на диске неиспользуемыми — не удалял, вдруг решат
- * вернуться к статике после следующего живого теста.
+ * "бегунским" размером/прижатием к низу клетки, что и RunnerToken (жалоба
+ * пользователя из прошлой версии фичи: "должен быть как бегуны размерами и
+ * расположением относительно сегмента" — актуально и сейчас). Сдвиг влево
+ * (`offsetPx`) — освобождает правую половину клетки для умирающего бегуна
+ * (тот сам сдвигается вправо на ТУ ЖЕ величину, см. pushSolo/main loop выше)
+ * — "слева death, справа бегун"; раз компонент теперь монтируется ТОЛЬКО на
+ * время collision, сдвиг применяется безусловно (нет больше режима
+ * idle/prepare, ради которого раньше был нужен `mode==='collision' ? ... :
+ * undefined`-переключатель transform — тот код когда-то давал реальный краш
+ * на Android при переходе collision→idle, но раз idle-режима больше нет
+ * вообще, вопрос снят целиком, не только обойдён).
  */
-function DeathTile({ variant, boxW, boxH, collisionSignal, offsetPx }) {
+function DeathTile({ variant, boxW, boxH, offsetPx }) {
     const bucket = DEATH_VARIANTS[variant];
-    // Число вариантов НЕ захардкожено — берётся из длины массива idle
-    // (см. docstring компонента выше про удаление prepare, 2026-09-12).
-    const pickIdle = () => Math.floor(Math.random() * bucket.idle.length);
-
-    const [mode, setMode] = useState('idle');
-    const [frameIdx, setFrameIdx] = useState(pickIdle);
-    const lastSignalRef = useRef(collisionSignal);
-
-    // Внешний сигнал столкновения — сравниваем со ЗНАЧЕНИЕМ, не просто "не
-    // null" (nonce может начинаться с 0) — иначе первый же рендер с уже
-    // выставленным collisionSignal (например после resync) ложно запустил бы
-    // позу без реального столкновения именно сейчас.
-    useEffect(() => {
-        if (collisionSignal == null || collisionSignal === lastSignalRef.current) return undefined;
-        lastSignalRef.current = collisionSignal;
-        setMode('collision');
-        const t = setTimeout(() => {
-            setFrameIdx(pickIdle());
-            setMode('idle');
-        }, DEATH_COLLISION_MS[variant]);
-        return () => clearTimeout(t);
-    }, [collisionSignal, variant]);
-
-    // idle — обратно АНИМИРОВАННЫЙ gif (не idleStatic), по прямому запросу
-    // пользователя, 2026-09-12: "в последнем прогоне в idle персонажи death
-    // вообще не двигались" — статика (см. idleStatic в
-    // constants/deathAnimations.js, была введена как мера против
-    // производительности) убрана осознанно, риск повторного регресса
-    // "блики/телепорты у бегунов при движении" (см. docstring компонента
-    // выше) пользователь принял явно, живой тест не подтверждал и не
-    // опровергал связь idle-static с тем фиксом. idleStatic-ассеты остаются
-    // на диске неиспользуемыми (не удалял — вдруг понадобятся вернуться).
-    const source = mode === 'collision' ? bucket.collision : bucket.idle[frameIdx];
-
     return (
-        <View
-            style={[
-                { width: boxW, height: boxH },
-                mode === 'collision' && { transform: [{ translateX: -offsetPx }] },
-            ]}
-        >
-            <Image source={source} resizeMode="contain" fadeDuration={0} style={{ width: boxW, height: boxH }} />
+        <View style={[{ width: boxW, height: boxH }, { transform: [{ translateX: -offsetPx }] }]}>
+            <Image source={bucket.collision} resizeMode="contain" fadeDuration={0} style={{ width: boxW, height: boxH }} />
         </View>
     );
 }
@@ -424,11 +322,11 @@ export default function BoardGrid({
 
         const pushSolo = (runner, sx, sy, sCol, onTop = false, enterFrom = undefined) => {
             const anim = runnerAnims?.[runner.id] ?? null;
-            // "Смерть" на wall (2026-09-12) — бегун в терминальной позе
+            // "Смерть" на wall (2026-09-12/13) — бегун в терминальной позе
             // 'acid'/'burn' сдвигается ВПРАВО от центра клетки той же
             // величиной, что и правый токен обычной коллизионной пары (см.
-            // pushPair#offset ниже) — Death-тайл под ним (BoardGrid#DeathTile)
-            // симметрично сдвигается ВЛЕВО на collisionSignal, вместе давая
+            // pushPair#offset ниже) — DeathTile (см. выше), пока активен на
+            // этой же клетке, симметрично сдвинут ВЛЕВО, вместе давая
             // "слева death справа бегун", как попросил пользователь.
             const isDeathPose = anim?.kind === 'acid' || anim?.kind === 'burn';
             items.push({
@@ -761,6 +659,43 @@ export default function BoardGrid({
         return { x, y, enterFrom };
     }, [reaperPreview, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
 
+    // Какие клетки wall ПРЯМО СЕЙЧАС проигрывают collision (2026-09-13) —
+    // deathCollisionSignals (проп из GameBoardScreen, {cellId: nonce}) несёт
+    // только ФАКТ нового столкновения, длительность показа считаем тут же:
+    // сравниваем nonce со ЗНАЧЕНИЕМ последнего увиденного (не "не null" —
+    // nonce может быть 0), на новом значении заводим запись с variant
+    // (детерминированно по cellId, ТА ЖЕ функция, что и в
+    // lib/runnerAnimTriggers.js для терминальной позы самого бегуна) и
+    // expiresAt, и планируем forced re-render РОВНО когда истечёт (тот же
+    // приём, что уже используется для collisionHoldsRef/holdTick выше —
+    // ref-мутация не должна сама по себе триггерить лишний рендер, тик её
+    // просто заставляет пересчитаться, когда время вышло).
+    const deathActiveRef = useRef({}); // {cellId: {expiresAt, variant}}
+    const deathSeenNonceRef = useRef({}); // {cellId: последний обработанный nonce}
+    const [deathTick, setDeathTick] = useState(0);
+    useEffect(() => {
+        if (!deathCollisionSignals) return;
+        for (const [cellId, nonce] of Object.entries(deathCollisionSignals)) {
+            if (deathSeenNonceRef.current[cellId] === nonce) continue;
+            deathSeenNonceRef.current[cellId] = nonce;
+            const variant = pickDeathVariant(cellId);
+            const duration = DEATH_COLLISION_MS[variant];
+            deathActiveRef.current[cellId] = { expiresAt: Date.now() + duration, variant };
+            setTimeout(() => setDeathTick((t) => t + 1), duration + 30);
+        }
+        setDeathTick((t) => t + 1);
+    }, [deathCollisionSignals]);
+    const activeDeathCells = useMemo(() => {
+        const now = Date.now();
+        const map = {};
+        for (const [cellId, entry] of Object.entries(deathActiveRef.current)) {
+            if (entry.expiresAt > now) map[cellId] = entry.variant;
+            else delete deathActiveRef.current[cellId];
+        }
+        return map;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [deathTick]);
+
     // "Смерть" на клетках wall (см. DeathTile выше) — рендерится в ОБЩЕМ
     // токен-слое (tokenOverlayLayer), той же формулой x/y, что и обычные
     // токены/reaperPreviewItem выше, а не внутри самой ячейки — та же
@@ -771,20 +706,23 @@ export default function BoardGrid({
     // не нужна, просто плоский бокс на актуальных x/y текущего окна
     // прокрутки; если клетка выпадает из videoWindow, элемент просто не
     // попадёт в visibleCells и пропадёт из списка — то же поведение, что и у
-    // самой сетки ячеек (не анимируется, см. шапку файла).
+    // самой сетки ячеек (не анимируется, см. шапку файла). Список теперь
+    // включает ТОЛЬКО клетки с активным (см. activeDeathCells выше)
+    // столкновением — не все клетки типа wall, как было раньше.
     const deathOverlayItems = useMemo(() => {
         const items = [];
         for (const cell of visibleCells) {
-            if (cell.type !== 'wall' || !cell.deathVariant) continue;
+            const variant = activeDeathCells[cell.id];
+            if (cell.type !== 'wall' || !variant) continue;
             const localCol = cell.col - windowStart;
             const x = isPortrait ? cell.row * segmentW : localCol * segmentW + (cell.row % 2 === 0 ? segmentW / 2 : 0);
             const y = isPortrait
                 ? (cols - 1 - localCol) * segmentH + (cell.row % 2 === 0 ? segmentH / 2 : 0)
                 : cell.row * segmentH;
-            items.push({ cellId: cell.id, variant: cell.deathVariant, x, y });
+            items.push({ cellId: cell.id, variant, x, y });
         }
         return items;
-    }, [visibleCells, windowStart, cols, segmentW, segmentH, isPortrait]);
+    }, [visibleCells, windowStart, cols, segmentW, segmentH, isPortrait, activeDeathCells]);
 
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
     // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
@@ -956,12 +894,12 @@ export default function BoardGrid({
                                                 pointerEvents="none"
                                             />
                                         )}
-                                        {/* "Смерть" (2026-09-12) — рисуется ОТДЕЛЬНО, в
-                                            tokenOverlayLayer (см. deathOverlayItems ниже), не тут —
-                                            здесь для клетки wall+deathVariant просто пропускаем
-                                            картинку типа клетки целиком (ground-подложка baseImage
-                                            выше уже отрисована и остаётся видна). */}
-                                        {!(cell.type === 'wall' && cell.deathVariant) && (
+                                        {/* wall — обычный wall_base-тайл ВСЕГДА (2026-09-13, откат
+                                            постоянного Death) — прячем его ТОЛЬКО пока на этой
+                                            конкретной клетке идёт collision-анимация (см.
+                                            activeDeathCells выше, DeathTile рисуется отдельно, в
+                                            tokenOverlayLayer, см. deathOverlayItems). */}
+                                        {!(cell.type === 'wall' && activeDeathCells[cell.id]) && (
                                             <Image
                                                 source={cell.image}
                                                 style={{
@@ -1037,7 +975,7 @@ export default function BoardGrid({
                             />
                             {item.badgeCount > 1 && (
                                 <View style={styles.stackBadge}>
-                                    <Text style={styles.stackBadgeText}>+{item.badgeCount - 1}</Text>
+                                    <Text style={styles.stackBadgeText} noGlobalTint>+{item.badgeCount - 1}</Text>
                                 </View>
                             )}
                         </RunnerTokenSlide>
@@ -1082,7 +1020,6 @@ export default function BoardGrid({
                                 variant={item.variant}
                                 boxW={singleImageSize}
                                 boxH={singleImageSize}
-                                collisionSignal={deathCollisionSignals?.[item.cellId]}
                                 offsetPx={deathPairOffset}
                             />
                         </View>

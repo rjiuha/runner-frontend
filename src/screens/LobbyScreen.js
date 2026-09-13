@@ -1,10 +1,10 @@
 // src/screens/LobbyScreen.js
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 
 import Screen from '../components/ui/Screen';
 import Button from '../components/ui/Button';
-import LoadingTip from '../components/ui/LoadingTip';
+import LoadingCard from '../components/ui/LoadingCard';
 import { lobbyApi } from '../api/lobby';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
@@ -85,9 +85,7 @@ export default function LobbyScreen({ route, navigation }) {
     if (!lobby) {
         return (
             <Screen contentContainerStyle={styles.center}>
-                <ActivityIndicator size="large" color={colors.primary} />
-                <Text style={styles.status}>{STATUS_LABEL[status] ?? ''}</Text>
-                <LoadingTip />
+                <LoadingCard label={STATUS_LABEL[status] ?? ''} />
             </Screen>
         );
     }
@@ -97,23 +95,23 @@ export default function LobbyScreen({ route, navigation }) {
     return (
         <Screen scroll contentContainerStyle={styles.content}>
             <View style={styles.headRow}>
-                <Text style={styles.title}>
+                <Text style={styles.title} noGlobalTint>
                     {lobby.players.length}/{lobby.maxPlayers} игроков
                 </Text>
                 <View style={styles.statusRow}>
                     <View style={[styles.dot, status === 'live' && styles.dotLive]} />
-                    <Text style={styles.status}>{STATUS_LABEL[status] ?? ''}</Text>
+                    <Text style={styles.status} noGlobalTint>{STATUS_LABEL[status] ?? ''}</Text>
                 </View>
             </View>
 
             {lobby.players.map((p) => (
                 <View key={p.id} style={styles.player}>
-                    <Text style={styles.playerName}>
+                    <Text style={styles.playerName} noGlobalTint>
                         {p.username}
                         {p.id === lobby.host?.id ? '  👑' : ''}
                         {p.id === user?.id ? '  (ты)' : ''}
                     </Text>
-                    <Text style={[styles.badge, p.isReady && styles.badgeReady]}>
+                    <Text style={[styles.badge, p.isReady && styles.badgeReady]} noGlobalTint>
                         {p.isReady ? 'готов' : 'ждёт'}
                     </Text>
                 </View>
@@ -122,11 +120,11 @@ export default function LobbyScreen({ route, navigation }) {
             {/* Свободные слоты */}
             {Array.from({ length: Math.max(0, lobby.maxPlayers - lobby.players.length) }).map((_, i) => (
                 <View key={`slot${i}`} style={[styles.player, styles.slotEmpty]}>
-                    <Text style={styles.slotText}>Ожидание игрока…</Text>
+                    <Text style={styles.slotText} noGlobalTint>Ожидание игрока…</Text>
                 </View>
             ))}
 
-            <Text style={styles.hint}>
+            <Text style={styles.hint} noGlobalTint>
                 Готовы {readyCount} из {lobby.maxPlayers}. Игра начнётся автоматически.
             </Text>
 

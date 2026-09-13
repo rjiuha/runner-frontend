@@ -27,6 +27,7 @@ export default function PlayerSwitcher({ players, activeId, onSelect }) {
                         <Text
                             style={[styles.label, active && { color: p.color, fontWeight: 'bold' }]}
                             numberOfLines={1}
+                            noGlobalTint
                         >
                             {p.name}
                         </Text>

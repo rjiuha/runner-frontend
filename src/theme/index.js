@@ -29,6 +29,22 @@ export const colors = {
     inputBg: '#918f8f9f',
     inputBgAlt: '#6261619f',
     inputBorder: '#848383',
+
+    // Цвет неоновых полосок на спрайтах бегунов (2026-09-13) — снят напрямую
+    // с пикселей ассетов (assets/images/runners/scout/healthy/
+    // scout_healthy_idle_red.gif, усреднение по пикселям, попавшим под тот же
+    // HSL-порог, что и в скрипте реверс-маскинга бегунов — hue 150-255°,
+    // saturation≥20%, lightness 35-96%, см. CLAUDE.md 2026-09-02), не
+    // выдуман — по прямому запросу пользователя "цвет текста в цвет полосок
+    // персонажей, в cyan".
+    neonCyan: '#2abcbd',
+
+    // Тёмная полупрозрачная "плашка" под текстом поверх busy-фона (звёздное
+    // небо ParallaxBackground) — 2026-09-13, по прямому запросу пользователя:
+    // спиннер+LoadingTip читались плохо прямо на фоне со звёздами. Та же
+    // alpha (0.6), что уже использует backdrop модалки (CreateLobbyModal) —
+    // не выдумываю новое значение непрозрачности.
+    overlayPlate: 'rgba(10, 14, 20, 0.6)',
 };
 
 export const spacing = { xs: 4, sm: 8, md: 15, lg: 20, xl: 30, xxl: 40 };
@@ -42,6 +58,15 @@ export const font = {
     small: 14,
     tiny: 12,
 };
+
+// Кастомный шрифт (src/assets/fonts/spaceranger-rus.otf, добавлен пользователем,
+// 2026-09-13) — регистрируется в App.js через expo-font (useFonts), ключ
+// 'SpaceRanger' там ЖЁСТКО совпадает с этой константой. Применяется ГЛОБАЛЬНО
+// через Text.defaultProps/TextInput.defaultProps (см. App.js) — эта константа
+// не обязательна использовать напрямую в компонентах, но экспортирована на
+// случай точечного переопределения (например, если где-то понадобится ЯВНО
+// откатиться на системный шрифт).
+export const fontFamily = 'SpaceRanger';
 
 /** Тень одинаково на iOS/Android/web */
 export const shadow = {
