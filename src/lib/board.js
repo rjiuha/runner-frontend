@@ -32,21 +32,33 @@ function hashString(str) {
  * всю партию (gridData пересчитывается на каждое live-обновление стейта, и
  * настоящий рандом на каждый вызов заставлял бы картинку клетки "прыгать"/
  * перезапускать gif-анимацию при каждом ре-рендере экрана).
+ *
+ * 'wall' — особый случай (2026-09-13): SEGMENT_IMAGES.wall не плоский массив,
+ * а `{acid, burn}` — сначала выбираем ВАРИАНТ через pickDeathVariant(cellId)
+ * (ТА ЖЕ функция, что решает терминальную позу погибающего на этой клетке
+ * бегуна, см. lib/runnerAnimTriggers.js), потом конкретный файл внутри него.
+ * Так картинка стены и анимация гибели на ней гарантированно совпадают по
+ * варианту (acid/burn) — оба берут вариант из ОДНОГО и того же вызова.
  */
 export function pickSegmentImage(type, cellId) {
+    if (type === 'wall') {
+        const variant = pickDeathVariant(cellId);
+        const variants = SEGMENT_IMAGES.wall[variant];
+        return variants[hashString(`${cellId}:${variant}`) % variants.length];
+    }
     const variants = SEGMENT_IMAGES[type] || SEGMENT_IMAGES.road;
     return variants[hashString(cellId) % variants.length];
 }
 
 /**
- * Тип "подложки" под клетки danger/anomaly/mud/wall — по прямому запросу
- * пользователя, 2026-08-30/31: под danger, anomaly и wall (стена — тоже
- * препятствие НА дороге, та же логика) кладём road, под mud (грязь/dirt) —
- * случайный (детерминированно по id клетки, как и сам pickSegmentImage) sand.
- * Остальные типы (road/sand) без подложки — это они сами и есть "земля",
- * класть под них ещё один слой нечего.
+ * Тип "подложки" под клетки danger/anomaly/mud — по прямому запросу
+ * пользователя, 2026-08-30/31: под danger и anomaly кладём road, под mud
+ * (грязь/dirt) — случайный (детерминированно по id клетки, как и сам
+ * pickSegmentImage) sand. wall — БЕЗ подложки (2026-09-13, стена теперь
+ * непрозрачна целиком, класть под неё road больше незачем). Остальные типы
+ * (road/sand) — это они сами и есть "земля", подложки не нужно.
  */
-const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', wall: 'road', mud: 'sand' };
+const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', mud: 'sand' };
 
 /** Картинка подложки для типа клетки, или null если подложка не нужна (см. BASE_IMAGE_TYPE). */
 export function pickBaseImage(type, cellId) {
@@ -55,15 +67,15 @@ export function pickBaseImage(type, cellId) {
 }
 
 /**
- * Вариант "Смерти" (acid/burn), проигрываемый на клетке типа wall в момент
- * гибели на ней бегуна (2026-09-12/13) — детерминированно по id клетки, ТА ЖЕ
- * схема, что и pickSegmentImage (стабильно на всю партию, не перевыбирается
- * на каждый рендер/live-обновление стейта). Используется и в BoardGrid.js
- * (какую collision-гиф показать поверх временно скрытого wall-тайла, см.
- * activeDeathCells), и при определении, какую терминальную позу
- * ('acid'/'burn') получит сам погибший бегун (см. lib/runnerAnimTriggers.js)
- * — оба места обязаны получать ОДИН И ТОТ ЖЕ вариант для одного и того же id,
- * что и гарантирует чистый детерминированный хэш.
+ * Вариант стены (acid/burn) для клетки типа wall — детерминированно по id
+ * клетки, НЕ Math.random (стабильно на всю партию). Единственный источник
+ * истины сразу для двух вещей, которые обязаны совпадать: (1)
+ * pickSegmentImage выше берёт ИЗ НЕГО, какую картинку (wall_acid_N или
+ * wall_burn_N) показать на самой клетке; (2) lib/runnerAnimTriggers.js берёт
+ * ИЗ НЕГО, какую терминальную позу ('acid'/'burn') получит бегун, погибающий
+ * именно на этой клетке (2026-09-12/13, по прямому запросу пользователя —
+ * тип стены и анимация гибели на ней должны совпадать, не выбираться
+ * независимо).
  */
 export function pickDeathVariant(cellId) {
     return hashString(cellId) % 2 === 0 ? 'acid' : 'burn';

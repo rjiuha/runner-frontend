@@ -125,28 +125,33 @@ export const ASSET_SIZES = {
 /**
  * Изображения ячеек дороги для рендера поля (GameBoardScreen/BoardGrid).
  * Ключи — значения RoadType с бэка и values из assets/tracks/*.json ('road'/
- * 'sand'/'mud'/'wall'/'danger'/'anomaly'). По каждому типу — несколько
- * вариантов ассета (пользователь сам добавил по несколько картинок на тип,
- * 2026-08-28) — lib/board.js#pickSegmentImage выбирает конкретный вариант
- * детерминированно по id клетки (не Math.random — иначе картинка "прыгала"
- * бы на каждый ре-рендер экрана вместо того, чтобы быть стабильной на всю
- * партию). Файл dirt_base_*.gif визуально изображает грязь, поэтому ключ —
- * 'mud', а не имя файла. 'anomaly' — новая группа black_hole_*.gif (раньше
- * своего ассета не было, визуально падало на 'danger'). 'road' — один
- * статичный вариант (road_base.png), 'sand' — несколько (sand_base_1/2/3.png,
- * пользователь добавил 2026-08-29).
+ * 'sand'/'mud'/'wall'/'danger'/'anomaly'). По каждому типу (кроме wall, см.
+ * ниже) — несколько вариантов ассета (пользователь сам добавил по несколько
+ * картинок на тип, 2026-08-28) — lib/board.js#pickSegmentImage выбирает
+ * конкретный вариант детерминированно по id клетки (не Math.random — иначе
+ * картинка "прыгала" бы на каждый ре-рендер экрана вместо того, чтобы быть
+ * стабильной на всю партию). Файл dirt_base_*.gif визуально изображает грязь,
+ * поэтому ключ — 'mud', а не имя файла. 'anomaly' — группа black_hole_*.gif.
+ * 'road' — один статичный вариант (road_base.png), 'sand' — несколько
+ * (sand_base_1/2/3.png).
  *
- * И у gif-типов (wall/danger/anomaly/mud), и у png (road/sand) есть
- * облегчённый дубликат с припиской '-ez' (пользователь добавил их — на
- * реальном Android-устройстве тяжёлые файлы ощутимо тормозили, см. размеры:
- * например wall_base_1.gif 2.2МБ против wall_base_1-ez.gif 252КБ, или
- * sand_base_1.png 420КБ против sand_base_1-ez.png 92КБ — то же для всех
- * остальных). На вебе ресурсы не настолько ограничены (плюс качество на
- * большом экране виднее) — берём тяжёлые оригиналы; на native (Android/iOS)
- * — '-ez'-версии. Выбор набора идёт ОДИН раз на уровне модуля через
- * Platform.OS, а не по кадру.
+ * Облегчённые '-ez'-дубликаты для мобильных устройств (были нужны из-за
+ * тяжёлых исходных gif) пользователь удалил целиком, 2026-09-13 — платформенный
+ * сплит (SEGMENT_IMAGES_WEB/MOBILE) убран, теперь ОДИН набор ассетов
+ * одинаково на вебе и native.
+ *
+ * 'wall' — НЕ плоский список, а `{acid, burn}` (2026-09-13, стены типа "acid"/
+ * "burn" вместо старого единого wall_base_*): `lib/board.js#pickSegmentImage`
+ * для этого типа СНАЧАЛА выбирает вариант через `pickDeathVariant(cellId)` (та
+ * же детерминированная функция, что решает, КАКУЮ терминальную позу
+ * ('acid'/'burn') получит бегун, погибающий на этой клетке, см.
+ * lib/runnerAnimTriggers.js) — гарантирует, что картинка стены и анимация
+ * гибели на ней ВСЕГДА одного и того же варианта, не расходятся по случайности
+ * двух независимых хэшей. Расположение стен на дороге сейчас выбирает бэк
+ * (просто присылает тип 'wall' без подтипа) — какой именно вариант (acid/burn)
+ * покажет конкретная клетка, решает фронт случайно (детерминированно по id).
  */
-const SEGMENT_IMAGES_WEB = {
+export const SEGMENT_IMAGES = {
   road: [require('../assets/images/road/road_base.png')],
   sand: [
     require('../assets/images/road/sand_base_1.png'),
@@ -154,12 +159,13 @@ const SEGMENT_IMAGES_WEB = {
     require('../assets/images/road/sand_base_3.png'),
   ],
   mud: [require('../assets/images/road/dirt_base_1.gif')],
-  wall: [
-    require('../assets/images/road/wall_base_1.gif'),
-    require('../assets/images/road/wall_base_2.gif'),
-    require('../assets/images/road/wall_base_3.gif'),
-    require('../assets/images/road/wall_base_4.gif'),
-  ],
+  wall: {
+    acid: [
+      require('../assets/images/road/wall_acid_1.gif'),
+      require('../assets/images/road/wall_acid_2.gif'),
+    ],
+    burn: [require('../assets/images/road/wall_burn_1.gif')],
+  },
   danger: [
     require('../assets/images/road/danger_base_1.gif'),
     require('../assets/images/road/danger_base_2.gif'),
@@ -172,35 +178,6 @@ const SEGMENT_IMAGES_WEB = {
     require('../assets/images/road/black_hole_3.gif'),
   ],
 };
-
-const SEGMENT_IMAGES_MOBILE = {
-  road: [require('../assets/images/road/road_base-ez.png')],
-  sand: [
-    require('../assets/images/road/sand_base_1-ez.png'),
-    require('../assets/images/road/sand_base_2-ez.png'),
-    require('../assets/images/road/sand_base_3-ez.png'),
-  ],
-  mud: [require('../assets/images/road/dirt_base_1-ez.gif')],
-  wall: [
-    require('../assets/images/road/wall_base_1-ez.gif'),
-    require('../assets/images/road/wall_base_2-ez.gif'),
-    require('../assets/images/road/wall_base_3-ez.gif'),
-    require('../assets/images/road/wall_base_4-ez.gif'),
-  ],
-  danger: [
-    require('../assets/images/road/danger_base_1-ez.gif'),
-    require('../assets/images/road/danger_base_2-ez.gif'),
-    require('../assets/images/road/danger_base_3-ez.gif'),
-    require('../assets/images/road/danger_base_4-ez.gif'),
-  ],
-  anomaly: [
-    require('../assets/images/road/black_hole_1-ez.gif'),
-    require('../assets/images/road/black_hole_2-ez.gif'),
-    require('../assets/images/road/black_hole_3-ez.gif'),
-  ],
-};
-
-export const SEGMENT_IMAGES = Platform.OS === 'web' ? SEGMENT_IMAGES_WEB : SEGMENT_IMAGES_MOBILE;
 
 /**
  * Цвет подсветки легальной клетки текущего шага (MOVE/SHOOT/reaper-размещение/
@@ -218,11 +195,13 @@ export const HIGHLIGHT_COLOR = colors.success;
  * ещё прозрачнее (0.9→0.75, потом ещё →0.65 — суммарно на 25 процентных
  * пунктов), чтобы сквозь них было лучше видно подложку (см.
  * lib/board#pickBaseImage — road под danger/anomaly, sand под mud). wall —
- * тем же запросом переведён на ту же обработку (0.9→0.65 + подложка road).
+ * ОБРАТНО непрозрачен (2026-09-13, по прямому запросу — стены acid/burn
+ * больше не показывают ничего под собой, подложки у них тоже больше нет,
+ * см. BASE_IMAGE_TYPE в lib/board.js).
  */
 export const CELL_OPACITY = {
-  road: 1, sand: 1,
-  danger: 0.65, anomaly: 0.65, mud: 0.65, wall: 0.65,
+  road: 1, sand: 1, wall: 1,
+  danger: 0.65, anomaly: 0.65, mud: 0.65,
 };
 
 /**

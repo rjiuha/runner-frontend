@@ -2,48 +2,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
-import { DEATH_COLLISION_MS, DEATH_VARIANTS } from '../../constants/deathAnimations';
-import { indexRunnersByCell, pickDeathVariant } from '../../lib/board';
+import { indexRunnersByCell } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
 import RunnerToken from './RunnerToken';
 import RunnerTokenSlide, { SLIDE_DURATION_MS } from './RunnerTokenSlide';
-
-/**
- * "Смерть" на клетке типа wall (2026-09-13, откат к точечной анимации по
- * прямому запросу пользователя — постоянно стоящее существо, введённое
- * 2026-09-12, убрано целиком). Клетка типа wall всегда показывает обычный
- * wall_base-тайл (см. рендер ячейки ниже — картинка типа клетки больше НЕ
- * скрывается по признаку wall). DeathTile теперь ВООБЩЕ не рендерится, пока
- * BoardGrid не увидит активное столкновение на этой клетке (см.
- * activeDeathCells ниже) — в этот момент wall-тайл прячется, а тут ОДИН РАЗ
- * проигрывается collision-гиф случайно выбранного (детерминированно по id
- * клетки, см. lib/board#pickDeathVariant) варианта acid/burn; по истечении
- * DEATH_COLLISION_MS элемент просто перестаёт попадать в deathOverlayItems
- * (см. activeDeathCells) и unmount'ится — своего внутреннего таймера/state
- * компоненту больше не нужно, всей его "активностью" целиком управляет
- * родитель.
- *
- * Рендерится ВНУТРИ tokenOverlayLayer (см. deathOverlayItems ниже), тем же
- * "бегунским" размером/прижатием к низу клетки, что и RunnerToken (жалоба
- * пользователя из прошлой версии фичи: "должен быть как бегуны размерами и
- * расположением относительно сегмента" — актуально и сейчас). Сдвиг влево
- * (`offsetPx`) — освобождает правую половину клетки для умирающего бегуна
- * (тот сам сдвигается вправо на ТУ ЖЕ величину, см. pushSolo/main loop выше)
- * — "слева death, справа бегун"; раз компонент теперь монтируется ТОЛЬКО на
- * время collision, сдвиг применяется безусловно (нет больше режима
- * idle/prepare, ради которого раньше был нужен `mode==='collision' ? ... :
- * undefined`-переключатель transform — тот код когда-то давал реальный краш
- * на Android при переходе collision→idle, но раз idle-режима больше нет
- * вообще, вопрос снят целиком, не только обойдён).
- */
-function DeathTile({ variant, boxW, boxH, offsetPx }) {
-    const bucket = DEATH_VARIANTS[variant];
-    return (
-        <View style={[{ width: boxW, height: boxH }, { transform: [{ translateX: -offsetPx }] }]}>
-            <Image source={bucket.collision} resizeMode="contain" fadeDuration={0} style={{ width: boxW, height: boxH }} />
-        </View>
-    );
-}
 
 // Прилёт Жнеца из резерва — вдвое медленнее обычного слайда (см. RunnerTokenSlide#duration),
 // по прямому запросу пользователя, 2026-09-09: "он двигается очень быстро, может стоит
@@ -127,7 +89,6 @@ export default function BoardGrid({
     onCollisionPoseEnd = null,
     reaperPreview = null,
     columnOpacities = null,
-    deathCollisionSignals = null,
     onCellPress,
 }) {
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
@@ -186,10 +147,6 @@ export default function BoardGrid({
     const pairImageSize = singleImageSize;
     const pairGap = Math.max(2, Math.floor(Math.min(segmentW, segmentH) * 0.02));
     const pairSize = Math.floor(pairImageSize / BOARD_TOKEN_IMAGE_SCALE);
-    // Та же величина сдвига, что и у обычной коллизионной пары (см. pushPair
-    // ниже) — переиспользована для пары "Death слева / умирающий бегун
-    // справа" (2026-09-12, см. pushSolo#isDeathPose и DeathTile выше).
-    const deathPairOffset = (pairGap / 2 + pairSize / 2) * 0.93;
     const isPortrait = orientation === 'portrait';
     // По запросу пользователя: только в веб-браузере, только в альбомной
     // (горизонтальной) раскладке, и только для road/sand/mud (не
@@ -322,13 +279,6 @@ export default function BoardGrid({
 
         const pushSolo = (runner, sx, sy, sCol, onTop = false, enterFrom = undefined) => {
             const anim = runnerAnims?.[runner.id] ?? null;
-            // "Смерть" на wall (2026-09-12/13) — бегун в терминальной позе
-            // 'acid'/'burn' сдвигается ВПРАВО от центра клетки той же
-            // величиной, что и правый токен обычной коллизионной пары (см.
-            // pushPair#offset ниже) — DeathTile (см. выше), пока активен на
-            // этой же клетке, симметрично сдвинут ВЛЕВО, вместе давая
-            // "слева death справа бегун", как попросил пользователь.
-            const isDeathPose = anim?.kind === 'acid' || anim?.kind === 'burn';
             items.push({
                 runnerId: runner.id, runner, x: sx, y: sy, col: sCol,
                 boxW: segmentW, boxH: segmentH, tokenSize,
@@ -336,7 +286,6 @@ export default function BoardGrid({
                 anchorBottom: true,
                 onTop,
                 enterFrom,
-                innerOffsetX: isDeathPose ? deathPairOffset : undefined,
             });
         };
         // Бокс пары — ТОТ ЖЕ segmentW×segmentH, что у соло-токена, НИКОГДА
@@ -594,15 +543,6 @@ export default function BoardGrid({
             // поведение "первый + значок +N") видимый бегун на клетке.
             const topRunner = visible[0];
             const topAnim = runnerAnims?.[topRunner.id] ?? null;
-            // "Смерть" на wall (2026-09-12) — САМЫЙ ЧАСТЫЙ путь к
-            // isDeathPose на практике (обычный одиночный заход бегуна на
-            // клетку с Death), но раньше сюда не заглядывали — этот пуш
-            // собирался НАПРЯМУЮ, в обход pushSolo (который единственный
-            // где-то ещё выставлял innerOffsetX), так что сдвиг вправо
-            // никогда не применялся и бегун рисовался ПО ЦЕНТРУ клетки
-            // (жалоба пользователя, живой тест). Теперь тот же расчёт, что
-            // и в pushSolo выше.
-            const isDeathPose = topAnim?.kind === 'acid' || topAnim?.kind === 'burn';
             items.push({
                 runnerId: topRunner.id, runner: topRunner,
                 x, y, col: globalCol, boxW: segmentW, boxH: segmentH, tokenSize,
@@ -613,7 +553,6 @@ export default function BoardGrid({
                 // 2026-09-09).
                 anchorBottom: true,
                 enterFrom: enterFromByRunnerId[topRunner.id],
-                innerOffsetX: isDeathPose ? deathPairOffset : undefined,
             });
         }
 
@@ -658,71 +597,6 @@ export default function BoardGrid({
         const enterFrom = { x: side === 'east' ? x - enterOffset : x + enterOffset, y };
         return { x, y, enterFrom };
     }, [reaperPreview, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
-
-    // Какие клетки wall ПРЯМО СЕЙЧАС проигрывают collision (2026-09-13) —
-    // deathCollisionSignals (проп из GameBoardScreen, {cellId: nonce}) несёт
-    // только ФАКТ нового столкновения, длительность показа считаем тут же:
-    // сравниваем nonce со ЗНАЧЕНИЕМ последнего увиденного (не "не null" —
-    // nonce может быть 0), на новом значении заводим запись с variant
-    // (детерминированно по cellId, ТА ЖЕ функция, что и в
-    // lib/runnerAnimTriggers.js для терминальной позы самого бегуна) и
-    // expiresAt, и планируем forced re-render РОВНО когда истечёт (тот же
-    // приём, что уже используется для collisionHoldsRef/holdTick выше —
-    // ref-мутация не должна сама по себе триггерить лишний рендер, тик её
-    // просто заставляет пересчитаться, когда время вышло).
-    const deathActiveRef = useRef({}); // {cellId: {expiresAt, variant}}
-    const deathSeenNonceRef = useRef({}); // {cellId: последний обработанный nonce}
-    const [deathTick, setDeathTick] = useState(0);
-    useEffect(() => {
-        if (!deathCollisionSignals) return;
-        for (const [cellId, nonce] of Object.entries(deathCollisionSignals)) {
-            if (deathSeenNonceRef.current[cellId] === nonce) continue;
-            deathSeenNonceRef.current[cellId] = nonce;
-            const variant = pickDeathVariant(cellId);
-            const duration = DEATH_COLLISION_MS[variant];
-            deathActiveRef.current[cellId] = { expiresAt: Date.now() + duration, variant };
-            setTimeout(() => setDeathTick((t) => t + 1), duration + 30);
-        }
-        setDeathTick((t) => t + 1);
-    }, [deathCollisionSignals]);
-    const activeDeathCells = useMemo(() => {
-        const now = Date.now();
-        const map = {};
-        for (const [cellId, entry] of Object.entries(deathActiveRef.current)) {
-            if (entry.expiresAt > now) map[cellId] = entry.variant;
-            else delete deathActiveRef.current[cellId];
-        }
-        return map;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [deathTick]);
-
-    // "Смерть" на клетках wall (см. DeathTile выше) — рендерится в ОБЩЕМ
-    // токен-слое (tokenOverlayLayer), той же формулой x/y, что и обычные
-    // токены/reaperPreviewItem выше, а не внутри самой ячейки — та же
-    // причина, что и у переноса бегунов на отдельный слой ещё в 2026-08-12
-    // (Android иногда не уважает порядок отрисовки вложенных oversized-
-    // спрайтов внутри ячейки, см. докстринг у styles.tokenOverlayLayer ниже).
-    // Death не двигается между клетками — слайд-анимация (RunnerTokenSlide)
-    // не нужна, просто плоский бокс на актуальных x/y текущего окна
-    // прокрутки; если клетка выпадает из videoWindow, элемент просто не
-    // попадёт в visibleCells и пропадёт из списка — то же поведение, что и у
-    // самой сетки ячеек (не анимируется, см. шапку файла). Список теперь
-    // включает ТОЛЬКО клетки с активным (см. activeDeathCells выше)
-    // столкновением — не все клетки типа wall, как было раньше.
-    const deathOverlayItems = useMemo(() => {
-        const items = [];
-        for (const cell of visibleCells) {
-            const variant = activeDeathCells[cell.id];
-            if (cell.type !== 'wall' || !variant) continue;
-            const localCol = cell.col - windowStart;
-            const x = isPortrait ? cell.row * segmentW : localCol * segmentW + (cell.row % 2 === 0 ? segmentW / 2 : 0);
-            const y = isPortrait
-                ? (cols - 1 - localCol) * segmentH + (cell.row % 2 === 0 ? segmentH / 2 : 0)
-                : cell.row * segmentH;
-            items.push({ cellId: cell.id, variant, x, y });
-        }
-        return items;
-    }, [visibleCells, windowStart, cols, segmentW, segmentH, isPortrait, activeDeathCells]);
 
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
     // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
@@ -894,33 +768,25 @@ export default function BoardGrid({
                                                 pointerEvents="none"
                                             />
                                         )}
-                                        {/* wall — обычный wall_base-тайл ВСЕГДА (2026-09-13, откат
-                                            постоянного Death) — прячем его ТОЛЬКО пока на этой
-                                            конкретной клетке идёт collision-анимация (см.
-                                            activeDeathCells выше, DeathTile рисуется отдельно, в
-                                            tokenOverlayLayer, см. deathOverlayItems). */}
-                                        {!(cell.type === 'wall' && activeDeathCells[cell.id]) && (
-                                            <Image
-                                                source={cell.image}
-                                                style={{
-                                                    position: 'absolute',
-                                                    left: segmentW * (SEGMENT_INSET / 2),
-                                                    top: segmentH * (SEGMENT_INSET / 2),
-                                                    width: segmentW * (1 - SEGMENT_INSET),
-                                                    height: segmentH * (1 - SEGMENT_INSET),
-                                                    resizeMode: 'stretch',
-                                                    // road/sand непрозрачны (не просвечивают подсветку под
-                                                    // собой); wall — лёгкая прозрачность (заливка подсветки
-                                                    // видна по краю); danger/anomaly/mud — ещё прозрачнее
-                                                    // (по прямому запросу пользователя, чтобы сквозь них было
-                                                    // видно baseImage-подложку выше), см. CELL_OPACITY.
-                                                    opacity: CELL_OPACITY[cell.type] ?? 0.9,
-                                                    ...(rotateEligible && ROTATE_TYPES.has(cell.type)
-                                                        ? { transform: [{ rotate: '90deg' }] }
-                                                        : null),
-                                                }}
-                                            />
-                                        )}
+                                        <Image
+                                            source={cell.image}
+                                            style={{
+                                                position: 'absolute',
+                                                left: segmentW * (SEGMENT_INSET / 2),
+                                                top: segmentH * (SEGMENT_INSET / 2),
+                                                width: segmentW * (1 - SEGMENT_INSET),
+                                                height: segmentH * (1 - SEGMENT_INSET),
+                                                resizeMode: 'stretch',
+                                                // road/sand/wall непрозрачны (не просвечивают подсветку
+                                                // под собой); danger/anomaly/mud — прозрачнее (по прямому
+                                                // запросу пользователя, чтобы сквозь них было видно
+                                                // baseImage-подложку выше), см. CELL_OPACITY.
+                                                opacity: CELL_OPACITY[cell.type] ?? 0.9,
+                                                ...(rotateEligible && ROTATE_TYPES.has(cell.type)
+                                                    ? { transform: [{ rotate: '90deg' }] }
+                                                    : null),
+                                            }}
+                                        />
                                         </Animated.View>
                                     </TouchableOpacity>
                                 );
@@ -1004,26 +870,6 @@ export default function BoardGrid({
                             />
                         </RunnerTokenSlide>
                     )}
-                    {deathOverlayItems.map((item) => (
-                        // Плоский бокс размера сегмента, прижат к низу (та же
-                        // tokenLayerBottom-раскладка, что и у бегунов) —
-                        // DeathTile внутри сам сидит "бегунского" размера
-                        // (singleImageSize) и может выпирать за пределы
-                        // сегмента вверх, как и обычный токен (см. докстринг у
-                        // DeathTile/tokenOverlayLayer).
-                        <View
-                            key={`death-${item.cellId}`}
-                            style={[styles.tokenLayerBottom, { left: item.x, top: item.y, width: segmentW, height: segmentH }]}
-                            pointerEvents="none"
-                        >
-                            <DeathTile
-                                variant={item.variant}
-                                boxW={singleImageSize}
-                                boxH={singleImageSize}
-                                offsetPx={deathPairOffset}
-                            />
-                        </View>
-                    ))}
                 </View>
 
                 <View

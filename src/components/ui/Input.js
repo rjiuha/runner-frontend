@@ -19,6 +19,7 @@ export default function Input({ error, secondary = false, style, ...props }) {
                     style,
                 ]}
                 placeholderTextColor="#d5d5d5"
+                noGlobalFont
                 {...props}
             />
             {!!error && <Text style={styles.error}>{error}</Text>}

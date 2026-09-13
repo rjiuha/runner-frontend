@@ -94,6 +94,17 @@ import { fontFamily as CUSTOM_FONT_FAMILY, colors } from './src/theme';
  * одном месте (`components/ui/Input.js`, проверено grep'ом) — безопасно
  * исключить его из форсинга цвета целиком, без пропа-переключателя на
  * каждом отдельном месте использования.
+ *
+ * **Проп `noGlobalFont` (2026-09-13, третий заход, по прямому запросу —
+ * "в полях для ввода на экранах логина и регистрации сам вводимый текст
+ * пусть будет обычным")** — в отличие от `noGlobalTint` (тот гасит только
+ * `color`), этот полностью выключает форсинг для конкретного `<TextInput>`:
+ * ни `fontFamily`, ни `fontWeight` не добавляются вообще, стиль компонента
+ * идёт как есть (значит текст рисуется системным шрифтом ОС — обычным).
+ * `TextInput` в проекте используется РОВНО в одном месте (`components/ui/
+ * Input.js`, использует ТОЛЬКО AuthScreen) — проставлен там, остальной
+ * форсинг (`Text`, дефолт `TextInput` через `defaultProps` ниже — фолбэк на
+ * случай `React.createElement` в обход JSX) не трогаем.
  */
 function patchJsxForFont(mod) {
     if (!mod) return;
@@ -102,17 +113,21 @@ function patchJsxForFont(mod) {
         if (typeof original !== 'function') return;
         mod[fnName] = function patchedJsx(type, config, ...rest) {
             if ((type === Text || type === TextInput) && config) {
-                const { noGlobalTint, ...rest2 } = config;
-                const skipColor = noGlobalTint || type === TextInput;
-                config = {
-                    ...rest2,
-                    style: [
-                        rest2.style,
-                        skipColor
-                            ? { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal' }
-                            : { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal', color: colors.neonCyan },
-                    ],
-                };
+                const { noGlobalTint, noGlobalFont, ...rest2 } = config;
+                if (noGlobalFont) {
+                    config = rest2;
+                } else {
+                    const skipColor = noGlobalTint || type === TextInput;
+                    config = {
+                        ...rest2,
+                        style: [
+                            rest2.style,
+                            skipColor
+                                ? { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal' }
+                                : { fontFamily: CUSTOM_FONT_FAMILY, fontWeight: 'normal', color: colors.neonCyan },
+                        ],
+                    };
+                }
             }
             return original.call(this, type, config, ...rest);
         };
