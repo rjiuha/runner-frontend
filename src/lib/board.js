@@ -78,7 +78,7 @@ export function pickSegmentImage(type, cellId) {
  * отображался над road_base"). Остальные типы (road/sand) — это они сами и
  * есть "земля", подложки не нужно.
  */
-const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', mud: 'sand', wall: 'road' };
+export const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', mud: 'sand', wall: 'road' };
 
 /** Картинка подложки для типа клетки, или null если подложка не нужна (см. BASE_IMAGE_TYPE). */
 export function pickBaseImage(type, cellId) {

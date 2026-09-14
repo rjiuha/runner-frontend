@@ -132,8 +132,12 @@ export const ASSET_SIZES = {
  * картинка "прыгала" бы на каждый ре-рендер экрана вместо того, чтобы быть
  * стабильной на всю партию). Файл dirt_base_*.gif визуально изображает грязь,
  * поэтому ключ — 'mud', а не имя файла. 'anomaly' — группа black_hole_*.gif.
- * 'road' — один статичный вариант (road_base.png), 'sand' — несколько
- * (sand_base_1/2/3.png).
+ * 'road' — 2 варианта (road_base_1/2.png; было 3, пользователь удалил
+ * road_base_3.png тем же днём), 'sand' — 2 варианта (sand_base_1/2.png,
+ * аналогично удалён sand_base_3.png).
+ * 'danger' — 2026-09-14: было 4 варианта, пользователь удалил 3 (оставил
+ * только danger_base_1.gif) — если позже добавит ещё, просто дописать в
+ * массив ниже, выбор уже общий для любой длины массива.
  *
  * Облегчённые '-ez'-дубликаты для мобильных устройств (были нужны из-за
  * тяжёлых исходных gif) пользователь удалил целиком, 2026-09-13 — платформенный
@@ -152,26 +156,29 @@ export const ASSET_SIZES = {
  * покажет конкретная клетка, решает фронт случайно (детерминированно по id).
  */
 export const SEGMENT_IMAGES = {
-  road: [require('../assets/images/road/road_base.png')],
+  road: [
+    require('../assets/images/road/road_base_1.png'),
+    require('../assets/images/road/road_base_2.png'),
+  ],
   sand: [
     require('../assets/images/road/sand_base_1.png'),
     require('../assets/images/road/sand_base_2.png'),
-    require('../assets/images/road/sand_base_3.png'),
   ],
-  mud: [require('../assets/images/road/dirt_base_1.gif')],
+  mud: [
+    require('../assets/images/road/dirt_base_1.gif'),
+    require('../assets/images/road/dirt_base_2.gif'),
+    require('../assets/images/road/dirt_base_3.gif'),
+    require('../assets/images/road/dirt_base_4.gif'),
+  ],
   wall: {
     acid: [
       require('../assets/images/road/wall_acid_1.gif'),
       require('../assets/images/road/wall_acid_2.gif'),
+      require('../assets/images/road/wall_acid_3.gif'),
     ],
     burn: [require('../assets/images/road/wall_burn_1.gif')],
   },
-  danger: [
-    require('../assets/images/road/danger_base_1.gif'),
-    require('../assets/images/road/danger_base_2.gif'),
-    require('../assets/images/road/danger_base_3.gif'),
-    require('../assets/images/road/danger_base_4.gif'),
-  ],
+  danger: [require('../assets/images/road/danger_base_1.gif')],
   anomaly: [
     require('../assets/images/road/black_hole_1.gif'),
     require('../assets/images/road/black_hole_2.gif'),
@@ -191,19 +198,20 @@ export const HIGHLIGHT_COLOR = colors.success;
 /**
  * Прозрачность картинки типа клетки (BoardGrid) — road/sand непрозрачны (по
  * более раннему запросу, не просвечивают заливку подсветки под собой).
- * danger/anomaly/mud — по прямому запросу пользователя, 2026-08-31, сделаны
- * ещё прозрачнее (0.9→0.75, потом ещё →0.65 — суммарно на 25 процентных
- * пунктов), чтобы сквозь них было лучше видно подложку (см.
- * lib/board#pickBaseImage — road под danger/anomaly, sand под mud). wall —
- * ОБРАТНО непрозрачен (2026-09-13, по прямому запросу): картинка стены
- * (acid/burn) сама целиком не прозрачна, но всё ещё занимает не весь слот
- * (SEGMENT_INSET-зазор по краю, как у остальных типов) — под ней по-прежнему
- * лежит road-подложка (см. BASE_IMAGE_TYPE в lib/board.js), просто не
- * просвечивает сквозь саму картинку стены, только видна в этом зазоре.
+ * danger/anomaly — по прямому запросу пользователя, 2026-08-31, сделаны ещё
+ * прозрачнее (0.9→0.75, потом ещё →0.65 — суммарно на 25 процентных пунктов),
+ * чтобы сквозь них было лучше видно подложку (см. lib/board#pickBaseImage —
+ * road под danger/anomaly). wall и mud — ОБРАТНО непрозрачны (wall —
+ * 2026-09-13, mud — 2026-09-14, оба по прямому запросу): картинка сама
+ * целиком не прозрачна, но всё ещё занимает не весь слот (SEGMENT_INSET-
+ * зазор по краю, как у остальных типов) — под ней по-прежнему лежит
+ * подложка (road под wall, sand под mud — см. BASE_IMAGE_TYPE в
+ * lib/board.js), просто не просвечивает сквозь саму картинку, только видна
+ * в этом зазоре.
  */
 export const CELL_OPACITY = {
-  road: 1, sand: 1, wall: 1,
-  danger: 0.65, anomaly: 0.65, mud: 0.65,
+  road: 1, sand: 1, wall: 1, mud: 1,
+  danger: 0.65, anomaly: 0.65,
 };
 
 /**

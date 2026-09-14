@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
-import { indexRunnersByCell } from '../../lib/board';
+import { indexRunnersByCell, BASE_IMAGE_TYPE } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
 import RunnerToken from './RunnerToken';
 import RunnerTokenSlide, { SLIDE_DURATION_MS } from './RunnerTokenSlide';
@@ -55,6 +55,12 @@ const REAPER_PREVIEW_SLIDE_MS = SLIDE_DURATION_MS * 2;
 // подсветка легальной клетки (тонкая рамка+заливка) видна по краю слота
 // в этом зазоре.
 const SEGMENT_INSET = 0.06;
+// Персональный инсет по типу клетки — переопределяет SEGMENT_INSET там, где
+// нужно другое значение. road/sand — 5% (по прямому запросу пользователя,
+// 2026-09-14, второй заход того же дня). mud/dirt — несколько раундов той же
+// сессии: 5%→8%→12% (каждый раз "ещё на N процентных пунктов меньше картинку
+// внутри слота", т.е. +N% к зазору), только у mud — road/sand не трогали.
+const TYPE_INSET = { road: 0.05, sand: 0.05, mud: 0.12 };
 const HIGHLIGHT_BORDER_WIDTH = 1.5;
 // Линия-подсветка стыка фрагментов (см. рендер ниже) — по прямому запросу
 // пользователя, 2026-08-30, тот же цвет, что FragmentLabelStrip использует
@@ -613,7 +619,14 @@ export default function BoardGrid({
         const half = FRAGMENT_BOUNDARY_LINE_PX / 2;
         const segments = [];
         const numFragments = Math.round(BOARD_LAYOUT.TOTAL_COLS / BOARD_LAYOUT.COLS);
-        for (let f = 1; f < numFragments; f++) {
+        // f <= numFragments (не < ) — последний проход (f===numFragments) даёт
+        // boundaryCol === TOTAL_COLS-1, ровно "пик"-колонку 4-го фрагмента
+        // (см. lib/board#flattenPeekColumn/TRACK_SHIFT_PEEK_COL в
+        // GameBoardScreen) — раньше эта линия не рисовалась вообще (жалоба
+        // пользователя, 2026-09-14: "куда-то делась полоска, отделяющая 4
+        // фрагмент-триггер"), цвет берётся тем же FRAGMENT_COLORS[f%len], что
+        // и у FragmentLabelStrip для полосы пика (band.blockIndex===3).
+        for (let f = 1; f <= numFragments; f++) {
             const boundaryCol = f * BOARD_LAYOUT.COLS;
             const localCol = boundaryCol - windowStart;
             if (localCol < 0 || localCol >= cols) continue; // стык сейчас не в видимом окне
@@ -723,6 +736,24 @@ export default function BoardGrid({
                                 // сдвига фрагментов, тогда opacity всегда 1
                                 // (обычный рендер не затронут).
                                 const cellOpacity = columnOpacities ? (columnOpacities[cell.col] ?? 1) : 1;
+                                // См. докстринг ниже у cell.image — инсет теперь свой на тип (TYPE_INSET):
+                                // road/sand/mud рисуются с 5%-м зазором (2026-09-14, road/sand — второй
+                                // заход того же дня, mud/dirt — третий, прямой запрос "внутри неоновой/
+                                // белой полоски-квадрата сегмента"), остальные типы — обычным SEGMENT_INSET.
+                                // isFullBleed сейчас не срабатывает ни для одного реального типа (оставлен
+                                // на случай будущего типа с cellInset===0, полный full-bleed).
+                                const cellInset = TYPE_INSET[cell.type] ?? SEGMENT_INSET;
+                                const isFullBleed = cellInset === 0;
+                                // Подложка (baseImage — road под danger/anomaly/wall, sand под mud, см.
+                                // BASE_IMAGE_TYPE) раньше ВСЕГДА рисовалась во весь слот, без зазора —
+                                // из-за этого клетки с подложкой (danger/anomaly/wall/mud) визуально
+                                // заполняли весь тайл целиком, а road/sand (без подложки, сами себе "земля")
+                                // показывали зазор вокруг своей же чуть уменьшенной картинки — отсюда живая
+                                // жалоба "danger/dirt/wall сегменты крупнее" (2026-09-14). Теперь подложка
+                                // получает ТОТ ЖЕ инсет, что и её собственный тип (road/sand — оба 0.05),
+                                // а не full slot — зазор одинаковый у всех типов.
+                                const baseType = BASE_IMAGE_TYPE[cell.type];
+                                const baseInset = baseType ? (TYPE_INSET[baseType] ?? SEGMENT_INSET) : 0;
                                 return (
                                     <TouchableOpacity
                                         key={cell.id}
@@ -731,23 +762,30 @@ export default function BoardGrid({
                                         activeOpacity={0.75}
                                     >
                                         <Animated.View style={{ width: segmentW, height: segmentH, opacity: cellOpacity }}>
+                                        {/* road/sand/mud — свой, меньший инсет (5%, TYPE_INSET), картинка
+                                            типа клетки рисуется внутри неоновой/белой квадратной обводки
+                                            сегмента, не впритык к её краю. Для остальных типов
+                                            (danger/anomaly/wall) ничего не меняем — там обычный
+                                            SEGMENT_INSET, как и раньше. */}
                                         {cell.baseImage && (
                                             // Подложка (road под danger/anomaly/wall, sand под mud, см.
-                                            // lib/board#pickBaseImage) — во весь слот, БЕЗ инсета и
-                                            // БЕЗ уменьшенной прозрачности (это "земля", она всегда
-                                            // непрозрачна) — сама клетка рисуется поверх С ИНСЕТОМ (см.
-                                            // ниже), так что подложка в любом случае видна в зазоре по
-                                            // краю; для danger/anomaly/mud она ЕЩЁ и просвечивает сквозь
-                                            // саму картинку клетки (меньшая opacity), для wall — нет
-                                            // (opacity:1, см. CELL_OPACITY).
+                                            // lib/board#pickBaseImage) — теперь со СВОИМ инсетом (baseInset,
+                                            // см. выше), как и обычный road/sand-тайл, а не во весь слот
+                                            // (раньше было так — см. докстринг у baseInset выше про живую
+                                            // жалобу "danger/dirt/wall крупнее"). БЕЗ уменьшенной
+                                            // прозрачности (это "земля", она всегда непрозрачна) — сама
+                                            // клетка рисуется поверх С ИНСЕТОМ (см. ниже); для danger/
+                                            // anomaly/mud она ЕЩЁ и просвечивает сквозь саму картинку
+                                            // клетки (меньшая opacity), для wall — нет (opacity:1, см.
+                                            // CELL_OPACITY).
                                             <Image
                                                 source={cell.baseImage}
                                                 style={{
                                                     position: 'absolute',
-                                                    left: 0,
-                                                    top: 0,
-                                                    width: segmentW,
-                                                    height: segmentH,
+                                                    left: segmentW * (baseInset / 2),
+                                                    top: segmentH * (baseInset / 2),
+                                                    width: segmentW * (1 - baseInset),
+                                                    height: segmentH * (1 - baseInset),
                                                     resizeMode: 'stretch',
                                                     // baseImage — всегда road или sand (см. BASE_IMAGE_TYPE),
                                                     // оба входят в ROTATE_TYPES — доп. проверка не нужна.
@@ -755,7 +793,10 @@ export default function BoardGrid({
                                                 }}
                                             />
                                         )}
-                                        {highlighted && (
+                                        {/* Подсветка ПОД картинкой — для всех типов с ненулевым зазором
+                                            (сейчас это все реальные типы, см. cellInset/isFullBleed выше):
+                                            её видно в этом зазоре по краю слота. */}
+                                        {highlighted && !isFullBleed && (
                                             <View
                                                 style={{
                                                     position: 'absolute',
@@ -774,13 +815,13 @@ export default function BoardGrid({
                                             source={cell.image}
                                             style={{
                                                 position: 'absolute',
-                                                left: segmentW * (SEGMENT_INSET / 2),
-                                                top: segmentH * (SEGMENT_INSET / 2),
-                                                width: segmentW * (1 - SEGMENT_INSET),
-                                                height: segmentH * (1 - SEGMENT_INSET),
+                                                left: isFullBleed ? 0 : segmentW * (cellInset / 2),
+                                                top: isFullBleed ? 0 : segmentH * (cellInset / 2),
+                                                width: isFullBleed ? segmentW : segmentW * (1 - cellInset),
+                                                height: isFullBleed ? segmentH : segmentH * (1 - cellInset),
                                                 resizeMode: 'stretch',
                                                 // road/sand/wall непрозрачны (не просвечивают подсветку
-                                                // под собой); danger/anomaly/mud — прозрачнее (по прямому
+                                                // под собой); danger/anomaly — прозрачнее (по прямому
                                                 // запросу пользователя, чтобы сквозь них было видно
                                                 // baseImage-подложку выше), см. CELL_OPACITY.
                                                 opacity: CELL_OPACITY[cell.type] ?? 0.9,
@@ -789,6 +830,25 @@ export default function BoardGrid({
                                                     : null),
                                             }}
                                         />
+                                        {/* Подсветка ПОВЕРХ картинки — только для гипотетического
+                                            isFullBleed-типа (cellInset===0, сейчас таких нет — все реальные
+                                            типы идут через ветку "под картинкой" выше). Оставлено на случай
+                                            будущего типа без зазора вообще. */}
+                                        {highlighted && isFullBleed && (
+                                            <View
+                                                style={{
+                                                    position: 'absolute',
+                                                    left: 0,
+                                                    top: 0,
+                                                    width: segmentW,
+                                                    height: segmentH,
+                                                    backgroundColor: `${HIGHLIGHT_COLOR}55`,
+                                                    borderWidth: HIGHLIGHT_BORDER_WIDTH,
+                                                    borderColor: HIGHLIGHT_COLOR,
+                                                }}
+                                                pointerEvents="none"
+                                            />
+                                        )}
                                         </Animated.View>
                                     </TouchableOpacity>
                                 );
