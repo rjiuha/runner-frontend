@@ -205,46 +205,41 @@ export default function RunnerToken({
                 style,
             ]}
         >
-            {selected && (
-                // Явные width/height + left/top (НЕ StyleSheet.absoluteFill) —
-                // тот же класс бага, что уже ловили на react-native-web в
-                // этом файле чуть ниже (натуральный размер файла вместо
-                // растяжения под родителя) — тут своего файла нет, но привычка
-                // из этой же сессии: явный размер надёжнее в любом случае.
-                // pointerEvents="none" — чисто декоративный слой, не должен
-                // перехватывать тапы по токену.
-                //
-                // Platform.OS==='web' — ПЛОСКИЙ View со static CSS-анимацией
-                // (styles.haloWeb, animationKeyframes), НЕ Animated.View — см.
-                // комментарий у haloSpin выше про то, почему JS Animated не
-                // прогрессирует на этом вебе. animationKeyframes — официальный
-                // API react-native-web (0.21+), тот же приём, что их
-                // собственный ActivityIndicator использует для спиннера
-                // (node_modules/react-native-web/.../ActivityIndicator) —
-                // вращение целиком на браузерном CSS-движке, JS/rAF не нужен.
-                Platform.OS === 'web' ? (
-                    <View
-                        pointerEvents="none"
-                        style={[
-                            styles.haloWeb,
-                            {
-                                position: 'absolute',
-                                left: (size - haloSize) / 2,
-                                top: (size - haloSize) / 2,
-                                width: haloSize,
-                                height: haloSize,
-                                borderRadius: haloSize / 2,
-                                borderWidth: 3,
-                                borderStyle: 'dashed',
-                                borderColor: colors.success,
-                                opacity: 0.85,
-                            },
-                        ]}
-                    />
-                ) : (
-                    <Animated.View
-                        pointerEvents="none"
-                        style={{
+            {/* ВСЕГДА смонтирован (не `{selected && ...}`) — 2026-09-15, живой
+                краш "connectAnimatedNodes: Animated node with tag (parent)
+                [N] does not exist" сразу после тапа по клетке хода: смена
+                `activeRunner` переключает `selected` между ДВУМЯ разными
+                токенами почти одновременно, а условный рендер полностью
+                уничтожал граф нативных Animated-нод (Animated.loop+
+                interpolate) у одного и тут же создавал заново у другого —
+                классическая гонка RN Animated (асинхронный "connect" от
+                свежесозданного графа долетает до нативного потока уже после
+                того, как узел-родитель снесён). Теперь узел создаётся ОДИН
+                раз на весь жизненный цикл компонента, видимость — просто
+                opacity (0 когда не выбран), Animated.loop по-прежнему
+                стартует/стопается через selected в useEffect выше —
+                поведение визуально не изменилось, изменился только момент
+                mount/unmount самого узла. Явные width/height + left/top (НЕ
+                StyleSheet.absoluteFill) — тот же класс бага, что уже ловили
+                на react-native-web в этом файле чуть ниже (натуральный
+                размер файла вместо растяжения под родителя). pointerEvents=
+                "none" — чисто декоративный слой, не должен перехватывать
+                тапы по токену.
+
+                Platform.OS==='web' — ПЛОСКИЙ View со static CSS-анимацией
+                (styles.haloWeb, animationKeyframes), НЕ Animated.View — см.
+                комментарий у haloSpin выше про то, почему JS Animated не
+                прогрессирует на этом вебе. animationKeyframes — официальный
+                API react-native-web (0.21+), тот же приём, что их
+                собственный ActivityIndicator использует для спиннера
+                (node_modules/react-native-web/.../ActivityIndicator) —
+                вращение целиком на браузерном CSS-движке, JS/rAF не нужен. */}
+            {Platform.OS === 'web' ? (
+                <View
+                    pointerEvents="none"
+                    style={[
+                        styles.haloWeb,
+                        {
                             position: 'absolute',
                             left: (size - haloSize) / 2,
                             top: (size - haloSize) / 2,
@@ -254,11 +249,27 @@ export default function RunnerToken({
                             borderWidth: 3,
                             borderStyle: 'dashed',
                             borderColor: colors.success,
-                            opacity: 0.85,
-                            transform: [{ rotate: haloRotate }],
-                        }}
-                    />
-                )
+                            opacity: selected ? 0.85 : 0,
+                        },
+                    ]}
+                />
+            ) : (
+                <Animated.View
+                    pointerEvents="none"
+                    style={{
+                        position: 'absolute',
+                        left: (size - haloSize) / 2,
+                        top: (size - haloSize) / 2,
+                        width: haloSize,
+                        height: haloSize,
+                        borderRadius: haloSize / 2,
+                        borderWidth: 3,
+                        borderStyle: 'dashed',
+                        borderColor: colors.success,
+                        opacity: selected ? 0.85 : 0,
+                        transform: [{ rotate: haloRotate }],
+                    }}
+                />
             )}
             <View style={imgBoxStyle}>
                 {/* Явные width/height (НЕ StyleSheet.absoluteFill) — на

@@ -19,12 +19,29 @@ const backoff = (n) => {
 // "New subscriber" так и не случилось — react-native-sse (обёртка над OkHttp
 // на Android) не всегда шлёт 'error', когда соединение тихо обрывается
 // (например транспорт/NAT/эмулятор молча закрывает сокет) — а вся логика
-// реконнекта в этом файле целиком висит на этом событии. Раз хаб не шлёт
-// периодический heartbeat, а элапсд-тайм-аут ненадёжен (партия пошаговая,
-// тишина в несколько минут, пока думает оппонент — совершенно нормальна),
-// единственный способ НАДЁЖНО заметить именно ТАКОЙ обрыв — периодически
-// СВЕРЯТЬ версию с бэком напрямую, а не гадать по времени молчания.
+// реконнекта в этом файле целиком висит на этом событии.
+//
+// ЭТО ОСТАЁТСЯ независимой, редкой подстраховкой (2026-09-15: раньше это
+// был ЕДИНСТВЕННЫЙ способ заметить обрыв — теперь есть быстрый путь ниже,
+// см. SILENCE_TIMEOUT_MS, но stale-check не убран на случай, если heartbeat
+// на бэке когда-нибудь отключат/сломают — независимая защита дешевле, чем
+// полагаться на единственный механизм).
 const STALE_CHECK_INTERVAL_MS = 45000;
+
+// 2026-09-15: Mercure-хаб теперь шлёт heartbeat (`heartbeat 15s` в
+// MERCURE_EXTRA_DIRECTIVES бэка) — периодический SSE-комментарий,
+// который lib/eventSource.js (собственный транспорт, см. там подробный
+// докстринг про замену EventSource/react-native-sse) отдаёт сюда как
+// событие `ping`, наравне с `message`. Раз хаб гарантированно шлёт
+// что-то РЕАЛЬНОЕ каждые ~15с, полное молчание (ни одного события, ни
+// heartbeat-а) дольше SILENCE_TIMEOUT_MS — уже НАДЁЖНЫЙ (не гадательный,
+// в отличие от старого "тишина = может, просто думает соперник") сигнал,
+// что транспорт мёртв — форсируем connect() сразу, не дожидаясь
+// STALE_CHECK_INTERVAL_MS. Порог — с запасом на ~2 пропущенных heartbeat-а
+// (сетевой джиттер, единичный запоздавший пинг — не повод дёргать
+// реконнект). Если когда-нибудь поменяется интервал heartbeat на бэке —
+// поправить и это значение.
+const SILENCE_TIMEOUT_MS = 35000;
 
 /**
  * Протокол: подписка → буфер → снапшот → отсечение по версии → live.
@@ -53,6 +70,7 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
     const esRef = useRef(null);
     const attemptRef = useRef(0);
     const timerRef = useRef(null);
+    const silenceTimerRef = useRef(null); // см. SILENCE_TIMEOUT_MS выше
     const genRef = useRef(0); // отсекает ответы отменённых подключений
 
     const commit = (next, version) => {
@@ -135,6 +153,7 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
     const disconnect = useCallback(() => {
         genRef.current += 1;
         clearTimeout(timerRef.current);
+        clearTimeout(silenceTimerRef.current);
         closeEventSource(esRef.current);
         esRef.current = null;
         bufferRef.current = [];
@@ -162,9 +181,30 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
         // события, пришедшие до/во время sync, так что запуск здесь безопасен.
         sync(gen);
 
-        es.addEventListener('open', () => log(`SSE open gen=${gen}`));
+        // См. SILENCE_TIMEOUT_MS выше — взводится сразу (не дожидаясь даже
+        // 'open', на случай зависшего DNS/handshake) и перевзводится на
+        // КАЖДЫЙ реально пришедший байт ('ping' — heartbeat, 'message' —
+        // настоящее событие). Если ни разу не перевзвёлся за отведённое
+        // время — транспорт мёртв, форсируем полный connect(), как и
+        // делает stale-check, только по факту тишины, а не по таймеру
+        // "может, ещё не пора спросить бэк".
+        const armSilence = () => {
+            if (gen !== genRef.current) return;
+            clearTimeout(silenceTimerRef.current);
+            silenceTimerRef.current = setTimeout(() => {
+                if (gen !== genRef.current) return;
+                log(`SILENCE ${SILENCE_TIMEOUT_MS}мс без единого байта (даже heartbeat) gen=${gen} — канал мёртв, форс-реконнект`);
+                connect();
+            }, SILENCE_TIMEOUT_MS);
+        };
+        armSilence();
+
+        es.addEventListener('open', () => { log(`SSE open gen=${gen}`); armSilence(); });
+
+        es.addEventListener('ping', () => armSilence());
 
         es.addEventListener('message', (ev) => {
+            armSilence();
             if (gen !== genRef.current || !ev?.data) return;
             try { handleEvent(JSON.parse(ev.data)); } catch (parseErr) {
                 log('message: не удалось распарсить JSON:', parseErr?.message, String(ev.data).slice(0, 200));
@@ -173,6 +213,7 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
 
         es.addEventListener('error', () => {
             if (gen !== genRef.current) return;
+            clearTimeout(silenceTimerRef.current); // это подключение уже мертво — не дать ему само сработать поверх обычного backoff
             setStatus('error');
             const delay = backoff(attemptRef.current);
             log(`SSE error gen=${gen} — реконнект через ${Math.round(delay)}мс (попытка №${attemptRef.current + 1})`);
