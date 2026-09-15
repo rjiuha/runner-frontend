@@ -21,6 +21,7 @@ import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
 import { useGhostPairs } from '../hooks/useGhostPairs';
+import { useMineBlasts } from '../hooks/useMineBlasts';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, cellTypeAt, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
@@ -265,6 +266,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // solo-токена (idle рядом), не коллизионную позу, по прямому запросу
     // пользователя, 2026-09-09.
     const ghostPairs = useGhostPairs();
+    // Одноразовые взрывы мины на клетках (danger==='mine') — см.
+    // hooks/useMineBlasts.js. Триггер — двухшаговая корреляция транзиент→
+    // версионное событие, см. minePendingRef и game_cell_updated-ветку в
+    // reduceAndLog ниже (тот же паттерн, что уже используется для ghost_pass/
+    // жетонов повреждений в этом файле).
+    const mineBlasts = useMineBlasts();
+    const minePendingRef = useRef(false);
     // Гейт для GameFinishModal (см. hasDeathAnimPlaying ниже) — живая жалоба,
     // 2026-09-12: "диалог победы на мгновение появился и исчез, потом
     // проигралась анимация, потом диалог снова появился (уже валидно)".
@@ -570,6 +578,16 @@ export default function GameBoardScreen({ route, navigation }) {
             if (e.event === 'game_cell_updated' && e.cell) {
                 const { segment, row: positionX, column: positionY } = e.cell;
                 const cellId = `${segment}-${positionY}-${positionX}`;
+                // См. minePendingRef/onTransient выше — если непосредственно
+                // ПЕРЕД этим вскрытием пришёл транзиент danger==='mine',
+                // именно ЭТА клетка и есть место взрыва (бэк публикует их
+                // строго подряд в одном и том же коде-пути, см. Danger.php
+                // read-only). Флаг одноразовый — сбрасываем сразу, следующее
+                // вскрытие (не мина) не должно случайно унаследовать его.
+                if (minePendingRef.current) {
+                    minePendingRef.current = false;
+                    mineBlasts.trigger(cellId);
+                }
                 // Если позиция УЖЕ активирована (см. activatedCellKeysRef выше)
                 // — типовой случай "один хоп, не каскад" (например мина-Мяч):
                 // trigger() для этой же клетки уже синхронно сработал ДО этого
@@ -632,7 +650,7 @@ export default function GameBoardScreen({ route, navigation }) {
         // (новый литерал {tokensByRunner,...}), это пересоздавало бы
         // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
         // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
-        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound],
+        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound, mineBlasts.trigger],
     );
 
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
@@ -659,6 +677,13 @@ export default function GameBoardScreen({ route, navigation }) {
             if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
             const ghostPass = identifyGhostPass(e, gameRef);
             if (ghostPass) ghostPairs.record(ghostPass.key);
+            // Взрыв мины (см. mineBlasts выше) — только ЗАПОМИНАЕМ факт "ждём
+            // клетку", саму клетку узнаём из следующего game_cell_updated
+            // (транзиент 'danger' координат не несёт вообще, см.
+            // DangerEvent.php на бэке read-only) — см. reduceAndLog ниже.
+            if (e.event === 'danger' && e.danger === 'mine') {
+                minePendingRef.current = true;
+            }
             if (e.event === 'collision') {
                 setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
             }
@@ -2082,6 +2107,7 @@ export default function GameBoardScreen({ route, navigation }) {
             currentTurnPlayerId={game.playerOrder}
             hiddenRunnerIds={runnerAnim.hiddenIds}
             ghostPairs={ghostPairs.pairs}
+            mineBlasts={mineBlasts.blasts}
             onCollisionPoseStart={handleCollisionPoseStart}
             onCollisionPoseEnd={handleCollisionPoseEnd}
             reaperPreview={

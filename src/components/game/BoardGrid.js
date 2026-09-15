@@ -1,7 +1,10 @@
 // src/components/game/BoardGrid.js
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, RUNNER_STATUS, RUNNER_TYPES } from '../../constants/GameConstants';
+import {
+    BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, MINE_BLAST_IMAGES, MINE_BLAST_OFFSET,
+    MINE_BLAST_SCALE, RUNNER_STATUS, RUNNER_TYPES,
+} from '../../constants/GameConstants';
 import { indexRunnersByCell, BASE_IMAGE_TYPE } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
 import RunnerToken from './RunnerToken';
@@ -91,6 +94,7 @@ export default function BoardGrid({
     currentTurnPlayerId = null,
     hiddenRunnerIds = null,
     ghostPairs = null,
+    mineBlasts = null,
     onCollisionPoseStart = null,
     onCollisionPoseEnd = null,
     reaperPreview = null,
@@ -609,6 +613,38 @@ export default function BoardGrid({
         return { x, y, enterFrom };
     }, [reaperPreview, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
 
+    // Одноразовые взрывы мины (см. GameBoardScreen#mineBlasts/useMineBlasts.js)
+    // — `mineBlasts` прилетает как {cellId: variantIndex}, cellId в формате
+    // "segment-positionY-positionX" (см. GameBoardScreen#reduceAndLog,
+    // `${segment}-${positionY}-${positionX}`) — сегмент/координаты клетки,
+    // где вскрылась мина, всегда неотрицательные (это РЕВЕАЛ клетки трассы,
+    // не текущая позиция бегуна после отброса — split('-') тут безопасен,
+    // в отличие от разбора runnersByCell-ключей, где положительный/
+    // отрицательный positionY возможен). Та же пиксельная формула, что и у
+    // reaperPreviewItem выше — якорь по НИЗУ клетки, размер/сдвиг вверх
+    // считает styles.mineBlastLayer-рендер ниже (MINE_BLAST_SCALE/OFFSET).
+    const mineBlastOverlay = useMemo(() => {
+        if (!mineBlasts) return [];
+        const items = [];
+        for (const cellId of Object.keys(mineBlasts)) {
+            const [segStr, pYStr, pXStr] = cellId.split('-');
+            const segment = Number(segStr);
+            const positionY = Number(pYStr);
+            const positionX = Number(pXStr);
+            const globalCol = segment * BOARD_LAYOUT.COLS + positionX;
+            if (globalCol < windowStart || globalCol >= windowEnd) continue;
+            const localCol = globalCol - windowStart;
+            const x = isPortrait
+                ? positionY * segmentW
+                : localCol * segmentW + (positionY % 2 === 0 ? segmentW / 2 : 0);
+            const y = isPortrait
+                ? (cols - 1 - localCol) * segmentH + (positionY % 2 === 0 ? segmentH / 2 : 0)
+                : positionY * segmentH;
+            items.push({ key: cellId, x, y, variant: mineBlasts[cellId] });
+        }
+        return items;
+    }, [mineBlasts, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
+
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
     // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
     // 2026-08-30) — на каждой дорожке рисуем сам стык (горизонтальный отрезок
@@ -867,6 +903,38 @@ export default function BoardGrid({
                     );
                 })}
 
+                {mineBlastOverlay.length > 0 && (
+                    <View
+                        style={[
+                            styles.mineBlastLayer,
+                            isPortrait
+                                ? { width: rows * segmentW, height: cols * segmentH }
+                                : { width: cols * segmentW, height: rows * segmentH },
+                        ]}
+                        pointerEvents="none"
+                    >
+                        {mineBlastOverlay.map((item) => {
+                            const segMin = Math.min(segmentW, segmentH);
+                            const blastSize = segMin * MINE_BLAST_SCALE;
+                            const blastBottom = item.y + segmentH - segMin * MINE_BLAST_OFFSET;
+                            return (
+                                <Image
+                                    key={item.key}
+                                    source={MINE_BLAST_IMAGES[item.variant]}
+                                    resizeMode="contain"
+                                    style={{
+                                        position: 'absolute',
+                                        left: item.x + segmentW / 2 - blastSize / 2,
+                                        top: blastBottom - blastSize,
+                                        width: blastSize,
+                                        height: blastSize,
+                                    }}
+                                />
+                            );
+                        })}
+                    </View>
+                )}
+
                 <View
                     style={[
                         styles.tokenOverlayLayer,
@@ -996,6 +1064,13 @@ const styles = StyleSheet.create({
     // персонажи должны рисоваться ПОВЕРХ линии-стыка фрагментов, не под ней
     // (жалоба пользователя, 2026-09-01, четвёртый заход — было наоборот).
     tokenOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 4, elevation: 4 },
+    // Взрывы мины (см. mineBlastOverlay/GameBoardScreen#mineBlasts) — СТРОГО
+    // между дорогой и токенами (zIndex ниже tokenOverlayLayer=4, но выше
+    // самой сетки клеток) — по прямому запросу пользователя, 2026-09-15:
+    // бегун должен быть на переднем плане, взрыв — под ним. Явный zIndex, не
+    // только порядок в JSX (тот же класс Android-специфичных багов с
+    // порядком отрисовки, что и у остальных абсолютных слоёв этого файла).
+    mineBlastLayer: { position: 'absolute', top: 0, left: 0, zIndex: 3, elevation: 3 },
     // Слой линии-стыка фрагментов (см. fragmentBoundarySegments) — ПОД
     // токенами (zIndex ниже tokenOverlayLayer), та же защита от Android
     // view-flattening (см. CLAUDE.md, пятый заход), что и у остальных
