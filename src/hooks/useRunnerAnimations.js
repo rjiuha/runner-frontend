@@ -276,9 +276,18 @@ export function useRunnerAnimations() {
                 mergeTarget.kind = finalKind;
                 mergeTarget.extra = { ...mergeTarget.extra, ...extra, pending: false };
                 if (mergeTarget === active.current[runnerId]) {
-                    const { pending, ...animExtra } = mergeTarget.extra;
+                    const { pending, onStart, ...animExtra } = mergeTarget.extra;
                     setAnims((prev) => ({ ...prev, [runnerId]: { ...prev[runnerId], ...animExtra, kind: finalKind } }));
                     setVisualPositions((prev) => ({ ...prev, [runnerId]: extra.toPosition }));
+                    // onStart (2026-09-15) — этот мердж-путь раньше НИКОГДА его
+                    // не звал (только advanceQueue's не-мердж-ветка) — добавлено
+                    // аддитивно, ничего не меняет в тайминге/порядке самих
+                    // trigger()-вызовов (см. GameBoardScreen#triggerWithSound —
+                    // откаченный в тот же день заход с гейтингом трогал именно
+                    // ЭТО, а это — нет), просто заполняет пробел: "шаг реально
+                    // начал играть" здесь ТОЖЕ наступает синхронно с мерджем, а
+                    // не только при обычном дальнейшем прохождении очереди.
+                    onStart?.();
                     // Заготовка была запущена со СТРАХОВОЧНЫМ таймаутом
                     // (PENDING_SAFETY_TIMEOUT_MS, см. advanceQueue) — теперь,
                     // когда мердж её финализировал, переставляем таймер на

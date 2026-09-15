@@ -8,7 +8,14 @@
  * в панели/на доске рядом. Неизвестные события — fallback (raw JSON).
  */
 
-const DIRECTION_LABEL = { LEFT_UP: '↖', UP: '↑', RIGHT_UP: '↗', LEFT_DOWN: '↙', DOWN: '↓', RIGHT_DOWN: '↘' };
+// ВАЖНО: LEFT_UP визуально ведёт ВПРАВО, RIGHT_UP — ВЛЕВО (подтверждено
+// живьём и задокументировано в resolveMoveAssetDirection, constants/
+// runnerAnimations.js, isEast = direction === 'LEFT_UP' — та же путаница
+// в названиях направлений backend'а). Стрелки здесь зеркалят это тем же
+// образом (LEFT_UP → ↗, RIGHT_UP → ↖ и симметрично для *_DOWN), иначе
+// диалог переброса столкновения показывает направление, обратное
+// реальному движению на доске.
+const DIRECTION_LABEL = { LEFT_UP: '↗', UP: '↑', RIGHT_UP: '↖', LEFT_DOWN: '↘', DOWN: '↓', RIGHT_DOWN: '↙' };
 const dir = (d) => (d == null ? '—' : DIRECTION_LABEL[d] ?? d);
 // Экспортирован отдельно — переиспользуется в GameBoardScreen.js для показа
 // результата броска столкновения в баннере "Использовать/Перебросить" (см.

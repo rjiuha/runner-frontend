@@ -95,6 +95,11 @@ export default function BoardGrid({
     onCollisionPoseEnd = null,
     reaperPreview = null,
     columnOpacities = null,
+    // Клетки, временно замороженные в ДОвскрытом виде (см. GameBoardScreen
+    // #heldCells) — cell.id → {type, image, baseImage}, полностью подменяет
+    // реальные (уже обновлённые в game-стейте) значения для конкретной
+    // клетки, пока её id остаётся ключом в этом объекте.
+    cellOverrides = null,
     onCellPress,
 }) {
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
@@ -728,7 +733,12 @@ export default function BoardGrid({
                                     (isPortrait ? { marginTop: segmentH / 2 } : { marginLeft: segmentW / 2 }),
                             ]}
                         >
-                            {laneCells.map((cell) => {
+                            {laneCells.map((rawCell) => {
+                                // cellOverrides (см. GameBoardScreen#heldCells) — подменяет
+                                // ТОЛЬКО type/image/baseImage замороженной клетки, id/row/
+                                // col/blockIndex остаются настоящими (тап/подсветка не должны
+                                // знать об этой чисто визуальной заморозке).
+                                const cell = cellOverrides?.[rawCell.id] ? { ...rawCell, ...cellOverrides[rawCell.id] } : rawCell;
                                 const highlighted = highlightedCells?.has(cell.id) ?? false;
                                 // Прямое per-column затухание/материализация
                                 // РЕАЛЬНОЙ клетки (см. докстринг у return выше) —

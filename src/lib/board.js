@@ -68,17 +68,19 @@ export function pickSegmentImage(type, cellId) {
 }
 
 /**
- * Тип "подложки" под клетки danger/anomaly/mud/wall — по прямому запросу
- * пользователя, 2026-08-30/31: под danger и anomaly кладём road, под mud
+ * Тип "подложки" под клетки danger/mud/wall — по прямому запросу
+ * пользователя, 2026-08-30/31: под danger кладём road, под mud
  * (грязь/dirt) — случайный (детерминированно по id клетки, как и сам
  * pickSegmentImage) sand. wall — ВЕРНУЛИ road под низ (2026-09-13, второй
  * раз за день — стена сама непрозрачна, но у неё, как и у остальных типов,
  * есть SEGMENT_INSET-зазор по краю слота, и под ним по прямому запросу
  * пользователя должна быть видна дорога, не пустой фон экрана — "wall
- * отображался над road_base"). Остальные типы (road/sand) — это они сами и
- * есть "земля", подложки не нужно.
+ * отображался над road_base"). anomaly (black_hole) — БЕЗ подложки
+ * (2026-09-15, прямой запрос "убери road из-под black_hole") — под чёрной
+ * дырой ничего не должно просвечивать. Остальные типы (road/sand) — это
+ * они сами и есть "земля", подложки не нужно.
  */
-export const BASE_IMAGE_TYPE = { danger: 'road', anomaly: 'road', mud: 'sand', wall: 'road' };
+export const BASE_IMAGE_TYPE = { danger: 'road', mud: 'sand', wall: 'road' };
 
 /** Картинка подложки для типа клетки, или null если подложка не нужна (см. BASE_IMAGE_TYPE). */
 export function pickBaseImage(type, cellId) {

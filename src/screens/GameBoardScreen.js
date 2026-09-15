@@ -23,7 +23,7 @@ import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
 import { useGhostPairs } from '../hooks/useGhostPairs';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
-import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, cellTypeAt } from '../lib/board';
+import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, cellTypeAt, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
 import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
@@ -281,6 +281,70 @@ export default function GameBoardScreen({ route, navigation }) {
     // стартует (deathOnStart в triggerWithSound ниже) — дальше эстафету
     // берёт уже `anims` через обычный hasDeathAnimPlaying.
     const [pendingDeathRunnerIds, setPendingDeathRunnerIds] = useState(() => new Set());
+
+    // Замороженные "невскрытые" клетки опасности — живая жалоба пользователя,
+    // 2026-09-15: при каскаде (мина отбросила бегуна ещё на одну мину и т.д.)
+    // все вскрытые сегменты game_cell_updated применяются к game-стейту
+    // ПОЧТИ ОДНОВРЕМЕННО (бэк шлёт их одним залпом за десятки мс), тогда как
+    // очередь анимаций бегуна честно проигрывает каждый хоп по очереди — на
+    // экране все клетки открывались разом, а бегун ещё только долетал до
+    // первой. Игровой СТЕЙТ (game.trackBegin/...grid) по-прежнему обновляется
+    // МГНОВЕННО на каждое событие (архитектурное правило проекта — состояние
+    // никогда не ждёт анимацию) — но ВИЗУАЛЬНО клетка держится в СТАРОМ,
+    // ещё-невскрытом виде (см. cellKeyFromPosition/heldCells ниже, cellId →
+    // {type,image,baseImage} снятые с PRE-update состояния), пока реальная
+    // позиция бегуна (runnerAnim.visualPositions, см. эффект ниже) не
+    // сравняется с этой клеткой — то есть пока анимация того самого хопа не
+    // НАЧНЁТ играть. Передаётся в BoardGrid как cellOverrides.
+    const [heldCells, setHeldCells] = useState({});
+    const cellKeyFromPosition = (pos) => (pos ? `${pos.segment}-${pos.positionY}-${pos.positionX}` : null);
+    // Страховочный потолок — если по какой-то причине ни один visualPositions
+    // никогда не совпадёт с этой клеткой (бегуна уничтожило раньше, чем он
+    // формально "долетел" туда, и т.п.), не держать клетку закрытой вечно.
+    const HELD_CELL_TIMEOUT_MS = 8000;
+    // Снимаем заморозку через onStart конкретного trigger()-вызова (см.
+    // triggerWithSound ниже), НЕ через наблюдение за runnerAnim.visualPositions
+    // — тот вариант (первая версия этого фикса, тот же день) ловил живую
+    // жалобу "восклицательный знак исчез только через несколько секунд"
+    // (сработал только 8-секундный страховочный таймаут): React батчит
+    // setState-вызовы, и когда мина-мина-обычная-опасность прилетают в ОДНОМ
+    // синхронном проходе reduceAndLog (см. useMercure#sync — цикл `for (const
+    // e of pending)`), runnerAnim.visualPositions, прочитанный через замыкание
+    // ЭТОГО компонента, ещё не отражал landing, случившийся МГНОВЕНИЕ назад в
+    // ТОМ ЖЕ проходе — эффект видел устаревший снимок. onStart вызывается
+    // СИНХРОННО изнутри самого runnerAnim.trigger() (после фикса
+    // useRunnerAnimations.js — мердж-ветка раньше вообще не звала onStart,
+    // только advanceQueue), поэтому гонки с батчингом React тут нет вообще —
+    // передаётся ниже, в triggerWithSound, объединённый с deathOnStart.
+    //
+    // activatedCellKeysRef — ВТОРАЯ часть того же фикса, обязательная для
+    // самого частого случая (один хоп, не каскад — например обычная ходьба
+    // на danger или мина-Мяч): порядок событий там — landing-triggger
+    // (runner_save, мгновенный мердж → onStart УЖЕ синхронно сработал) идёт
+    // РАНЬШЕ game_cell_updated (реального вскрытия) — то есть заморозка
+    // была бы создана уже ПОСЛЕ того, как release для неё уже (безрезультатно)
+    // сработал. Этот ref синхронно помечает "позиция уже реально
+    // активирована" в момент onStart — при вскрытии клетки, если её позиция
+    // уже тут отмечена, замораживать вообще не нужно (анимация и так либо
+    // уже играет, либо стартует в этом же кадре). Для каскадов (хоп2/3)
+    // порядок обратный — их trigger() в момент вскрытия ЕЩЁ НЕ активирован
+    // (стоит в очереди позади хопа1), activatedCellKeysRef на тот момент
+    // пуст для этой позиции — заморозка создаётся как обычно, и снимается
+    // позже, когда очередь до него реально дойдёт и onStart сработает.
+    const activatedCellKeysRef = useRef(new Set());
+    const releaseHeldCellOnStart = useCallback((toPosition) => {
+        const key = cellKeyFromPosition(toPosition);
+        if (!key) return undefined;
+        return () => {
+            activatedCellKeysRef.current.add(key);
+            setHeldCells((prev) => {
+                if (!(key in prev)) return prev;
+                const next = { ...prev };
+                delete next[key];
+                return next;
+            });
+        };
+    }, []);
     // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен для
     // anomaly и для жетонов повреждений — оба берут activeRunner текущего
     // ходящего игрока, ни то ни другое событие не несёт id бегуна само по
@@ -349,6 +413,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // случайно съесть 'start' у совершенно другого бегуна (первый выход из
     // резерва/спавн Мяча) позже в этой же партии.
     const reaperStartSkipUntilRef = useRef(0);
+
     // Оборачивает runnerAnim.trigger — сам визуальный триггер не трогаем
     // (lib/runnerAnimTriggers.js ничего не знает о звуке), тут ТОЛЬКО решаем,
     // что доп. проиграть по kind. Тип бегуна для 'attack' ищем в текущем
@@ -356,6 +421,26 @@ export default function GameBoardScreen({ route, navigation }) {
     // может быть свежесозданным (Мяч) и его ещё нет в game.runners, поэтому
     // предпочитаем extra.runnerType, если он есть (см. runnerAnimTriggers.js
     // — прокинут явно именно для этого случая).
+    //
+    // 2026-09-15: был заход с гейтингом (ждать decode КОНКРЕТНОГО ассета
+    // перед вызовом runnerAnim.trigger, вместо мгновенного вызова +
+    // маскирующего кроссфейда в RunnerToken.js) — ОТКАЧЕН ЦЕЛИКОМ по двум
+    // живым жалобам подряд: (1) "дёргания" (гейт добавляет РЕАЛЬНУЮ, а не
+    // маскируемую задержку — на быстром/локальном бэке сетевой round-trip
+    // почти никогда не длиннее decode, так что "параллельно с сетью"
+    // практически не работает, и получается просто нестабильная пауза перед
+    // КАЖДЫМ переключением вместо мгновенного показа); (2) при попадании на
+    // anomaly бегуна корректно провело 'fly', затем ТЕЛЕПОРТИРОВАЛО ОБРАТНО
+    // на клетку аномалии и заново проиграло уже 'move' — серийная цепочка
+    // fire()-вызовов на runnerId (нужна была, чтобы гейтинг не переставлял
+    // местами шаги каскада) сама вносила рассинхрон в timing pending-мерджа
+    // (см. useRunnerAnimations.js — "заготовка от anomaly держит kind
+    // 'fly'", логика полагается на СИНХРОННЫЙ, предсказуемый порядок
+    // trigger()-вызовов, который гейтинг как раз и нарушал). Если захочется
+    // вернуться к этой идее — НЕ трогать порядок/тайминг вызовов
+    // runnerAnim.trigger вообще, ограничиться ЧИСТЫМ прогревом decode без
+    // блокировки (тот же паттерн, что уже работает у reaperAttackPreloadSource
+    // выше — прогрев, а не гейт).
     const triggerWithSound = useCallback(
         (runnerId, kind, extra) => {
             // Подавляем ТОЛЬКО визуальный триггер (дублирующий walk-цикл) —
@@ -380,8 +465,14 @@ export default function GameBoardScreen({ route, navigation }) {
                     });
                 }
                 : undefined;
+            // Снятие заморозки клетки (см. heldCells/releaseHeldCellOnStart
+            // выше) — для ЛЮБОГО kind с toPosition, не только acid/burn.
+            const cellReleaseOnStart = extra?.toPosition ? releaseHeldCellOnStart(extra.toPosition) : undefined;
+            const combinedOnStart = (deathOnStart || cellReleaseOnStart)
+                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); }
+                : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
-            else runnerAnim.trigger(runnerId, kind, deathOnStart ? { ...extra, onStart: deathOnStart } : extra);
+            else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra);
             if (kind === 'attack') {
                 const type = gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(shootSound, pickShootSoundSource(type));
@@ -410,7 +501,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed));
             }
         },
-        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound],
+        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, releaseHeldCellOnStart],
     );
 
     // Логируем И версионные события (через reduce — вызывается ровно по разу
@@ -468,6 +559,39 @@ export default function GameBoardScreen({ route, navigation }) {
             if (worsenedRunnerId != null) {
                 const type = runnerDamageTokens.consumePendingType(worsenedRunnerId);
                 if (type) runnerDamageTokens.recordToken(worsenedRunnerId, type);
+            }
+            // Замораживаем клетку в ЕЁ ЖЕ ВИДЕ ДО вскрытия (см. heldCells выше)
+            // — читаем rawType из `state` (это ещё PRE-update снимок, сам
+            // редьюсер применится строкой ниже). e.cell.row/column — это
+            // positionX/positionY соответственно (см. store/runnerGameReducer
+            // #patchCell — та же путаница в именах полей унаследована от
+            // бэка), cellId собираем в ТОМ ЖЕ формате, что и BoardGrid/lib/board
+            // (`${segment}-${positionY}-${positionX}`).
+            if (e.event === 'game_cell_updated' && e.cell) {
+                const { segment, row: positionX, column: positionY } = e.cell;
+                const cellId = `${segment}-${positionY}-${positionX}`;
+                // Если позиция УЖЕ активирована (см. activatedCellKeysRef выше)
+                // — типовой случай "один хоп, не каскад" (например мина-Мяч):
+                // trigger() для этой же клетки уже синхронно сработал ДО этого
+                // события (мгновенный мердж пришёл раньше вскрытия) — замораживать
+                // нечего, анимация и так уже активна/стартует в этом же кадре.
+                if (!activatedCellKeysRef.current.has(cellId)) {
+                    const oldRawType = [state?.trackBegin, state?.trackMiddle, state?.trackEnd][segment]
+                        ?.grid?.[positionX]?.[positionY] ?? null;
+                    const oldType = resolveCellVisual(oldRawType);
+                    setHeldCells((prev) => ({
+                        ...prev,
+                        [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
+                    }));
+                    setTimeout(() => {
+                        setHeldCells((prev) => {
+                            if (!(cellId in prev)) return prev;
+                            const next = { ...prev };
+                            delete next[cellId];
+                            return next;
+                        });
+                    }, HELD_CELL_TIMEOUT_MS);
+                }
             }
             const nextState = runnerGameReducer(state, e);
             // Игрок выбыл (player_out) — играет у ВСЕХ клиентов партии, КРОМЕ
@@ -1165,7 +1289,10 @@ export default function GameBoardScreen({ route, navigation }) {
         if (pendingAbility?.ability === 'reaper') {
             // Любая пустая проходимая клетка на всех трёх загруженных сегментах —
             // бэк это не проверяет (см. CLAUDE.md про ReaperService::validateCell),
-            // так что и занятость, и проходимость (не wall/anomaly) считаем сами.
+            // так что и занятость, и проходимость (не wall/anomaly/danger)
+            // считаем сами (danger исключён по прямому запросу пользователя,
+            // 2026-09-15 — жетон опасности под клеткой ещё не вскрыт, ставить
+            // туда Жнеца не должно быть можно).
             // positionX ТОЛЬКО 0-5 (не 0-7, как у обычных клеток) — живой тест,
             // 2026-09-08, поймал реальный баг: бэк отклоняет размещение Жнеца в
             // последних 2 колонках сегмента отдельной валидацией DTO
@@ -1177,7 +1304,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     for (let positionY = 0; positionY <= 5; positionY++) {
                         const pos = { segment, positionX, positionY };
                         const type = rawCellType(game, segment, positionX, positionY);
-                        if (type === 'wall' || type === 'anomaly') continue;
+                        if (type === 'wall' || type === 'anomaly' || type === 'danger') continue;
                         if (findRunnerAt(runners, pos)) continue;
                         cells.add(cellKey(pos));
                     }
@@ -1974,6 +2101,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     : trackShiftPhase === 'revealing' ? trackShiftRevealColumnOpacityMap
                         : null
             }
+            cellOverrides={heldCells}
             onCellPress={handleCellPress}
         />
     );
