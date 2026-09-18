@@ -1,7 +1,7 @@
 // src/lib/board.js
 import { GAME_CONFIG, SEGMENT_IMAGES } from '../constants/GameConstants';
 
-const KNOWN_CELL_TYPES = new Set(Object.values(GAME_CONFIG.CELL_TYPES)); // road/sand/mud/wall/danger/anomaly
+const KNOWN_CELL_TYPES = new Set(Object.values(GAME_CONFIG.CELL_TYPES)); // road/sand/mud/wall/fire/acid/danger/anomaly
 
 /**
  * Реальные ячейки из assets/tracks/*.json иногда несут суффикс уровня опасности
@@ -33,89 +33,35 @@ function hashString(str) {
  * настоящий рандом на каждый вызов заставлял бы картинку клетки "прыгать"/
  * перезапускать gif-анимацию при каждом ре-рендере экрана).
  *
- * 'wall' — особый случай (2026-09-13): SEGMENT_IMAGES.wall не плоский массив,
- * а `{acid, burn}` — сначала выбираем ВАРИАНТ через pickDeathVariant(cellId)
- * (ТА ЖЕ функция, что решает терминальную позу погибающего на этой клетке
- * бегуна, см. lib/runnerAnimTriggers.js), потом конкретный файл внутри него.
- * Так картинка стены и анимация гибели на ней гарантированно совпадают по
- * варианту (acid/burn) — оба берут вариант из ОДНОГО и того же вызова.
- *
- * **Реальный баг, найденный живьём (2026-09-13: "везде одинаковый
- * wall_acid")** — индекс файла ВНУТРИ варианта считался как
- * `hashString(cellId + ':' + variant) % variants.length`. hashString — по
- * сути XOR чётностей charCode всех символов (умножение на 31, нечётное
- * число, сохраняет чётность на каждом шаге) — а `pickDeathVariant` уже решает
- * acid/burn ПО ЧЁТНОСТИ `hashString(cellId)`. Внутри ветки acid эта чётность
- * ВСЕГДА 0 (это и есть условие входа в acid) — добавленный константный
- * суффикс `':acid'` даёт ОДНУ И ТУ ЖЕ добавку чётности для любого cellId,
- * так что итоговый индекс (при 2 файлах, mod 2) оказывался КОНСТАНТОЙ для
- * всех acid-клеток разом — подтверждено симуляцией по реальным id клеток
- * (144 клетки, все 72 acid дали index=1, ни одной с index=0). Фикс — индекс
- * файла берём из СТАРШИХ бит ТОГО ЖЕ хэша (`Math.floor(h / 2)`), не через
- * конкатенацию с константным суффиксом — эти биты не участвовали в выборе
- * ветки (та смотрела только на младший бит), поэтому реально варьируются от
- * клетки к клетке независимо от того, какая ветка (acid/burn) выбрана.
+ * До 2026-09-18 тут был особый случай для 'wall' (бэк присылал только общий
+ * тип, acid/burn выбирал сам фронт случайно, см. pickDeathVariant в истории
+ * файла) — бэк теперь сам отдаёт 'fire'/'acid' как отдельные типы клетки
+ * (RoadType::FIRE/ACID), так что оба идут обычным путём ниже, как и любой
+ * другой многовариантный тип.
  */
 export function pickSegmentImage(type, cellId) {
-    if (type === 'wall') {
-        const h = hashString(cellId);
-        const variant = h % 2 === 0 ? 'acid' : 'burn';
-        const variants = SEGMENT_IMAGES.wall[variant];
-        return variants[Math.floor(h / 2) % variants.length];
-    }
     const variants = SEGMENT_IMAGES[type] || SEGMENT_IMAGES.road;
     return variants[hashString(cellId) % variants.length];
 }
 
 /**
- * Тип "подложки" под клетки danger/mud/wall — по прямому запросу
+ * Тип "подложки" под клетки danger/mud/fire/acid — по прямому запросу
  * пользователя, 2026-08-30/31: под danger кладём road, под mud
  * (грязь/dirt) — случайный (детерминированно по id клетки, как и сам
- * pickSegmentImage) sand. wall — ВЕРНУЛИ road под низ (2026-09-13, второй
- * раз за день — стена сама непрозрачна, но у неё, как и у остальных типов,
- * есть SEGMENT_INSET-зазор по краю слота, и под ним по прямому запросу
- * пользователя должна быть видна дорога, не пустой фон экрана — "wall
- * отображался над road_base"). anomaly (black_hole) — БЕЗ подложки
- * (2026-09-15, прямой запрос "убери road из-под black_hole") — под чёрной
- * дырой ничего не должно просвечивать. Остальные типы (road/sand) — это
- * они сами и есть "земля", подложки не нужно.
+ * pickSegmentImage) sand. fire/acid — road под низ (2026-09-13/18 — стена
+ * сама непрозрачна, но у неё, как и у остальных типов, есть SEGMENT_INSET-
+ * зазор по краю слота, и под ним по прямому запросу пользователя должна
+ * быть видна дорога, не пустой фон экрана). anomaly (black_hole) — БЕЗ
+ * подложки (2026-09-15, прямой запрос "убери road из-под black_hole") — под
+ * чёрной дырой ничего не должно просвечивать. Остальные типы (road/sand) —
+ * это они сами и есть "земля", подложки не нужно.
  */
-export const BASE_IMAGE_TYPE = { danger: 'road', mud: 'sand', wall: 'road' };
+export const BASE_IMAGE_TYPE = { danger: 'road', mud: 'sand', fire: 'road', acid: 'road' };
 
 /** Картинка подложки для типа клетки, или null если подложка не нужна (см. BASE_IMAGE_TYPE). */
 export function pickBaseImage(type, cellId) {
     const baseType = BASE_IMAGE_TYPE[type];
     return baseType ? pickSegmentImage(baseType, cellId) : null;
-}
-
-/**
- * Вариант стены (acid/burn) для клетки типа wall — детерминированно по id
- * клетки, НЕ Math.random (стабильно на всю партию). Единственный источник
- * истины сразу для двух вещей, которые обязаны совпадать: (1)
- * pickSegmentImage выше берёт ИЗ НЕГО, какую картинку (wall_acid_N или
- * wall_burn_N) показать на самой клетке; (2) lib/runnerAnimTriggers.js берёт
- * ИЗ НЕГО, какую терминальную позу ('acid'/'burn') получит бегун, погибающий
- * именно на этой клетке (2026-09-12/13, по прямому запросу пользователя —
- * тип стены и анимация гибели на ней должны совпадать, не выбираться
- * независимо).
- */
-export function pickDeathVariant(cellId) {
-    return hashString(cellId) % 2 === 0 ? 'acid' : 'burn';
-}
-
-/**
- * Тип клетки (resolveCellVisual) по абсолютным координатам бегуна в уже
- * загруженных фрагментах trackBegin/Middle/End (segment 0/1/2). Возвращает
- * null, если сегмент вне диапазона 0-2 или сетка ещё не загружена (снапшот
- * ещё не пришёл) — вызывающий код должен трактовать null как "не wall".
- * Используется в lib/runnerAnimTriggers.js — чтобы понять, погиб ли бегун
- * ИМЕННО на клетке со "Смертью" (wall), а не по любой другой причине.
- */
-export function cellTypeAt(game, segment, positionX, positionY) {
-    const seg = [game?.trackBegin, game?.trackMiddle, game?.trackEnd][segment];
-    if (!seg?.grid) return null;
-    const rawType = seg.grid?.[positionX]?.[positionY];
-    return resolveCellVisual(rawType);
 }
 
 /**

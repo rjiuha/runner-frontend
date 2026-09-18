@@ -27,8 +27,10 @@ const step = (s) => STEP_LABEL[s] ?? s;
 
 export function describeEvent(e) {
     switch (e.event) {
-        case 'game_active':
-            return 'Партия началась';
+        // 'game_active'/'player_active'/'player_roll_move_dice' удалены
+        // бэком целиком, 2026-09-18 (см. runnerGameReducer.js) — партия
+        // теперь всегда приходит уже активной первым REST-снапшотом, эти
+        // события больше никогда не появятся в логе.
         case 'game_turn_changed':
             return `Ход игрока ${e.playerOrder}, раунд ${e.round}, шаг «${step(e.step)}»`
                 + (e.extraTurnPlayer != null ? ` — ждём столкновение от игрока ${e.extraTurnPlayer}` : '');
@@ -38,14 +40,10 @@ export function describeEvent(e) {
             return `Клетка (сегм.${e.cell?.segment}, ${e.cell?.row}/${e.cell?.column}) → ${e.cell?.type}`;
         case 'game_finish':
             return `Игра завершена, статус: ${e.status}`;
-        case 'player_active':
-            return `Игрок ${e.player?.id} готов (статус ${e.player?.status})`;
         case 'player_out':
             return `Игрок ${e.player?.username ?? e.player?.id} выбыл из партии`;
         case 'player_step':
             return `Игрок ${e.player?.id}: шаг → «${step(e.player?.step)}», активный бегун ${e.player?.activeRunner ?? '—'}`;
-        case 'player_roll_move_dice':
-            return `Игрок ${e.player?.id}: новые кубики [${e.player?.dice_1},${e.player?.dice_2},${e.player?.dice_3},${e.player?.dice_4}]`;
         case 'player_reset':
             return `Игрок ${e.player?.id}: сброс на новый раунд (усиление ${e.player?.ability ?? '—'})`;
         case 'step_begin':
@@ -79,7 +77,7 @@ export function describeEvent(e) {
         case 'runner_damage':
             return `Бегун ${e.runnerId?.id} повреждён → статус ${e.runnerId?.status}`;
         case 'runner_destroy':
-            return `Бегун ${e.runnerId?.id} уничтожен`;
+            return `Бегун ${e.runnerId?.id} уничтожен` + (e.reason ? ` (причина: ${e.reason})` : '');
         case 'runner_ball':
             return `Появился шар (бегун ${e.runnerId?.id})`;
         case 'danger':

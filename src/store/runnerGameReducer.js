@@ -49,10 +49,16 @@ function patchCell(game, cell) {
  */
 export function runnerGameReducer(game, e) {
     switch (e.event) {
-        // GameActiveEvent шлёт status через ->name ("ACTIVE"), а не ->value как везде
-        // остальные — сознательно берём константу, а не e.status.
-        case 'game_active':
-            return { ...game, status: GAME_STATUS.ACTIVE };
+        // 2026-09-18: 'game_active'/'player_active'/'player_roll_move_dice'
+        // удалены бэком целиком (коммит "remove api/runner_game/start") —
+        // GameFactory::create() теперь сам синхронно активирует партию
+        // (RunnerGameFactory::start()) сразу при создании, БЕЗ отдельного
+        // Mercure-события (комментарий на бэке, read-only: "ни один клиент
+        // физически не может быть подписан на runner_game_{id} в этот
+        // момент — топик появляется только после этого вызова"). Партия
+        // приходит фронту УЖЕ status:'active' первым же REST-снапшотом
+        // (GET /api/runner_game, см. GameBoardScreen.js) — эти три case
+        // больше никогда не сработают, оставлены бы мёртвым кодом, убраны.
 
         case 'game_turn_changed':
             return {
@@ -86,9 +92,6 @@ export function runnerGameReducer(game, e) {
                     return found ? { ...p, status: found.status } : p;
                 }),
             };
-
-        case 'player_active':
-            return patchPlayer(game, e.player.id, { status: e.player.status });
 
         case 'player_out':
             return patchPlayer(game, e.player.id, {
@@ -132,14 +135,6 @@ export function runnerGameReducer(game, e) {
                 { step: e.player.step },
             );
 
-        case 'player_roll_move_dice':
-            return patchPlayer(game, e.player.id, {
-                dice1: e.player.dice_1,
-                dice2: e.player.dice_2,
-                dice3: e.player.dice_3,
-                dice4: e.player.dice_4,
-            });
-
         case 'player_reset': {
             const withPlayer = patchPlayer(game, e.player.id, {
                 dice1: e.player.dice_1,
@@ -153,9 +148,31 @@ export function runnerGameReducer(game, e) {
 
         case 'runner_save':
         case 'runner_damage':
-        case 'runner_destroy':
         case 'runner_ball':
             return patchRunner(game, e.runnerId);
+
+        // 2026-09-18: бэк заменил RunnerSaveEvent(runner,'destroy') на свой
+        // RunnerDestroyEvent — событие ТО ЖЕ ('runner_destroy', suffix уже
+        // так назывался и раньше), но payload стал НАМНОГО уже: только
+        // {playerId, id, type, status} + новое поле `reason`, БЕЗ
+        // positionX/positionY/segment/dice/rollDice/rollMoves. На бэке
+        // RunnerDestroyService::run() эти 6 полей ВСЕГДА обнуляет ПЕРЕД
+        // публикацией события — раз событие их больше не несёт, patchRunner
+        // (обычное поверхностное слияние `{...r, ...patch}`) оставил бы их
+        // нетронутыми навсегда (последняя позиция ДО смерти) — бегун
+        // продолжал бы индексироваться на доске (indexRunnersByCell фильтрует
+        // именно по segment==null) и выглядел бы "в резерве" где угодно, но
+        // не там. Нулим явно, зеркаля бэк.
+        case 'runner_destroy':
+            return patchRunner(game, {
+                ...e.runnerId,
+                positionX: null,
+                positionY: null,
+                segment: null,
+                dice: null,
+                rollDice: null,
+                rollMoves: null,
+            });
 
         case 'ability_boost':
             return patchRunner(

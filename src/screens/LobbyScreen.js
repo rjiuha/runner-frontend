@@ -49,18 +49,37 @@ export default function LobbyScreen({ route, navigation }) {
 
     const me = lobby?.players.find((p) => p.id === user?.id);
 
-    // Автостарт: сервер удалил лобби и создал игру
+    // Автостарт: сервер удалил лобби и создал игру. 2026-09-18: партия на
+    // бэке теперь активируется СИНХРОННО с созданием (GameFactory::create()
+    // сам вызывает RunnerGameFactory::start(), см. read-only коммит "remove
+    // api/runner_game/start") — к моменту, когда GameBoardScreen впервые
+    // запросит снапшот, игра УЖЕ активна, никакого отдельного шага "готов"
+    // с этого экрана делать не нужно. `justStarted` — единственный надёжный
+    // сигнал для GameBoardScreen'а "это ТОЧНО самое начало партии для этого
+    // игрока" (не reconnect к уже идущей игре, см. gameStartSoundPlayedRef
+    // там) — раньше это выводилось из наблюдения game.status
+    // WAITING→ACTIVE, но WAITING теперь физически невидим фронту (переход
+    // происходит на бэке ДО того, как хоть один клиент успевает
+    // подписаться). MainMenuScreen (резюм активной игры через GET /me)
+    // этот параметр НЕ передаёт — там это заведомо НЕ первый заход.
     useEffect(() => {
         if (!lobby?.gameId) return;
         navigation.reset({
             index: 0,
-            routes: [{ name: ROUTES.RUNNER_GAME, params: { gameId: lobby.gameId } }],
+            routes: [{ name: ROUTES.RUNNER_GAME, params: { gameId: lobby.gameId, justStarted: true } }],
         });
     }, [lobby?.gameId, navigation]);
 
-    // Меня выкинули (или вышел с другого устройства)
+    // Меня выкинули (или вышел с другого устройства) — сам факт "меня нет в
+    // players" не говорит, кик это был или уход с другого устройства
+    // (useMercure не даёт колбэк на КАЖДОЕ применённое версионное событие,
+    // только на транзиентные, см. onTransient выше и его докстринг) — текст
+    // намеренно нейтральный, верен для обоих случаев.
     useEffect(() => {
-        if (lobby && me === undefined && !leftRef.current) goMenu();
+        if (lobby && me === undefined && !leftRef.current) {
+            notify('Ты больше не в этом лобби');
+            goMenu();
+        }
     }, [lobby, me, goMenu]);
 
     const toggleReady = async () => {
@@ -86,6 +105,25 @@ export default function LobbyScreen({ route, navigation }) {
         setLeaving(true);
         try { await lobbyApi.leave(); } catch {} // лобби могло уже исчезнуть
         goMenu();
+    };
+
+    const isHost = !!user && lobby?.host?.id === user.id;
+    // Отдельный от busy/leaving флаг, ХРАНИТ id конкретного игрока — блокирует
+    // именно ЕГО кнопку "✕" (не все разом), тот же принцип разделения флагов,
+    // что уже применён для leaving/busy выше (2026-09-14).
+    const [kickingId, setKickingId] = useState(null);
+
+    const kick = async (playerId) => {
+        setKickingId(playerId);
+        try {
+            // Оптимистично НЕ убираем из списка — настоящий стейт придёт
+            // событием player_kicked (тот же принцип, что и у toggleReady).
+            await lobbyApi.kick(playerId);
+        } catch (e) {
+            notify('Ошибка', e.userMessage ?? e.message);
+        } finally {
+            setKickingId(null);
+        }
     };
 
     if (!lobby) {
@@ -118,14 +156,30 @@ export default function LobbyScreen({ route, navigation }) {
 
                 {lobby.players.map((p) => (
                     <View key={p.id} style={styles.player}>
-                        <Text style={styles.playerName} noGlobalTint>
-                            {p.username}
-                            {p.id === lobby.host?.id ? '  👑' : ''}
-                            {p.id === user?.id ? '  (ты)' : ''}
-                        </Text>
-                        <Text style={[styles.badge, p.isReady && styles.badgeReady]} noGlobalTint>
-                            {p.isReady ? 'готов' : 'ждёт'}
-                        </Text>
+                        <View style={styles.playerMain}>
+                            <Text style={styles.playerName} noGlobalTint>
+                                {p.username}
+                                {p.id === lobby.host?.id ? '  👑' : ''}
+                                {p.id === user?.id ? '  (ты)' : ''}
+                            </Text>
+                            <Text style={[styles.badge, p.isReady && styles.badgeReady]} noGlobalTint>
+                                {p.isReady ? 'готов' : 'ждёт'}
+                            </Text>
+                        </View>
+                        {/* Кик — только у хоста, и не над самим собой (бэк
+                            и так отклонит cannotKickSelf, но кнопка не
+                            должна даже предлагать это). */}
+                        {isHost && p.id !== user?.id && (
+                            <Button
+                                title="✕"
+                                variant="danger"
+                                onPress={() => kick(p.id)}
+                                loading={kickingId === p.id}
+                                disabled={(kickingId != null && kickingId !== p.id) || busy || leaving}
+                                style={styles.kickBtn}
+                                textStyle={styles.kickBtnText}
+                            />
+                        )}
                     </View>
                 ))}
 
@@ -179,10 +233,15 @@ const styles = StyleSheet.create({
     dotLive: { backgroundColor: colors.success },
     status: { fontSize: font.tiny, color: colors.textOnDarkSecondary },
     player: {
-        flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+        flexDirection: 'row', alignItems: 'center',
         backgroundColor: colors.bgLight, borderRadius: radius.md,
         padding: spacing.md, marginBottom: spacing.sm,
     },
+    // Имя+бейдж сгруппированы отдельно от кнопки кика (2026-09-18) — раньше
+    // это были прямые дети `player` со `justifyContent:'space-between'` на
+    // нём самом; кнопка кика — третий сосед, который должен просто прижаться
+    // к правому краю, не расталкивая имя/бейдж дальше друг от друга.
+    playerMain: { flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     slotEmpty: { backgroundColor: 'transparent', borderWidth: 1, borderStyle: 'dashed', borderColor: '#555' },
     slotText: { color: '#777', fontSize: font.small },
     playerName: { color: colors.textOnDark, fontSize: font.body },
@@ -192,6 +251,10 @@ const styles = StyleSheet.create({
         borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 2,
     },
     badgeReady: { color: colors.success, borderColor: colors.success },
+    // Компактная кнопка вместо дефолтного Button (minHeight:52) — тот же
+    // приём, что уже применён у collisionBtn в GameBoardScreen.js.
+    kickBtn: { minHeight: 28, paddingVertical: 4, paddingHorizontal: 10, marginLeft: spacing.sm },
+    kickBtnText: { fontSize: font.small, fontWeight: 'bold' },
     hint: { fontSize: font.tiny, color: colors.textOnDarkSecondary, marginVertical: spacing.md },
     action: { marginTop: spacing.sm },
 });

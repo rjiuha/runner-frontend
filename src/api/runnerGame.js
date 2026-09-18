@@ -11,7 +11,13 @@ import { normalizeRunnerGame } from './normalize';
 export const runnerGameApi = {
     get: async () => normalizeRunnerGame(await request('/runner_game')),
 
-    start: () => request('/runner_game/start', { method: 'POST' }),
+    // POST /runner_game/start удалён на бэке 2026-09-18 (коммит "remove
+    // api/runner_game/start") — партия теперь активируется ЦЕЛИКОМ на бэке
+    // синхронно с её созданием (GameFactory::create() сам вызывает
+    // RunnerGameFactory::start()), никакого отдельного "готов" от клиента
+    // не требуется. К моменту, когда фронт впервые видит игру (по
+    // lobby.gameId → GET /api/runner_game), она уже status:'active' с
+    // розданными кубиками 1-го раунда — см. GameBoardScreen.js.
 
     select: (runnerId, dice, type) =>
         request('/runner_game/select', { method: 'POST', body: { runnerId, dice, type } }),

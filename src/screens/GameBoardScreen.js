@@ -24,10 +24,10 @@ import { useGhostPairs } from '../hooks/useGhostPairs';
 import { useMineBlasts } from '../hooks/useMineBlasts';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
-import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, cellTypeAt, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
+import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
-import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent } from '../lib/runnerAnimTriggers';
+import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent, DEATH_KIND_BY_REASON } from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
 import { identifyGhostPass } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
@@ -229,6 +229,10 @@ export default function GameBoardScreen({ route, navigation }) {
     const insets = useSafeAreaInsets();
     const { user } = useAuth();
     const gameId = route?.params?.gameId ?? null;
+    // См. LobbyScreen.js — true, только если сюда попали ПРЯМО из
+    // "лобби только что создало игру" (единственный надёжный сигнал для
+    // gameStartSoundPlayedRef ниже, раз WAITING больше не наблюдаем).
+    const justStarted = route?.params?.justStarted === true;
 
     const fetchSnapshot = useCallback(async () => {
         const g = await runnerGameApi.get();
@@ -527,16 +531,14 @@ export default function GameBoardScreen({ route, navigation }) {
             // уже успеет убрать runnerId из этого Set к моменту, когда
             // управление сюда вернётся — если добавлять ПОСЛЕ вызова, эта
             // ранняя отписка произошла бы РАНЬШЕ подписки, и флаг завис бы
-            // навсегда. Проверка ТА ЖЕ, что уже используется в
-            // lib/runnerAnimTriggers.js для решения "acid или burn вместо
-            // destroyed" — продублирована намеренно (независимый потребитель
-            // того же факта).
-            if (e.event === 'runner_destroy') {
-                const prevRunner = state?.runners?.find((r) => r.id === e.runnerId?.id);
-                if (prevRunner?.segment != null
-                    && cellTypeAt(state, prevRunner.segment, prevRunner.positionX, prevRunner.positionY) === 'wall') {
-                    setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
-                }
+            // навсегда. Проверка ТА ЖЕ (DEATH_KIND_BY_REASON), что уже
+            // используется в lib/runnerAnimTriggers.js для решения "acid или
+            // burn вместо destroyed" — продублирована намеренно (независимый
+            // потребитель того же факта). 2026-09-18: раньше тут тоже
+            // приходилось звать cellTypeAt по последней известной позиции —
+            // теперь бэк прямо называет причину в e.reason.
+            if (e.event === 'runner_destroy' && DEATH_KIND_BY_REASON[e.reason]) {
+                setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
             }
             handleVersionedRunnerAnimEvent(state, e, triggerWithSound);
             // "Игра стартовала, кубики розданы" — см. gameStartSoundPlayedRef
@@ -794,72 +796,36 @@ export default function GameBoardScreen({ route, navigation }) {
     const myCollision = !!myPlayer && game?.extraTurnPlayer != null
         && String(game.extraTurnPlayer) === String(myPlayer.id);
 
-    // Автостарт партии (по прямому запросу пользователя, 2026-09-08) —
-    // POST /runner_game/start технически обязателен для КАЖДОГО игрока (см.
-    // RunnerGameService::start(), read-only: статус игры становится ACTIVE
-    // только когда ВСЕ RunnerPlayer перешли в ACTIVE, контракт этого не
-    // меняет), но сам вызов не несёт никакого решения — он просто дублировал
-    // готовность, уже подтверждённую тем же игроком в лобби. Вызываем его
-    // сами, как только видим свой WAITING-статус, вместо того чтобы ждать
-    // ещё одного явного тапа (см. бывший components/game/GameWaitingRoom.js
-    // с ручной кнопкой «Готов», теперь не используется).
-    const autoStartAttemptedRef = useRef(false);
-    const [autoStartError, setAutoStartError] = useState(null);
-    // Инкремент форсирует повторный запуск эффекта ниже — единственный способ
-    // повторить попытку после ошибки (сеть/бэк отказал именно в этот момент),
-    // см. кнопку «Повторить» в JSX. Без него сброс autoStartAttemptedRef сам
-    // по себе ничего не триггерит — эффект не перезапускается, пока не
-    // изменится что-то из его зависимостей.
-    const [startRetryNonce, setStartRetryNonce] = useState(0);
-    useEffect(() => {
-        if (game?.status !== GAME_STATUS.WAITING) {
-            autoStartAttemptedRef.current = false; // сброс на случай следующей партии в этой же сессии
-            return;
-        }
-        if (myPlayer?.status !== PLAYER_STATUS.WAITING) return; // уже готов, либо данные ещё не пришли
-        if (autoStartAttemptedRef.current) return;
-        autoStartAttemptedRef.current = true;
-        setAutoStartError(null);
-        runnerGameApi.start().catch((e) => {
-            autoStartAttemptedRef.current = false; // разрешает повтор через startRetryNonce
-            setAutoStartError(e.userMessage ?? e.message ?? 'Не удалось начать партию');
-        });
-    }, [game?.status, myPlayer?.status, startRetryNonce]);
-    const retryAutoStart = useCallback(() => setStartRetryNonce((n) => n + 1), []);
+    // 2026-09-18: POST /runner_game/start удалён на бэке — партия теперь
+    // активируется СИНХРОННО с созданием, на самом бэке (см. api/
+    // runnerGame.js). Автостарт-эффект и его retry-UI (были нужны, пока
+    // клиенту приходилось самому "подтверждать готовность" на этом экране,
+    // см. историю файла) больше не нужны — status:'active' приходит СРАЗУ
+    // первым REST-снапшотом, отдельного шага тут не осталось.
 
-    // Фолбэк для 'start'-комментария (см. gameStartSoundPlayedRef выше) —
-    // живая жалоба пользователя, 2026-09-12: звук иногда не проигрывался,
-    // хотя доска уже отрисовалась с дорогой и персонажами. Причина — НЕ
-    // транзиентность события (`player_roll_move_dice` версионное, см.
-    // PlayerRollMoveDiceEvent на бэке, read-only), а гонка в
-    // useMercure#sync(): если REST-снапшот резолвится ПОСЛЕ того, как весь
-    // стартовый залп (game_active→player_roll_move_dice×N→step_begin) уже
-    // применился на бэке, снапшот приходит СРАЗУ с game.status=ACTIVE и
-    // назначенными кубиками — sync() считает "всё старше снапшота уже
-    // учтено в нём" и НЕ прогоняет эти события через reduce() повторно
-    // (см. useMercure.js#sync — `pending.filter(e => e.version > ver)`).
-    // Для ДАННЫХ это не проблема (снапшот и так корректен), а вот
-    // одноразовый звук, живущий ТОЛЬКО внутри reduce()/reduceAndLog,
-    // безвозвратно теряется. Особенно вероятно ИМЕННО для игрока, чей
-    // собственный /start-вызов (см. autoStart выше) запускает переход —
-    // его GET-снапшот и его же POST /start могут разрешиться в любом
-    // порядке относительно друг друга.
-    // Фикс — НЕ ждём конкретное событие, сравниваем game.status ДО/ПОСЛЕ:
-    // если КОМПОНЕНТ реально видел WAITING (сидел на спиннере "Начинаем
-    // партию…"), а теперь видит ACTIVE — это точно настоящее начало партии
-    // для этой сессии экрана, не reconnect посреди уже идущей игры (при
-    // reconnect WAITING в этом же mount не наблюдался бы вообще — снапшот
-    // сразу пришёл бы с ACTIVE на первом же рендере). Гейт тем же
-    // gameStartSoundPlayedRef — если событие всё-таки успело сработать
-    // первым (обычный, не-гоночный случай), повторно звук не звучит.
-    const sawWaitingRef = useRef(false);
+    // 'start'-комментарий ("игра стартовала, кубики розданы") — раньше
+    // триггерился событием `player_roll_move_dice` (или, как фолбэк,
+    // наблюдением game.status WAITING→ACTIVE в ЭТОМ mount'е — см. историю
+    // файла). Оба сигнала бэк убрал одновременно: событие удалено вместе с
+    // /start (PlayerRollMoveDiceEvent, read-only коммит), а WAITING теперь
+    // физически недостижим фронтом (GameFactory::create() активирует игру
+    // ДО того, как хоть один клиент успевает подписаться на её топик — см.
+    // комментарий в RunnerGameFactory::start() на бэке). Новый сигнал —
+    // `justStarted` из route.params (см. LobbyScreen.js): явно проставляется
+    // ТОЛЬКО когда переход на этот экран вызван свежесозданной из лобби
+    // игрой, не резюмом уже идущей (MainMenuScreen его не передаёт) —
+    // надёжнее и проще прежней гонки с REST-снапшотом.
     useEffect(() => {
-        if (game?.status === GAME_STATUS.WAITING) sawWaitingRef.current = true;
-        if (game?.status === GAME_STATUS.ACTIVE && sawWaitingRef.current && !gameStartSoundPlayedRef.current) {
+        if (justStarted && game != null && !gameStartSoundPlayedRef.current) {
             gameStartSoundPlayedRef.current = true;
             playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.start));
         }
-    }, [game?.status, playOneShot, commentSound]);
+        // !!game (не сам game) — иначе эффект перезапускался бы на КАЖДОЕ
+        // live-обновление стейта партии (новый объект на каждый reduce),
+        // хотя фактически нужен только переход "снапшот ещё не пришёл" →
+        // "пришёл", один раз за маунт экрана.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [justStarted, !!game, playOneShot, commentSound]);
 
     // Можно ли сейчас выбрать этого бегуна дропом кубика — и обычным способом
     // (dice==null), и накатом (dice===0, уже полностью проехал в этом раунде).
@@ -1879,26 +1845,20 @@ export default function GameBoardScreen({ route, navigation }) {
     }
 
     if (game.status === GAME_STATUS.WAITING) {
-        // Раньше тут был отдельный экран (GameWaitingRoom) с ручной кнопкой
-        // «Готов» — второе подтверждение того же самого, что игрок уже
-        // подтвердил в лобби. По прямому запросу пользователя, 2026-09-08:
-        // POST /runner_game/start вызывается автоматически (см. эффект у
-        // autoStartAttemptedRef выше), тут — только спиннер того же вида,
-        // что и у `!game` выше (не отдельный "экран", а продолжение той же
-        // загрузки), плюс счётчик готовности остальных игроков и кнопка
-        // «Повторить», если автовызов сам упал по сети/бэку.
-        const readyCount = gamePlayers.filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
+        // 2026-09-18: с удалением POST /runner_game/start партия больше НЕ
+        // может реально прийти сюда со статусом WAITING — GameFactory::
+        // create() на бэке активирует её синхронно с созданием, до того как
+        // хоть один клиент успевает подписаться (см. api/runnerGame.js).
+        // Ветка оставлена ТОЛЬКО как защитный фолбэк для гипотетической
+        // партии, созданной ДО этого бэкового деплоя и застрявшей в WAITING
+        // (её больше некому и нечем "стартовать" — раньше это делал именно
+        // /start) — раньше тут был автовызов /start + retry-UI, теперь
+        // действовать всё равно нечем, просто нейтральный спиннер вместо
+        // падения на код ниже, который ожидает уже активную партию.
         return (
             <View style={styles.wrapper}>
                 <View style={styles.center}>
-                    <LoadingCard label={`Начинаем партию… готовы ${readyCount} из ${gamePlayers.length}`}>
-                        {autoStartError && (
-                            <>
-                                <Text style={styles.errorText} noGlobalTint>{autoStartError}</Text>
-                                <Button title="Повторить" variant="danger" onPress={retryAutoStart} style={styles.retryBtn} />
-                            </>
-                        )}
-                    </LoadingCard>
+                    <LoadingCard label="Ожидание начала партии…" />
                 </View>
                 <EventLogPanel entries={eventLog} />
             </View>
@@ -2479,8 +2439,6 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    errorText: { fontSize: font.small, color: colors.danger, marginTop: spacing.md, textAlign: 'center', paddingHorizontal: spacing.lg },
-    retryBtn: { marginTop: spacing.sm },
     collisionBanner: {
         // right (не alignSelf:'center') — абсолютно спозиционированные дети в RN
         // не центрируются через alignSelf надёжно, нужны явные координаты.

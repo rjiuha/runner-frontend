@@ -1,8 +1,18 @@
 // src/lib/runnerAnimTriggers.js
 import { statusWorsened } from '../constants/runnerAnimations';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
-import { cellTypeAt, pickDeathVariant } from './board';
 import { RUNNER_TYPES } from '../constants/GameConstants';
+
+/**
+ * 2026-09-18: бэк добавил явное поле `reason` к `runner_destroy`
+ * (RunnerDestroyEvent — `wall`, `edge`, `fire`, `acid`, `damage`, `reaper`,
+ * `track_shift`, `unclaimed`, см. README backend'а) — терминальная поза
+ * гибели на клетке fire/acid теперь берётся НАПРЯМУЮ из него, а не гадается
+ * по типу клетки под последней известной позицией (старый pickDeathVariant/
+ * cellTypeAt, оба удалены). Экспортируется — GameBoardScreen.js использует
+ * ТУ ЖЕ проверку для гейта pendingDeathRunnerIds (см. там).
+ */
+export const DEATH_KIND_BY_REASON = { fire: 'burn', acid: 'acid' };
 
 // Сколько мс держим "недавно получил выстрел" по runnerId (2026-09-07, живой
 // прогон — "вместо fly отработала move при отбросе выстрелом"). Эвристика
@@ -267,28 +277,26 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
             return;
         }
 
-        // "Смерть" на клетке типа wall (2026-09-12/13, по прямому запросу
-        // пользователя) — каждая клетка типа wall показывает одну из двух
-        // картинок стены (acid/burn, см. lib/board#pickDeathVariant/
-        // pickSegmentImage), и любой бегун, погибающий именно там, получает
-        // терминальную позу 'acid'/'burn' ВМЕСТО обычной 'destroyed' — по
-        // прямому решению пользователя эта поза САМА ПО СЕБЕ служит финальным
-        // кадром, отдельной 'destroyed' после неё не нужно (см.
+        // "Смерть" на клетке типа fire/acid (2026-09-12/13, по прямому
+        // запросу пользователя) — любой бегун, погибающий на такой клетке,
+        // получает терминальную позу 'burn'/'acid' ВМЕСТО обычной 'destroyed'
+        // — по прямому решению пользователя эта поза САМА ПО СЕБЕ служит
+        // финальным кадром, отдельной 'destroyed' после неё не нужно (см.
         // useRunnerAnimations — оба kind обрабатываются ТЕМ ЖЕ терминальным
         // путём, что 'destroyed': очередь останавливается, токен прячется
-        // через TERMINAL_HIDE_DELAY_MS). pickDeathVariant(cellId) — ТА ЖЕ
-        // детерминированная функция, что и при выборе картинки самой клетки,
-        // поэтому поза гибели ВСЕГДА совпадает с тем типом стены (acid/burn),
-        // что реально стоит на доске (не может разойтись). Проверяем ДО
-        // statusWorsened-гейта — тут это не нужно (destroy всегда "хуже"), но
-        // порядок такой же, как у Жнеца выше, для единообразия.
+        // через TERMINAL_HIDE_DELAY_MS). 2026-09-18: раньше тип клетки
+        // ПРИХОДИЛОСЬ угадывать по последней известной позиции (cellTypeAt) —
+        // теперь бэк прямо называет причину смерти в `e.reason`
+        // (DEATH_KIND_BY_REASON выше), совпадение с картинкой самой клетки
+        // гарантировано на уровне бэка (обе стороны берут значение из одного
+        // и того же RoadType), не двумя независимыми клиентскими хэшами.
+        // Проверяем ДО statusWorsened-гейта — тут это не нужно (destroy
+        // всегда "хуже"), но порядок такой же, как у Жнеца выше, для
+        // единообразия.
         if (e.event === 'runner_destroy' && lastKnownPosition) {
-            const wallType = cellTypeAt(
-                prevGame, lastKnownPosition.segment, lastKnownPosition.positionX, lastKnownPosition.positionY,
-            );
-            if (wallType === 'wall') {
-                const cellId = `${lastKnownPosition.segment}-${lastKnownPosition.positionY}-${lastKnownPosition.positionX}`;
-                trigger(patch.id, pickDeathVariant(cellId), { toPosition: lastKnownPosition });
+            const deathKind = DEATH_KIND_BY_REASON[e.reason];
+            if (deathKind) {
+                trigger(patch.id, deathKind, { toPosition: lastKnownPosition });
                 return;
             }
         }
@@ -298,20 +306,21 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
         if (patch.status === 'destroyed') {
             // Ловушка Жнеца: "по правилам игры Жнец должен убить того
             // бегуна, который закончил ход на его клетке" (прямой запрос
-            // пользователя, 2026-09-03). Бэк это ЧАСТИЧНО умеет
-            // (Collision::reaperCollision — но публикует ОБЫЧНОЕ generic
-            // 'destroy'-событие без пометки причины, см. читанный бэкенд-код)
-            // — сигнала "это была именно бомба Жнеца" бэк не даёт вообще.
-            // Эвристика: если ПОСЛЕДНЯЯ ИЗВЕСТНАЯ (до уничтожения) позиция
-            // погибшего бегуна совпадает с текущей позицией какого-то
-            // Жнеца — считаем это ловушкой. Порядок — bomb СНАЧАЛА (у
-            // Жнеца), жертва получает 'destroyed' только ПОСЛЕ (см.
+            // пользователя, 2026-09-03). 2026-09-18: бэк теперь ЯВНО помечает
+            // этот случай — reason:'reaper' (Collision::reaperCollision,
+            // читанный бэкенд-код) — раньше сигнала не было вообще, ловушка
+            // определялась ЧИСТО по совпадению позиций (см. историю файла).
+            // Позиционный поиск всё ещё нужен — reason подтверждает САМ ФАКТ
+            // ловушки, но не называет id конкретного Жнеца (тот в событии не
+            // указан), искать всё равно приходится по последней известной
+            // позиции жертвы. Порядок — bomb СНАЧАЛА (у Жнеца), жертва
+            // получает 'destroyed' только ПОСЛЕ (см.
             // REAPER_BOMB_TO_DESTROYED_DELAY_MS выше), не одновременно (по
             // прямому запросу пользователя, 2026-09-08). Не через
             // useRunnerAnimations-очередь victim'а (та относится к ДРУГОМУ
             // runnerId — Жнецу — не годится для задержки жертвы), обычный
             // setTimeout поверх переданного trigger.
-            const reaperHere = prevGame.runners.find(
+            const reaperHere = e.reason === 'reaper' && prevGame.runners.find(
                 (r) => r.type === RUNNER_TYPES.REAPER
                     && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
             );

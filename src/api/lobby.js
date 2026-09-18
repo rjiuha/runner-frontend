@@ -27,6 +27,11 @@ export const lobbyApi = {
     unready: () => request('/lobby/unready', { method: 'POST' }),
     send: (message) => request('/lobby/send', { method: 'POST', body: { message } }),
 
+    // 2026-09-18: POST /api/lobby/kick, только хост. playerId — user.id
+    // цели (та же величина, что и player.id в normalizeLobby), НЕ id
+    // строки LobbyPlayer — сверено с LobbyController::kick()/KickLobbyDto.
+    kick: (playerId) => request('/lobby/kick', { method: 'POST', body: { playerId } }),
+
     search: async ({ maxPlayers, limit = 20, offset = 0 } = {}) => {
         const q = new URLSearchParams();
         if (maxPlayers != null) q.set('maxPlayers', String(maxPlayers));

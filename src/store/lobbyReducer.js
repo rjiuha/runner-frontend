@@ -22,6 +22,16 @@ export function lobbyReducer(lobby, e) {
                 host: e.newHost ?? lobby.host,
             };
 
+        // 2026-09-18: хост может выгнать игрока (POST /lobby/kick) — событие
+        // несёт только playerId (user.id), без newHost (хост кикнуть себя не
+        // может, см. LobbyException::cannotKickSelf на бэке, read-only —
+        // значит хост после кика гарантированно тот же).
+        case 'player_kicked':
+            return {
+                ...lobby,
+                players: lobby.players.filter((p) => p.id !== e.playerId),
+            };
+
         case 'player_ready':
             return {
                 ...lobby,

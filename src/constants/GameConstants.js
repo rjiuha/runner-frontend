@@ -31,12 +31,22 @@ export const GAME_CONFIG = {
     DESTROYED: 'destroyed'     // Уничтожена
   },
   
-  // Типы ячеек на поле — зеркалят RoadType (бэк) и имена файлов в assets/tracks/*.json
+  // Типы ячеек на поле — зеркалят RoadType (бэк) и имена файлов в assets/tracks/*.json.
+  // 2026-09-18: бэк заменил ВСЕ клетки типа 'wall' в реальных треках на 'fire'/
+  // 'acid' (свой RoadType-кейс на каждую, коммит "add new road types - acid and
+  // fire") — WALL оставлен в списке как легаси-фолбэк (RoadType::WALL и текст
+  // 'wall' как причина смерти в runner_destroy формально ещё существуют на
+  // бэке, просто ни один текущий трек их не использует) — resolveCellVisual
+  // не должен упасть на неизвестном типе, если такая клетка когда-нибудь
+  // всё же встретится, но своей картинки под неё больше нет (см.
+  // SEGMENT_IMAGES ниже — тихо рендерится как road).
   CELL_TYPES: {
     ROAD: 'road',
     SAND: 'sand',
     MUD: 'mud',
     WALL: 'wall',
+    FIRE: 'fire',
+    ACID: 'acid',
     DANGER: 'danger',
     ANOMALY: 'anomaly'
   },
@@ -144,16 +154,25 @@ export const ASSET_SIZES = {
  * сплит (SEGMENT_IMAGES_WEB/MOBILE) убран, теперь ОДИН набор ассетов
  * одинаково на вебе и native.
  *
- * 'wall' — НЕ плоский список, а `{acid, burn}` (2026-09-13, стены типа "acid"/
- * "burn" вместо старого единого wall_base_*): `lib/board.js#pickSegmentImage`
- * для этого типа СНАЧАЛА выбирает вариант через `pickDeathVariant(cellId)` (та
- * же детерминированная функция, что решает, КАКУЮ терминальную позу
- * ('acid'/'burn') получит бегун, погибающий на этой клетке, см.
- * lib/runnerAnimTriggers.js) — гарантирует, что картинка стены и анимация
- * гибели на ней ВСЕГДА одного и того же варианта, не расходятся по случайности
- * двух независимых хэшей. Расположение стен на дороге сейчас выбирает бэк
- * (просто присылает тип 'wall' без подтипа) — какой именно вариант (acid/burn)
- * покажет конкретная клетка, решает фронт случайно (детерминированно по id).
+ * 'fire'/'acid' — 2026-09-18: бэк отдаёт их теперь КАК ОТДЕЛЬНЫЕ типы клетки
+ * (RoadType::FIRE/ACID, каждая клетка в assets/tracks/*.json — конкретно
+ * 'fire' ИЛИ 'acid', бэк сам решает какая, не "wall без подробностей", как
+ * было раньше) — раньше (до этого дня) весь трек нёс только тип 'wall', и
+ * ФРОНТ сам случайно (детерминированно по id клетки) выбирал, показать ли
+ * ассет "acid" или "burn" под ним (см. историю `lib/board.js#pickDeathVariant`,
+ * теперь удалена). Оба массива — как обычный многовариантный тип (road/sand/…,
+ * см. выше) — `pickSegmentImage` больше не делает для них ничего особенного.
+ * Терминальная поза бегуна, погибающего на такой клетке (см.
+ * lib/runnerAnimTriggers.js), теперь тоже берётся НАПРЯМУЮ из `reason` поля
+ * события `runner_destroy` ('fire'→'burn'-анимация, 'acid'→'acid'-анимация),
+ * а не гадается по типу клетки — совпадение картинки клетки и позы гибели
+ * гарантировано тем, что оба берут значение из ОДНОГО и того же бэкового
+ * RoadType, а не из двух независимых клиентских хэшей.
+ * Асет-файлы остались от старой схемы (`wall_acid_*`/`wall_burn_1`) —
+ * переименовывать не стал, ключ объекта достаточно однозначен ('fire'/'acid').
+ * 'wall' сам по себе — см. комментарий у CELL_TYPES.WALL выше, легаси, своей
+ * картинки больше нет (pickSegmentImage откатится на road, если такая клетка
+ * когда-нибудь всё же встретится).
  */
 export const SEGMENT_IMAGES = {
   road: [
@@ -170,14 +189,12 @@ export const SEGMENT_IMAGES = {
     require('../assets/images/road/dirt_base_3.gif'),
     require('../assets/images/road/dirt_base_4.gif'),
   ],
-  wall: {
-    acid: [
-      require('../assets/images/road/wall_acid_1.gif'),
-      require('../assets/images/road/wall_acid_2.gif'),
-      require('../assets/images/road/wall_acid_3.gif'),
-    ],
-    burn: [require('../assets/images/road/wall_burn_1.gif')],
-  },
+  fire: [require('../assets/images/road/wall_burn_1.gif')],
+  acid: [
+    require('../assets/images/road/wall_acid_1.gif'),
+    require('../assets/images/road/wall_acid_2.gif'),
+    require('../assets/images/road/wall_acid_3.gif'),
+  ],
   danger: [require('../assets/images/road/danger_base_1.gif')],
   anomaly: [
     require('../assets/images/road/black_hole_1.gif'),
@@ -246,17 +263,19 @@ export const HIGHLIGHT_COLOR = colors.success;
  * сквозь него было лучше видно подложку (см. lib/board#pickBaseImage — road
  * под danger). anomaly — был в той же группе, но 2026-09-15 вернули
  * непрозрачным СРАЗУ следом за тем, как убрали у него road-подложку (см.
- * lib/board#BASE_IMAGE_TYPE) — просвечивать больше нечему. wall и mud —
+ * lib/board#BASE_IMAGE_TYPE) — просвечивать больше нечему. wall (легаси,
+ * см. CELL_TYPES.WALL) и mud —
  * ОБРАТНО непрозрачны (wall —
  * 2026-09-13, mud — 2026-09-14, оба по прямому запросу): картинка сама
  * целиком не прозрачна, но всё ещё занимает не весь слот (SEGMENT_INSET-
  * зазор по краю, как у остальных типов) — под ней по-прежнему лежит
  * подложка (road под wall, sand под mud — см. BASE_IMAGE_TYPE в
  * lib/board.js), просто не просвечивает сквозь саму картинку, только видна
- * в этом зазоре.
+ * в этом зазоре. fire/acid (2026-09-18, заменили wall на реальных треках) —
+ * та же логика, что была у wall — непрозрачны, road-подложка в зазоре.
  */
 export const CELL_OPACITY = {
-  road: 1, sand: 1, wall: 1, mud: 1,
+  road: 1, sand: 1, wall: 1, mud: 1, fire: 1, acid: 1,
   // anomaly (black_hole) — ВЕРНУЛИ непрозрачность (2026-09-15, прямой запрос,
   // сразу следом за тем, как убрали road-подложку под ней — раз просвечивать
   // больше нечему, полупрозрачность стала не нужна). danger по-прежнему
