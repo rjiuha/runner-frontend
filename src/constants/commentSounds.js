@@ -28,4 +28,18 @@ export const COMMENT_SOUNDS = {
     // Опасная клетка вскрылась как Аномалия (чёрная дыра) — транзиентное
     // 'anomaly'-событие, см. lib/runnerAnimTriggers#handleTransientRunnerAnimEvent.
     anomalyHole: [require('../assets/sounds/comments/anomaly_hole_1.wav')],
+    // Выстрел (обычный ИЛИ атака Жнеца при размещении, оба идут через
+    // AttackResolutionService::resolve() на бэке, read-only) не попал —
+    // бэк ВСЕГДА публикует транзиентный 'attack' ({attack, target, hit}),
+    // даже если урон не применяется (hit:false), см. GameBoardScreen#onTransient.
+    miss: [
+        require('../assets/sounds/comments/miss_1.wav'),
+        require('../assets/sounds/comments/miss_2.wav'),
+    ],
+    // Опасная клетка вскрылась как Рикошет — транзиентное 'ricochet'-событие
+    // (та же категория "исход опасности", что и anomaly/rocket/stupor, см.
+    // Damage.php на бэке), своего анимационного case не имеет — общая
+    // forwardNeighbors-эвристика в handleVersionedRunnerAnimEvent уже триггерит
+    // визуальный fly сама, тут только звук.
+    ricochet: [require('../assets/sounds/comments/ricochet_1.wav')],
 };

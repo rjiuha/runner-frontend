@@ -1,16 +1,17 @@
 // App.js
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TextInput, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useFonts } from 'expo-font';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { DarkTheme, NavigationContainer } from '@react-navigation/native';
+import { DarkTheme, NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 
 import { AuthProvider } from './src/context/AuthContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import ParallaxBackground from './src/components/ui/ParallaxBackground';
 import AppModal from './src/components/ui/AppModal';
+import { useMenuMusic } from './src/hooks/useMenuMusic';
 import { fontFamily as CUSTOM_FONT_FAMILY, colors } from './src/theme';
 
 /**
@@ -172,6 +173,21 @@ export default function App() {
     SpaceRanger: require('./src/assets/fonts/spaceranger-rus.otf'),
   });
 
+  // Имя текущего роута — для музыки меню/лобби (hooks/useMenuMusic.js).
+  // NavigationContainer.onStateChange НЕ срабатывает на первом монтировании
+  // (см. BaseNavigationContainer.tsx — isFirstMountRef), поэтому текущий
+  // роут дополнительно ловится через onReady (тот же navigationRef,
+  // getCurrentRoute() — официальный паттерн react-navigation для трекинга
+  // экранов). useMenuMusic вызван здесь, выше NavigationContainer — тот же
+  // приём, что и у ParallaxBackground выше: живёт весь жизненный цикл
+  // приложения, не перемонтируется при навигации.
+  const navigationRef = useNavigationContainerRef();
+  const [routeName, setRouteName] = useState(null);
+  const syncRouteName = useCallback(() => {
+    setRouteName(navigationRef.isReady() ? (navigationRef.getCurrentRoute()?.name ?? null) : null);
+  }, [navigationRef]);
+  useMenuMusic(routeName);
+
   return (
       <View style={styles.root}>
         <ParallaxBackground />
@@ -186,6 +202,9 @@ export default function App() {
               <SafeAreaProvider>
                 <AuthProvider>
                   <NavigationContainer
+                      ref={navigationRef}
+                      onReady={syncRouteName}
+                      onStateChange={syncRouteName}
                       theme={TRANSPARENT_NAV_THEME}
                       // На вебе @react-navigation/native сам управляет
                       // document.title (useDocumentTitle, включён по умолчанию) —

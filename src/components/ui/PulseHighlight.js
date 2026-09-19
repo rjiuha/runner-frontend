@@ -1,7 +1,7 @@
 // src/components/ui/PulseHighlight.js
 import React from 'react';
-import { Animated, StyleSheet } from 'react-native';
-import { usePulse } from '../../hooks/usePulse';
+import { Animated, Platform, StyleSheet, View } from 'react-native';
+import { usePulse, PULSE_HALF_MS } from '../../hooks/usePulse';
 import { colors } from '../../theme';
 
 /**
@@ -23,7 +23,53 @@ import { colors } from '../../theme';
  * зоны (заметная, но не "слишком яркая" — берём альфа-канал у зелёного, не
  * чистый colors.success) и/или лёгкая заливка панели кубиков ("панелька
  * тоже ненавязчиво мигает слегка не слишком ярко", по прямому пожеланию).
+ *
+ * **На вебе — чистый CSS `@keyframes` вместо `Animated.View`** (2026-09-19,
+ * живая жалоба "при нажатии на кубики начинает сильно тормозить" — см.
+ * usePulse.js за полным разбором причины: JS-driven color-анимация у до
+ * 5-8 одновременных подсветок во время своего хода). `animationKeyframes` —
+ * официальный web-only ключ StyleSheet (react-native-web 0.21+), тот же
+ * приём, что уже подтверждён и работает для вращающегося ореола выбора
+ * бегуна в RunnerToken.js — анимация целиком на браузерном compositor-потоке,
+ * JS/React в неё вообще не вовлечён на каждый кадр.
+ *
+ * **ВАЖНО: `animationKeyframes` реально регистрирует `@keyframes` ТОЛЬКО у
+ * стиля, прошедшего через `StyleSheet.create()`** (проверено чтением
+ * `react-native-web/.../StyleSheet/compiler/index.js` — этот ключ явно
+ * исключён (`_excluded`) из обычного инлайн-маппинга свойств в
+ * `createReactDOMStyle`, обрабатывается ТОЛЬКО компилятором атомарных
+ * классов, который вызывается из `StyleSheet.create`). Живой замер (DOM,
+ * `getComputedStyle`) поймал именно эту ошибку в первой версии этого файла:
+ * `animationDuration`/`animationDirection` (обычные CSS-свойства) применялись
+ * из голого объекта, а `animationKeyframes` молча ИГНОРИРОВАЛСЯ —
+ * `animation-name` оставался `none`, анимация физически не запускалась.
+ * Отсюда — `StyleSheet.create()` ниже, не голые объекты. Цвета фиксированы
+ * (всегда `colors.success`, ни один вызывающий код не передаёт другой) —
+ * регистрация статическая, один раз при загрузке модуля.
  */
+const webStyles = StyleSheet.create({
+    border: {
+        animationKeyframes: [{
+            '0%': { borderColor: 'rgba(46,204,113,0)' },
+            '100%': { borderColor: colors.success },
+        }],
+        animationDuration: `${PULSE_HALF_MS}ms`,
+        animationDirection: 'alternate',
+        animationIterationCount: 'infinite',
+        animationTimingFunction: 'ease-in-out',
+    },
+    background: {
+        animationKeyframes: [{
+            '0%': { backgroundColor: 'rgba(46,204,113,0)' },
+            '100%': { backgroundColor: 'rgba(46,204,113,0.16)' },
+        }],
+        animationDuration: `${PULSE_HALF_MS}ms`,
+        animationDirection: 'alternate',
+        animationIterationCount: 'infinite',
+        animationTimingFunction: 'ease-in-out',
+    },
+});
+
 export default function PulseHighlight({
     active,
     borderRadius = 0,
@@ -34,6 +80,24 @@ export default function PulseHighlight({
 }) {
     const pulse = usePulse(active);
     if (!active) return null;
+
+    if (Platform.OS === 'web') {
+        // Обычный View, НЕ Animated.View — на вебе тут нет никакой JS-анимации,
+        // которую Animated должен был бы отслеживать (вся анимация — статика,
+        // уходит браузеру через animationKeyframes выше).
+        return (
+            <View
+                pointerEvents="none"
+                style={[
+                    StyleSheet.absoluteFill,
+                    { borderRadius },
+                    showBorder && [{ borderWidth }, webStyles.border],
+                    showBackground && webStyles.background,
+                    style,
+                ]}
+            />
+        );
+    }
 
     const borderColor = pulse.interpolate({
         inputRange: [0, 1],

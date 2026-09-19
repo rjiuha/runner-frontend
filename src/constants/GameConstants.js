@@ -213,14 +213,16 @@ export const SEGMENT_IMAGES = {
  * применён для терминальных поз acid/burn (useRunnerAnimations.js) — запас
  * в ~2 кадра до конца цикла, чтобы не поймать мигание первым кадром, если
  * gif успеет зациклиться раньше, чем таймер снимет слой.
- * 2026-09-16: по прямому запросу пользователя оба файла ускорены ровно в
- * коде АССЕТА (не JS) — кадры были 17×150мс=2550мс, скриптом (gifwrap,
- * scratch) delayCentisecs каждого кадра поделен на 2 (150мс→80мс с
- * округлением, GIF хранит только целые сантисекунды), итог 17×80мс=1360мс.
- * MINE_BLAST_DURATION_MS ниже пересчитан под НОВУЮ длительность (1360мс -
- * 2 кадра запаса × 80мс = 1200мс), сама скорость воспроизведения — целиком
- * в файле, код её не регулирует и не может (нет своего таймера на кадр,
- * gif проигрывается нативным декодером).
+ * 2026-09-16: по прямому запросу пользователя оба файла были ускорены ровно
+ * в коде АССЕТА (не JS) — кадры 17×150мс=2550мс поделены скриптом (gifwrap)
+ * на 2 (150мс→80мс), итог 17×80мс=1360мс. **2026-09-19: откачено обратно по
+ * прямому запросу пользователя** — тем же скриптом (gifwrap, scratch)
+ * delayCentisecs каждого кадра обоих файлов выставлен ОБРАТНО в 15 (150мс),
+ * не просто удвоен обратно (17×80×2=2720мс) — иначе унаследовали бы дрейф
+ * округления от самого деления при ускорении (150→80, не ровно 75×2).
+ * Сама скорость воспроизведения — целиком в файле, код её не регулирует и
+ * не может (нет своего таймера на кадр, gif проигрывается нативным
+ * декодером).
  *
  * Вариант (mine_1/mine_2) выбирается СЛУЧАЙНО при каждом срабатывании (не
  * детерминированно по id клетки, как у персистентных тайлов SEGMENT_IMAGES
@@ -244,7 +246,9 @@ export const MINE_BLAST_IMAGES = [
 ];
 export const MINE_BLAST_SCALE = 0.6;
 export const MINE_BLAST_OFFSET = 0.04;
-export const MINE_BLAST_DURATION_MS = 1200;
+// 2026-09-19: пересчитано под откаченную (исходную) скорость гифки — см.
+// докстринг выше — 2550мс (17×150мс) минус запас в те же 2 кадра (2×150мс).
+export const MINE_BLAST_DURATION_MS = 2250;
 
 /**
  * Цвет подсветки легальной клетки текущего шага (MOVE/SHOOT/reaper-размещение/
@@ -476,6 +480,85 @@ export const PLAYER_ABILITIES = {
 };
 
 export const PLAYER_ABILITY_ORDER = ['boost', 'heal', 'reaper', 'ghost'];
+
+/**
+ * Иконки для 4 усилений (AbilityZone, 2026-09-19) — пользователь добавил
+ * ассеты в assets/images/ui/pers_panel/, сопоставление по СМЫСЛУ рисунка, не
+ * по имени файла (aid.png — крест, это Лечение; speed.png — спидометр, это
+ * Буст; drone.png — дрон, это Жнец; ghost.png — силуэт, это Призрак).
+ */
+export const PLAYER_ABILITY_ICONS = {
+  boost: require('../assets/images/ui/pers_panel/speed.png'),
+  heal: require('../assets/images/ui/pers_panel/aid.png'),
+  reaper: require('../assets/images/ui/pers_panel/drone.png'),
+  ghost: require('../assets/images/ui/pers_panel/ghost.png'),
+};
+
+/**
+ * Декоративная sci-fi рамка панели усилений/аватара бегуна (9-slice, тот же
+ * приём, что MOBILE_FRAME_* — см. комментарий там и FramePanel.js) — один
+ * угол на пару (верх/низ, РАЗНЫЕ изображения, не зеркало друг друга по Y) +
+ * одна вертикальная планка (зеркалируется scaleX для правой стороны).
+ * Используется И вокруг каждого из 4 квадратов усиления (AbilityZone), И
+ * вокруг аватара бегуна на карточке (см. редактируемую заготовку раскладки
+ * RunnerCard, добавлена по прямому запросу пользователя тем же днём).
+ */
+export const FRAME_PANEL_TOP_CORNER = require('../assets/images/ui/pers_panel/frame_panel_top_corner.png');
+export const FRAME_PANEL_BOTTOM_CORNER = require('../assets/images/ui/pers_panel/frame_panel_bottom_corner.png');
+export const FRAME_PANEL_TOP_EDGE = require('../assets/images/ui/pers_panel/frame_panel_top_hor_line.png');
+export const FRAME_PANEL_BOTTOM_EDGE = require('../assets/images/ui/pers_panel/frame_panel_botto_hor_line.png');
+export const FRAME_PANEL_LEFT_EDGE = require('../assets/images/ui/pers_panel/frame_panel_left_vert_line.png');
+export const FRAME_PANEL_BACKGROUND = require('../assets/images/ui/pers_panel/frame_background.png');
+// Угловой кусок фона (60×60, скруглён ТОЛЬКО в левом-верхнем углу — проверено
+// пиксельно: альфа=0 у tl, 255 у остальных 3) — по прямому запросу
+// пользователя: у рамки скруглённый декоративный уголок (см. TOP/BOTTOM_CORNER
+// выше), а фон под ним раньше был сплошным прямоугольником — сквозь дугу было
+// видно квадратный край фона. Кладётся ПОД декоративными дугами, ПОВЕРХ
+// растянутого FRAME_PANEL_BACKGROUND, зеркалируется scaleX/scaleY в каждый из
+// 4 углов (тот же приём, что уже применён к декоративным дугам) — один
+// ассет на все 4 стороны, а не отдельный кусок на каждую.
+export const FRAME_PANEL_BACKGROUND_CORNER = require('../assets/images/ui/pers_panel/frame_background_corner.png');
+
+/**
+ * Декоративная рамка КОРПУСА карточки бегуна (RunnerCard, 9-slice, тот же
+ * приём и структура слоёв, что FRAME_PANEL_* выше — фон → угловой фон →
+ * планки → декоративные дуги — см. PersonPanel.js) — person_panel_* тоньше
+ * (корпус карточки, не мелкий квадрат усиления), top/bottom — РАЗНЫЕ
+ * изображения (не зеркало по Y), вертикальная планка — одна, зеркалируется
+ * scaleX для правой стороны.
+ */
+export const PERSON_PANEL_TOP_CORNER = require('../assets/images/ui/pers_panel/person_panel_top_corner.png');
+export const PERSON_PANEL_BOTTOM_CORNER = require('../assets/images/ui/pers_panel/person_panel_bottom_corner.png');
+export const PERSON_PANEL_TOP_EDGE = require('../assets/images/ui/pers_panel/person_panel_top_hor_line.png');
+export const PERSON_PANEL_BOTTOM_EDGE = require('../assets/images/ui/pers_panel/person_panel_bottom_hor_line.png');
+export const PERSON_PANEL_LEFT_EDGE = require('../assets/images/ui/pers_panel/person_panel_vert_line.png');
+export const PERSON_PANEL_BACKGROUND = require('../assets/images/ui/pers_panel/person_panel_background.png');
+// Угловой кусок фона — та же роль и тот же приём, что FRAME_PANEL_BACKGROUND_CORNER
+// выше (скруглён ТОЛЬКО в tl, зеркалируется в остальные 3 угла).
+export const PERSON_PANEL_BACKGROUND_CORNER = require('../assets/images/ui/pers_panel/person_panel_background_corner.png');
+
+/**
+ * Иконка занятости жетона повреждения (RunnerCard) — по прямому решению
+ * пользователя (2026-09-19), НОВЫЙ дизайн отказывается от 5 отдельных типов
+ * жетона (Вмятина/Рикошет/Занос/Ракета/Аномалия, см. DAMAGE_TOKENS выше —
+ * та константа остаётся, но её color/short теперь нигде визуально не
+ * используются на карточке) в пользу простого "занято/свободно": слот с
+ * жетоном ЛЮБОГО типа — dmg_red, пустой слот — dmg_green.
+ */
+export const DAMAGE_SLOT_ICONS = {
+  filled: require('../assets/images/ui/pers_panel/dmg_red.png'),
+  empty: require('../assets/images/ui/pers_panel/dmg_green.png'),
+};
+
+// RUNNER_CARD_LAYOUT/RUNNER_CARD_ASPECT (первая версия раскладки карточки,
+// 2026-09-19 — координаты из "Card Layout Lab", масштабируемые от ширины
+// карточки) — УДАЛЕНЫ тем же днём: живой прогон на вебе и Android показал
+// "всё разъехалось", и карточка вдобавок стала заметно выше старой — прямая
+// просьба пользователя "не увеличивать высоту плитки, которая была раньше".
+// RunnerCard.js вернулся на фиксированный flex-ряд (AVATAR_SIZE/DICE_SIZE
+// константы прямо в файле, высота карточки снова определяется природно
+// высотой самого высокого элемента строки — как было до всей этой
+// переверстки, просто аватар крупнее).
 
 /**
  * Жетоны повреждений — зеркалят Damage (бэк). "damage" в правилах называется

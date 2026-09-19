@@ -9,6 +9,18 @@
  */
 export const BACKGROUND_MUSIC_TRACKS = [
     require('../assets/sounds/background_music/game_1.mp3'),
+    require('../assets/sounds/background_music/game_3.mp3'),
+    require('../assets/sounds/background_music/game_4.mp3'),
+    require('../assets/sounds/background_music/game_5.mp3'),
+];
+
+/**
+ * Фоновая музыка меню/лобби (2026-09-19) — играет на MainMenu/LobbySearch/
+ * Lobby, останавливается при входе в RunnerGame. См. hooks/useMenuMusic.js.
+ */
+export const MENU_MUSIC_TRACKS = [
+    require('../assets/sounds/background_music/main_menu_1.mp3'),
+    require('../assets/sounds/background_music/main_menu_2.mp3'),
 ];
 
 /**

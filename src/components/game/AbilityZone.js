@@ -1,9 +1,10 @@
 // src/components/game/AbilityZone.js
-import React, { useCallback, useEffect, useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity } from 'react-native';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import PulseHighlight from '../ui/PulseHighlight';
-import { PLAYER_ABILITIES } from '../../constants/GameConstants';
-import { colors, font, radius, spacing } from '../../theme';
+import FramePanel from '../ui/FramePanel';
+import { PLAYER_ABILITIES, PLAYER_ABILITY_ICONS } from '../../constants/GameConstants';
+import { colors, spacing } from '../../theme';
 
 /**
  * Зона-цель для перетаскивания кубика. Сама зона не решает, подходит ли ей
@@ -26,7 +27,12 @@ import { colors, font, radius, spacing } from '../../theme';
  * снизу" — ровно офсет на высоту одной зоны). Тот же паттерн, что уже был
  * починен для RunnerCard — меняющееся значение триггерит повторный measure.
  */
-export default function AbilityZone({
+// React.memo (2026-09-19, живая жалоба "тормозит при перетаскивании кубика
+// по плиткам") — тот же приём и та же причина, что и у RunnerCard.js#
+// React.memo: каждая зона — до ~114 дочерних <Image> из-за FramePanel,
+// без memo все 4 зоны заново реконсилировались на КАЖДЫЙ hover/pulse-тик
+// панели, даже когда их СОБСТВЕННЫЕ пропсы не менялись.
+function AbilityZone({
     abilityKey,
     assignedDice,
     hoverState,
@@ -39,14 +45,37 @@ export default function AbilityZone({
 }) {
     const ref = useRef(null);
     const ability = PLAYER_ABILITIES[abilityKey];
+    // Размер зоны для FramePanel (см. её докстринг) — тот же приём, что уже
+    // применён в RunnerCard.js: FramePanel больше не растягивается сам через
+    // StyleSheet.absoluteFill (на Android либо не рендерился вовсе, либо не
+    // масштабировался — живые жалобы "рамки нет вообще"/"не в масштабе"),
+    // размер приходит явно. Зона тут ПЕРЕМЕННОЙ ширины (48%), константой не
+    // обойтись — берём из ТОГО ЖЕ measureInWindow, что уже есть ниже.
+    const [zoneSize, setZoneSize] = useState(null);
 
     const measure = useCallback(() => {
         // requestAnimationFrame — см. тот же приём и объяснение в RunnerCard.js.
-        requestAnimationFrame(() => {
+        // Плюс отложенный ПОВТОРНЫЙ замер (setTimeout) — узкая подстраховка
+        // ТОЛЬКО для этого компонента: после добавления иконки усиления
+        // (Image, см. ниже) бокс зоны стал заметно выше (была 1-2 строки
+        // текста, теперь иконка + 2 строки) — живая жалоба пользователя,
+        // 2026-09-19: "на Android неверно определяется момент попадания
+        // кубика на плитку усиления". Гипотеза (НЕ подтверждена живьём, нет
+        // доступа к устройству в этой сессии): один requestAnimationFrame
+        // может не хватить Android'у, чтобы "устаканить" ВЫРОСШИЙ layout
+        // (тот же класс бага уже не раз ловился в этом проекте, см. коммент
+        // в RunnerCard.js) — тогда первый measureInWindow уносит координаты
+        // ОТ ПРЕЖНЕГО, более низкого бокса. Второй замер безопасен в любом
+        // случае — если первый уже был точным, повторный просто перезапишет
+        // ТЕМ ЖЕ значением.
+        const run = () => {
             ref.current?.measureInWindow((x, y, width, height) => {
                 onMeasured(abilityKey, { x, y, width, height });
+                setZoneSize({ width, height });
             });
-        });
+        };
+        requestAnimationFrame(run);
+        setTimeout(run, 150);
     }, [abilityKey, onMeasured]);
 
     useEffect(() => {
@@ -54,49 +83,79 @@ export default function AbilityZone({
     }, [remeasureTick, measure]);
 
     const filled = assignedDice != null;
-    const highlight =
-        hoverState === 'valid' ? styles.hoverValid : hoverState === 'invalid' ? styles.hoverInvalid : null;
+    // Раньше занятость/hover рисовались сменой цвета РАМКИ TouchableOpacity —
+    // теперь саму рамку рисует декоративный FramePanel (см. ниже), так что
+    // тот же сигнал переехал на полупрозрачную ЗАЛИВКУ поверх него (цвет
+    // игрока при занятой зоне — тот же приём "${color}b8", что и раньше;
+    // зелёная/красная для hover — та же альфа, что уже была у бордера).
+    const overlayColor = filled
+        ? `${color}b8`
+        : hoverState === 'valid' ? `${colors.success}40`
+        : hoverState === 'invalid' ? `${colors.danger}33`
+        : null;
+
+    // AbilityZone сам передаёт СВОЙ abilityKey наружу — AbilityZones.js
+    // передаёт onPress СТАБИЛЬНОЙ ссылкой (не инлайн `() => onPressZone(key)`
+    // на каждый рендер), см. докстринг RunnerCard.js#React.memo за полным
+    // разбором того же паттерна и живой жалобы, которая его вызвала.
+    const handlePress = useCallback(() => onPress?.(abilityKey), [onPress, abilityKey]);
 
     return (
         <TouchableOpacity
             ref={ref}
             onLayout={measure}
-            onPress={filled ? onPress : undefined}
+            onPress={filled ? handlePress : undefined}
             activeOpacity={filled ? 0.7 : 1}
-            style={[
-                styles.zone,
-                compact && styles.zoneCompact,
-                // Цвет игрока, не фиксированный colors.primary — та же просьба,
-                // что и для RunnerCard/RunnerDiceSlot (см. их комментарии):
-                // единый цвет для всего, что относится к текущему игроку.
-                filled && { borderStyle: 'solid', borderColor: color, backgroundColor: `${color}b8` },
-                highlight,
-            ]}
+            style={[styles.zone, compact && styles.zoneCompact]}
         >
+            <FramePanel size={zoneSize} />
+            {/* borderRadius — та же величина, что у FramePanel.js#styles.wrap
+                (радиус, по которому та обрезает свою заливку под скруглённой
+                декоративной дугой) — без него заливка рисовалась острым
+                углом ПОВЕРХ скруглённой рамки, живая жалоба пользователя
+                "у контейнера и у рамки не совпадают углы по скруглённости". */}
+            {overlayColor && (
+                <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor, borderRadius: 4 }]} />
+            )}
+            {/* borderRadius=4 — та же величина, что у FramePanel.js#styles.wrap
+                (было radius.md=8, тот же рассинхрон, что и у overlayColor
+                выше). */}
             <PulseHighlight
                 active={pulseHighlight && !filled && hoverState == null}
-                borderRadius={radius.md}
+                borderRadius={4}
                 borderWidth={2}
             />
-            <Text style={[styles.label, compact && styles.labelCompact]} noGlobalTint>{ability.label}</Text>
+            {/* Иконка — фиксированный бокс + resizeMode="contain": исходные
+                ассеты РАЗНОГО размера/пропорций (aid.png 77×78, speed.png
+                138×105, drone.png 186×107, ghost.png 125×144) — contain в
+                одинаковом боксе даёт им визуально одну и ту же "рамку"
+                размера, по прямому запросу пользователя.
+                Текстовое название усиления (ability.label — "БУСТ"/"ЛЕЧЕНИЕ"/
+                "ЖНЕЦ"/"ПРИЗРАК") УБРАНО (2026-09-19, по прямому запросу
+                пользователя — "пусть их место займут изображения") — иконка
+                увеличена (см. styles.icon/iconCompact), занимает
+                освободившееся место. hint (диапазон кубика) оставлен — это
+                функциональная информация, не название. */}
+            <Image source={PLAYER_ABILITY_ICONS[abilityKey]} style={[styles.icon, compact && styles.iconCompact]} resizeMode="contain" />
             <Text style={styles.hint} noGlobalTint>{compact ? ability.shortHint : ability.hint}</Text>
             {/* Число/галочка при занятой зоне убраны целиком (были — только
                 для Лечения, min===max) по прямому запросу пользователя,
-                2026-09-01: подсветка рамки (filled-стиль выше) уже сама по
-                себе однозначно показывает занятость, а любой доп. элемент,
+                2026-09-01: подсветка (заливка выше) уже сама по себе
+                однозначно показывает занятость, а любой доп. элемент,
                 появляющийся/исчезающий вместе с filled, менял высоту зоны —
                 "чтобы не менять размерность области". */}
         </TouchableOpacity>
     );
 }
 
+export default React.memo(AbilityZone);
+
 const styles = StyleSheet.create({
+    // Рамку/фон теперь рисует декоративный FramePanel (absoluteFill, самый
+    // нижний слой) — zone остаётся только позиционером контента, своей
+    // рамки/фона больше не задаёт.
     zone: {
         width: '48%',
-        borderWidth: 2,
-        borderStyle: 'dashed',
-        borderColor: colors.textOnDarkSecondary,
-        borderRadius: radius.md,
         paddingVertical: spacing.xs,
         paddingHorizontal: spacing.xs,
         alignItems: 'center',
@@ -106,9 +165,9 @@ const styles = StyleSheet.create({
     // без подсказки (hint) и мельче шрифт заголовка, по прямому запросу
     // пользователя "ужать пространство под усиления".
     zoneCompact: { paddingVertical: 4 },
-    labelCompact: { fontSize: font.tiny },
-    hoverValid: { borderColor: colors.success, borderStyle: 'solid', backgroundColor: `${colors.success}33` },
-    hoverInvalid: { borderColor: colors.danger, borderStyle: 'solid', backgroundColor: `${colors.danger}22` },
-    label: { color: colors.textOnDark, fontSize: font.small, fontWeight: 'bold' },
+    // Увеличены (было 34/26) — заняли место убранного текстового названия
+    // усиления (см. комментарий у места рендера).
+    icon: { width: 44, height: 44, marginBottom: 2 },
+    iconCompact: { width: 34, height: 34, marginBottom: 1 },
     hint: { color: colors.textOnDarkSecondary, fontSize: 10, marginTop: 1 },
 });

@@ -168,59 +168,89 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
         setStatus('connecting');
         log(`connect() gen=${gen} topic=${topic}`);
 
-        const es = createEventSource(
-            `${MERCURE_URL}?topic=${encodeURIComponent(topic)}`,
-            token,
-        );
-        esRef.current = es;
+        // РЕАЛЬНЫЙ ЖИВОЙ БАГ (найден и воспроизведён 2026-09-19, см. диагностику
+        // в чате — прямая подписка curl'ом на хаб + пере-логин двух свежих
+        // тестовых аккаунтов): подписка на ПРИВАТНЫЙ Mercure-топик
+        // авторизуется куки `mercureAuthorization` (веб, credentials:'include')
+        // / токеном, который выдаёт и ОБНОВЛЯЕТ КАЖДЫЙ ответ бэка под КОНКРЕТНЫЙ
+        // topic (бэк, read-only, MercureTokenGenerator — scoped на
+        // "lobby_{id}"/"runner_game_{id}"). Раньше SSE-запрос уходил ДО того,
+        // как REST-вызов sync() вообще успевал прийти и закоммитить эту куку —
+        // если у cookie-jar браузера/нативного клиента ЕЩЁ НЕ БЫЛО валидной
+        // куки под ИМЕННО этот топик (типичный случай — самое первое
+        // подключение к партии/лобби после логина/навигации), Mercure всё
+        // равно ПРИНИМАЛ соединение (200 OK, "New subscriber" в логах хаба),
+        // но НИ РАЗУ не доставлял по нему ни одного приватного апдейта за
+        // весь срок жизни этого соединения — оно выглядело живым (heartbeat
+        // проходит, 'ping' исправно сбрасывает SILENCE-таймер, 'error' не
+        // срабатывает никогда), просто ни одно РЕАЛЬНОЕ игровое/лобби-событие
+        // не долетало, пока соединение само не переустанавливалось по другой
+        // причине (например STALE_CHECK, у которого REST-запрос попутно
+        // освежает куку ПЕРЕД реконнектом — поэтому баг маскировался: после
+        // вынужденного реконнекта всё внезапно "чинилось само"). Живьём
+        // подтверждено: пре-warm куки (лишний GET с credentials ДО открытия
+        // SSE) полностью убирал пропуск; без него — терялось первое же
+        // событие на свежем топике, каждый раз воспроизводимо.
+        //
+        // Фикс — SSE больше не открывается ПАРАЛЛЕЛЬНО с sync(), а строго
+        // ПОСЛЕ того как его REST-запрос (тот самый, что release'ит свежую
+        // куку) гарантированно завершился — неважно, успехом или ошибкой
+        // (`sync()` сама уже ретраит с бэкоффом, здесь просто ждём, чтобы не
+        // повиснуть). Старое опасение ("если ждать SSE 'open' перед sync() —
+        // вечный спиннер при недоступном хабе") тут не воспроизводится: мы
+        // ждём REST, а не SSE — REST может быть недоступен независимо, и
+        // тогда просто откроем SSE следом (задержки лишней не будет), а если
+        // недоступен ИМЕННО хаб — SSE как и раньше уйдёт в свой error/backoff.
+        sync(gen).finally(() => {
+            if (gen !== genRef.current) return; // отменено — новый connect() уже подменил generation
 
-        // Снапшот грузим сразу, а не по 'open': если Mercure-хаб недоступен
-        // (порт закрыт, CORS, хаб не поднят), 'open' не наступит никогда,
-        // а раньше это означало вечный спиннер — sync() просто не вызывался.
-        // REST и SSE независимы: буфер событий (bufferRef) уже умеет принимать
-        // события, пришедшие до/во время sync, так что запуск здесь безопасен.
-        sync(gen);
+            const es = createEventSource(
+                `${MERCURE_URL}?topic=${encodeURIComponent(topic)}`,
+                token,
+            );
+            esRef.current = es;
 
-        // См. SILENCE_TIMEOUT_MS выше — взводится сразу (не дожидаясь даже
-        // 'open', на случай зависшего DNS/handshake) и перевзводится на
-        // КАЖДЫЙ реально пришедший байт ('ping' — heartbeat, 'message' —
-        // настоящее событие). Если ни разу не перевзвёлся за отведённое
-        // время — транспорт мёртв, форсируем полный connect(), как и
-        // делает stale-check, только по факту тишины, а не по таймеру
-        // "может, ещё не пора спросить бэк".
-        const armSilence = () => {
-            if (gen !== genRef.current) return;
-            clearTimeout(silenceTimerRef.current);
-            silenceTimerRef.current = setTimeout(() => {
+            // См. SILENCE_TIMEOUT_MS выше — взводится сразу (не дожидаясь даже
+            // 'open', на случай зависшего DNS/handshake) и перевзводится на
+            // КАЖДЫЙ реально пришедший байт ('ping' — heartbeat, 'message' —
+            // настоящее событие). Если ни разу не перевзвёлся за отведённое
+            // время — транспорт мёртв, форсируем полный connect(), как и
+            // делает stale-check, только по факту тишины, а не по таймеру
+            // "может, ещё не пора спросить бэк".
+            const armSilence = () => {
                 if (gen !== genRef.current) return;
-                log(`SILENCE ${SILENCE_TIMEOUT_MS}мс без единого байта (даже heartbeat) gen=${gen} — канал мёртв, форс-реконнект`);
-                connect();
-            }, SILENCE_TIMEOUT_MS);
-        };
-        armSilence();
-
-        es.addEventListener('open', () => { log(`SSE open gen=${gen}`); armSilence(); });
-
-        es.addEventListener('ping', () => armSilence());
-
-        es.addEventListener('message', (ev) => {
+                clearTimeout(silenceTimerRef.current);
+                silenceTimerRef.current = setTimeout(() => {
+                    if (gen !== genRef.current) return;
+                    log(`SILENCE ${SILENCE_TIMEOUT_MS}мс без единого байта (даже heartbeat) gen=${gen} — канал мёртв, форс-реконнект`);
+                    connect();
+                }, SILENCE_TIMEOUT_MS);
+            };
             armSilence();
-            if (gen !== genRef.current || !ev?.data) return;
-            try { handleEvent(JSON.parse(ev.data)); } catch (parseErr) {
-                log('message: не удалось распарсить JSON:', parseErr?.message, String(ev.data).slice(0, 200));
-            }
-        });
 
-        es.addEventListener('error', () => {
-            if (gen !== genRef.current) return;
-            clearTimeout(silenceTimerRef.current); // это подключение уже мертво — не дать ему само сработать поверх обычного backoff
-            setStatus('error');
-            const delay = backoff(attemptRef.current);
-            log(`SSE error gen=${gen} — реконнект через ${Math.round(delay)}мс (попытка №${attemptRef.current + 1})`);
-            timerRef.current = setTimeout(() => {
-                if (gen === genRef.current) connect();
-            }, delay);
-            attemptRef.current += 1;
+            es.addEventListener('open', () => { log(`SSE open gen=${gen}`); armSilence(); });
+
+            es.addEventListener('ping', () => armSilence());
+
+            es.addEventListener('message', (ev) => {
+                armSilence();
+                if (gen !== genRef.current || !ev?.data) return;
+                try { handleEvent(JSON.parse(ev.data)); } catch (parseErr) {
+                    log('message: не удалось распарсить JSON:', parseErr?.message, String(ev.data).slice(0, 200));
+                }
+            });
+
+            es.addEventListener('error', () => {
+                if (gen !== genRef.current) return;
+                clearTimeout(silenceTimerRef.current); // это подключение уже мертво — не дать ему само сработать поверх обычного backoff
+                setStatus('error');
+                const delay = backoff(attemptRef.current);
+                log(`SSE error gen=${gen} — реконнект через ${Math.round(delay)}мс (попытка №${attemptRef.current + 1})`);
+                timerRef.current = setTimeout(() => {
+                    if (gen === genRef.current) connect();
+                }, delay);
+                attemptRef.current += 1;
+            });
         });
     }, [topic, token, enabled, disconnect, sync, handleEvent]);
 

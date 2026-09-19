@@ -695,6 +695,18 @@ export default function GameBoardScreen({ route, navigation }) {
             if (e.event === 'anomaly') {
                 playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
             }
+            // Опасная клетка вскрылась как Рикошет — тот же класс транзиента,
+            // что и Аномалия выше, просто своей визуальной анимации не имеет.
+            if (e.event === 'ricochet') {
+                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+            }
+            // Выстрел не попал (AttackResolutionService::resolve() на бэке
+            // вернул false) — бэк ВСЕГДА шлёт этот транзиент на КАЖДЫЙ
+            // выстрел (обычный и атаку Жнеца при размещении), hit:false
+            // значит урона не будет и каскад повреждений не начнётся.
+            if (e.event === 'attack' && e.hit === false) {
+                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+            }
         },
         [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, ghostPairs.record, playOneShot, commentSound],
     );

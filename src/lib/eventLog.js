@@ -94,6 +94,8 @@ export function describeEvent(e) {
             return `Занос: ${e.stunt} клеток → ${dir(e.direction)}`;
         case 'anomaly':
             return `Аномалия → ${dir(e.direction)}`;
+        case 'attack':
+            return `Выстрел (${e.attack}) по бегуну ${e.target}: ${e.hit ? 'попал' : 'промах'}`;
         case 'ghost_pass':
             return `Призрак: бегун ${e.runnerId} проходит сквозь бегуна ${e.otherRunnerId}`;
         default:

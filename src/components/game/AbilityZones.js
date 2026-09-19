@@ -34,7 +34,10 @@ export default function AbilityZones({
                     assignedDice={assignments[key] ?? null}
                     hoverState={hoverKey === key ? (hoverValid ? 'valid' : 'invalid') : null}
                     onMeasured={onMeasured}
-                    onPress={() => onPressZone(key)}
+                    // Стабильная ссылка, НЕ инлайн-замыкание — 2026-09-19,
+                    // см. докстринг RunnerCard.js#React.memo. AbilityZone
+                    // сам передаёт свой abilityKey наружу (см. её handlePress).
+                    onPress={onPressZone}
                     remeasureTick={remeasureTick}
                     compact={compact}
                     color={color}

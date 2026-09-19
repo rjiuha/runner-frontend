@@ -1,6 +1,6 @@
 // src/components/game/PlayerInfoPanel.js
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { Image, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Animated, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
 import AbilityZones from './AbilityZones';
@@ -80,7 +80,25 @@ export default function PlayerInfoPanel({
     // жеста (e.absoluteX/Y уже в этих координатах, без пересчёта). Сам
     // оригинальный DiceDie не трогаем — его временная невидимость под
     // карточкой на вебе теперь не важна, потому что поверх едет этот ghost.
-    const [dragGhost, setDragGhost] = useState(null); // { value, x, y } | null, только веб
+    //
+    // **Позиция — `Animated.ValueXY` через `.setValue()`, НЕ React state**
+    // (2026-09-19, живая жалоба "при нажатии на кубики начинает сильно
+    // тормозить" — усугубилось именно ПОСЛЕ переверстки карточек на
+    // PersonPanel/FramePanel, подтверждено пользователем: "до доработок с
+    // плитками всё работало без тормозов"). `onDragMove` стреляет на КАЖДОЕ
+    // движение указателя (десятки-сотни раз за секунду драга, без троттлинга)
+    // — раньше это был `setDragGhost({value,x,y})`, React-state-апдейт,
+    // перерендеривавший ВСЮ `PlayerInfoPanel` (включая все карточки бегунов
+    // — теперь тяжёлые, ~70+ `<Image>` на карточку из-за 9-slice рамок) на
+    // каждый такой тик. `.setValue()` на `Animated.ValueXY` обновляет стиль
+    // ghost-картинки НАПРЯМУЮ (imperatively), в обход React reconciliation
+    // целиком — тот же приём, что уже применяется в проекте для непрерывных
+    // позиций (см. `RunnerTokenSlide.js`). Сам ФАКТ значения на кубике
+    // (какую грань показывать) меняется только на старте/конце драга, не на
+    // каждое движение — это осталось обычным state (`dragGhostValue`),
+    // безопасно, т.к. меняется редко.
+    const dragGhostPos = useRef(new Animated.ValueXY({ x: -9999, y: -9999 })).current;
+    const [dragGhostValue, setDragGhostValue] = useState(null); // грань кубика | null, только веб
     // Тот же size, что и у DiceTray ниже (compactColumns — 34, иначе 44) —
     // иначе ghost визуально крупнее/мельче реального кубика в трее.
     const dragGhostSize = compactColumns ? DRAG_GHOST_SIZE_COMPACT : DRAG_GHOST_SIZE_NORMAL;
@@ -118,8 +136,16 @@ export default function PlayerInfoPanel({
     // `null` — кубик сейчас НЕ тащат, число — значение того, что тащат
     // (см. onDragStart/onDragEnd, проброшенные в DiceTray ниже).
     const [draggingValue, setDraggingValue] = useState(null);
-    const handleDieDragStart = useCallback((value) => setDraggingValue(value), []);
-    const handleDieDragEnd = useCallback(() => setDraggingValue(null), []);
+    const handleDieDragStart = useCallback((value) => {
+        setDraggingValue(value);
+        // Грань ghost-кубика — только меняется здесь (старт драга), не на
+        // каждое движение, см. dragGhostPos/dragGhostValue выше.
+        if (Platform.OS === 'web') setDragGhostValue(value);
+    }, []);
+    const handleDieDragEnd = useCallback(() => {
+        setDraggingValue(null);
+        if (Platform.OS === 'web') setDragGhostValue(null);
+    }, []);
 
     // Пока кубик НЕ тащат — подсвечиваем ИСТОЧНИК (панель+заголовок кубиков):
     // на SELECT — "Кубики перемещения/Кубики", на ABILITY — то же самое (та
@@ -185,7 +211,9 @@ export default function PlayerInfoPanel({
     // всегда "valid", но только пока разрешён drag-режим 'select'.
     const handleDragMove = useCallback(
         (_index, x, y, value) => {
-            if (Platform.OS === 'web') setDragGhost({ value, x, y });
+            // .setValue() — НЕ React state, не триггерит ре-рендер панели на
+            // каждое движение (см. dragGhostPos выше).
+            if (Platform.OS === 'web') dragGhostPos.setValue({ x, y });
             if (!dragMode) return;
             const key = findZoneAt(x, y);
             if (!key) {
@@ -212,7 +240,7 @@ export default function PlayerInfoPanel({
     const handleDrop = useCallback(
         (index, x, y, value) => {
             setHover({ key: null, valid: false });
-            if (Platform.OS === 'web') setDragGhost(null);
+            if (Platform.OS === 'web') setDragGhostValue(null);
             if (!dragMode) return;
             const key = findZoneAt(x, y);
             if (!key) return;
@@ -284,6 +312,11 @@ export default function PlayerInfoPanel({
         const pendingValue = isPending ? activePlayer.dice[pendingSelect.diceIndex] : null;
         const moveDiceValue = isPending && pendingSelect.type === 'DICE' ? pendingValue : runner.dice ?? null;
         const rollDiceValue = isPending && pendingSelect.type === 'ROLL' ? pendingValue : runner.rollDice ?? null;
+        // onPress={onRunnerCardPress} — СТАБИЛЬНАЯ ссылка, НЕ инлайн-замыкание
+        // (было `() => onRunnerCardPress(runner)`) — 2026-09-19, живая жалоба
+        // "тормозит при перетаскивании кубика по плиткам", см. докстринг
+        // RunnerCard.js#React.memo. RunnerCard сам вызывает onPress?.(runner)
+        // — см. её handlePress.
         return (
             <RunnerCard
                 key={runner.id}
@@ -294,7 +327,7 @@ export default function PlayerInfoPanel({
                 pulseHighlight={runnersHighlight && canSelectRunner(runner.id)}
                 pending={isPending}
                 healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
-                onPress={() => onRunnerCardPress(runner)}
+                onPress={onRunnerCardPress}
                 onDoubleTap={onRunnerCardDoubleTap}
                 moveDiceValue={moveDiceValue}
                 rollDiceValue={rollDiceValue}
@@ -446,17 +479,22 @@ export default function PlayerInfoPanel({
             </View>
 
             {/* Ghost перетаскиваемого кубика — только веб, см. комментарий у
-                dragGhost выше. x/y — уже визуальный ЦЕНТР кубика (см. DiceDie —
-                origin от measureInWindow + дельта жеста), поэтому рисуем ghost
-                центрированным РОВНО на этой точке, без искусственного сдвига:
-                раньше был сдвиг вверх на size+14px "чтобы не закрывать
-                курсор" — из-за него видимый ghost и реальная точка хит-теста
-                (та же x/y) расходились, и подсветка зоны срабатывала не там,
-                где визуально был кубик. position:'fixed' — координаты уже
-                оконные, пересчёт под какого-то родителя не нужен. */}
-            {Platform.OS === 'web' && dragGhost != null && (
-                <Image
-                    source={DICE_FACE_IMAGES[dragGhost.value]}
+                dragGhostPos/dragGhostValue выше. x/y — уже визуальный ЦЕНТР
+                кубика (см. DiceDie — origin от measureInWindow + дельта
+                жеста), поэтому рисуем ghost центрированным РОВНО на этой
+                точке, без искусственного сдвига: раньше был сдвиг вверх на
+                size+14px "чтобы не закрывать курсор" — из-за него видимый
+                ghost и реальная точка хит-теста (та же x/y) расходились, и
+                подсветка зоны срабатывала не там, где визуально был кубик.
+                position:'fixed' — координаты уже оконные, пересчёт под
+                какого-то родителя не нужен. `left:0,top:0` (в styles.dragGhost)
+                + `translateX/Y` вместо прямых `left`/`top` — позиция теперь
+                идёт через `dragGhostPos.setValue()` (см. выше), а Animated
+                умеет обновлять `transform` в обход React state, `left`/`top`
+                так дёшево не обновить. */}
+            {Platform.OS === 'web' && dragGhostValue != null && (
+                <Animated.Image
+                    source={DICE_FACE_IMAGES[dragGhostValue]}
                     pointerEvents="none"
                     resizeMode="contain"
                     style={[
@@ -464,8 +502,10 @@ export default function PlayerInfoPanel({
                         {
                             width: dragGhostSize,
                             height: dragGhostSize,
-                            left: dragGhost.x - dragGhostSize / 2,
-                            top: dragGhost.y - dragGhostSize / 2,
+                            transform: [
+                                { translateX: Animated.subtract(dragGhostPos.x, dragGhostSize / 2) },
+                                { translateY: Animated.subtract(dragGhostPos.y, dragGhostSize / 2) },
+                            ],
                         },
                     ]}
                 />
@@ -485,7 +525,11 @@ const styles = StyleSheet.create({
     // просто безопасный фолбэк на случай ошибки в этом условии.
     dragGhost: {
         // width/height заданы инлайн (dragGhostSize зависит от compactColumns).
+        // left/top:0 — точка отсчёта для translateX/Y (см. место рендера),
+        // сама позиция идёт через transform, не через left/top напрямую.
         position: Platform.OS === 'web' ? 'fixed' : 'absolute',
+        left: 0,
+        top: 0,
         zIndex: 9999,
     },
     // Переключатель игроков остаётся НАД зоной информации (вертикальный стек
@@ -517,19 +561,44 @@ const styles = StyleSheet.create({
     reaperText: { color: colors.textOnDark, fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
     reaperTextOnField: { color: colors.success },
     // compactColumns (портретная раскладка) — бегуны+жнец слева (основное
-    // пространство — flex:2), кубики+усиления справа, заметно уже (flex:1 —
-    // по прямому запросу пользователя "сделать зону усилений поуже, дать
-    // место плиткам бегунов", было 3:2). leftColumn — ScrollView (см.
+    // пространство), кубики+усиления справа, заметно уже — по прямому
+    // запросу пользователя "сделать зону усилений поуже, дать место плиткам
+    // бегунов" (история: было 3:2, потом 2:1). leftColumn — ScrollView (см.
     // комментарий у места использования про remeasureTick), rightColumn —
     // обычный View (кубики+усиления, судя по фидбеку, влезают и без скролла;
     // если тоже не влезут на каком-то экране — тот же паттерн).
+    //
+    // **Настоящая причина "не помещается имя бегуна на Android"
+    // (2026-09-19)** — НЕ размер самой карточки (RunnerCard тут не трогали),
+    // а то, что заявленное соотношение 2:1 у leftColumn/rightColumn фактически
+    // НЕ ПРИМЕНЯЛОСЬ вообще: `ScrollView` в react-native-web несёт СОБСТВЕННЫЙ
+    // базовый стиль (`commonStyle = {flexGrow:1, flexShrink:1}`,
+    // node_modules/react-native-web/.../ScrollView/index.js), который на
+    // вебе побеждает в CSS-каскаде над нашим `flex:2`/`flex:1` (шорткат
+    // сам по себе, судя по всему, не разбирается в единый flexGrow ДО того,
+    // как конкурирует с уже атомарным `flexGrow` от ScrollView — порядок
+    // React-массива style тут не спасает, картина чисто CSS-специфичности).
+    // Живой замер (DOM, `getComputedStyle`) подтвердил: у ОБЕИХ колонок
+    // `flexGrow` фактически был `1` (не `2` у leftColumn), несмотря на
+    // `flex:2` в JS-стиле — отсюда почти равные 165px/173px вместо ~2:1.
+    // Фикс — задавать `flexGrow`/`flexShrink`/`flexBasis` ЯВНЫМИ длинными
+    // свойствами (не через шорткат `flex`) — та же самая property-конкуренция
+    // с `commonStyle`, но теперь уже точно по ИМЕНИ свойства, где наш стиль
+    // однозначно позже/точнее и побеждает. `minWidth:0` — тоже нужен (без него
+    // `flexBasis:0` не спасёт от того, что колонка не ужмётся меньше
+    // естественного размера контента, та же ловушка, что уже чинилась для
+    // `infoCol` в RunnerCard.js) — лишний контент (карточки/усиления) просто
+    // скроллится ВНУТРИ своего ScrollView, как и было задумано изначально.
     columns: { flex: 1, flexDirection: 'row', marginTop: spacing.xs },
-    leftColumn: { flex: 2, marginRight: spacing.sm },
+    // 3:2 (не 2:1) — после фикса flexGrow-конкуренции с ScrollView выше 2:1
+    // дало реальную ширину карточки 211px (было 157) — живая жалоба
+    // пользователя "слишком широко получилось", 3:2 — более умеренный шаг.
+    leftColumn: { flexGrow: 3, flexShrink: 1, flexBasis: 0, minWidth: 0, marginRight: spacing.sm },
     // paddingHorizontal — карточки/кубики+усиления теперь НЕ растянуты
     // впритык к границам своей колонки (по прямому запросу пользователя
     // "уменьшить ширину" обеих зон) — видимый отступ с обеих сторон, сама
-    // ширина колонок (flex 2:1) не меняется.
+    // ширина колонок (2:1) не меняется.
     leftColumnContent: { paddingBottom: spacing.sm, paddingHorizontal: spacing.xs },
-    rightColumn: { flex: 1, paddingHorizontal: spacing.xs },
+    rightColumn: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingHorizontal: spacing.xs },
     rightColumnContent: { paddingBottom: spacing.sm },
 });
