@@ -35,7 +35,10 @@ export function useMenuMusic(routeName) {
     const trackIndexRef = useRef(-1);
 
     const playRandomTrack = useCallback(() => {
-        const idx = pickRandomTrackIndex(trackIndexRef.current);
+        // MENU_MUSIC_TRACKS.length — СВОЯ длина, не чужая (см. докстринг
+        // pickRandomTrackIndex за разбором реального краша, вызванного этим
+        // рассинхроном).
+        const idx = pickRandomTrackIndex(MENU_MUSIC_TRACKS.length, trackIndexRef.current);
         trackIndexRef.current = idx;
         musicSound.replace(MENU_MUSIC_TRACKS[idx]);
         musicSound.volume = MENU_MUSIC_VOLUME;

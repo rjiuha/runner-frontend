@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Platform, StyleSheet, Text, View } from 'react-native';
+import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -671,6 +671,30 @@ export default function GameBoardScreen({ route, navigation }) {
     // категория "меньший/больший бегун" (сама по себе корректна — это прямое
     // значение броска) безопаснее конкретного "твой/их".
     const [pendingCollisionRoll, setPendingCollisionRoll] = useState(null);
+    // Одноразовый комментарий (collision_*.wav) — ЗАЩИТА от двойного/
+    // запоздалого звука, 2026-09-20, живая жалоба пользователя: "звук
+    // comments для чёрной дыры проигрался РАНЬШЕ, чем звук для коллизии",
+    // хотя коллизия по игровому времени случилась ПЕРВОЙ. Причина —
+    // раньше этот звук стартовал ТОЛЬКО из handleCollisionPoseStart, колбэка
+    // от BoardGrid, который срабатывает лишь ПОСЛЕ того, как React
+    // ПЕРЕРИСУЕТ доску с новыми позициями бегунов (versioned-событие →
+    // reduceAndLog → commit → ре-рендер BoardGrid → он сам обнаруживает
+    // новую пару) — целый цикл рендера задержки. anomalyHole/ricochet/miss
+    // ниже, наоборот, играют ПРЯМО ЗДЕСЬ, синхронно с приходом транзиента,
+    // без всякой зависимости от рендера — отсюда и обгон по факту, хотя
+    // коллизия произошла раньше по времени сервера. Фикс — играть комментарий
+    // столкновения ТОЖЕ синхронно, прямо на транзиент 'collision' (тот же
+    // CollisionEvent, что уже даёт pendingCollisionRoll чуть ниже — бэк шлёт
+    // его сразу в момент броска, задолго до того, как BoardGrid вообще
+    // успевает отрисовать позу). `collisionCommentPlayedRef` не даёт звуку
+    // повториться на КАЖДЫЙ ПЕРЕБРОС ("Перебросить" шлёт новый /collision →
+    // новый транзиент 'collision' с тем же extraTurnPlayer, тот же
+    // конфликт ещё не разрешён) — сбрасывается вместе с pendingCollisionRoll
+    // ниже, когда game.extraTurnPlayer возвращается в null (коллизия
+    // ПОЛНОСТЬЮ разрешена). Зацикленный collisionSound (см.
+    // handleCollisionPoseStart ниже) специально НЕ трогали — та часть
+    // осознанно ждёт реальной ВИДИМОЙ позы, не сдвигали.
+    const collisionCommentPlayedRef = useRef(false);
     const onTransient = useCallback(
         (e) => {
             pushLog(e);
@@ -688,6 +712,10 @@ export default function GameBoardScreen({ route, navigation }) {
             }
             if (e.event === 'collision') {
                 setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
+                if (!collisionCommentPlayedRef.current) {
+                    collisionCommentPlayedRef.current = true;
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+                }
             }
             // Опасная клетка вскрылась как Аномалия (чёрная дыра, см.
             // handleTransientRunnerAnimEvent#case 'anomaly' выше — тот же
@@ -907,6 +935,11 @@ export default function GameBoardScreen({ route, navigation }) {
                 color: PLAYER_COLOR_HEX[p.color] ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 ability: p.ability,
+                // step — 2026-09-20, нужен PlayerInfoPanel/RunnerCard, чтобы
+                // показать индикатор бонуса хода на плитке РЕАЛЬНОГО игрока
+                // (не обязательно "моего" — панель переключаемая, см.
+                // roadBonusValue ниже).
+                step: p.step,
                 activeRunnerId: p.activeRunner ?? null,
                 // damageTokens — с бэка НЕ приходит (см. hooks/useRunnerDamageTokens),
                 // подставляем из локального стора по String(id); дефолт [null,null]
@@ -1416,7 +1449,11 @@ export default function GameBoardScreen({ route, navigation }) {
     const musicSound = useAudioPlayer(null);
     const musicTrackIndexRef = useRef(-1);
     const playRandomTrack = useCallback(() => {
-        const idx = pickRandomTrackIndex(musicTrackIndexRef.current);
+        // BACKGROUND_MUSIC_TRACKS.length — СВОЯ длина (2026-09-20, см.
+        // докстринг pickRandomTrackIndex — та же функция теперь используется
+        // и для меню-музыки с ДРУГОЙ длиной плейлиста, реальный краш был
+        // именно там, но сигнатура общая для обоих вызывающих мест).
+        const idx = pickRandomTrackIndex(BACKGROUND_MUSIC_TRACKS.length, musicTrackIndexRef.current);
         musicTrackIndexRef.current = idx;
         musicSound.replace(BACKGROUND_MUSIC_TRACKS[idx]);
         musicSound.volume = MUSIC_VOLUME;
@@ -1809,7 +1846,12 @@ export default function GameBoardScreen({ route, navigation }) {
     // СЛЕДУЮЩЕЙ коллизии баннер на мгновение показал бы результат ПРЕДЫДУЩЕГО
     // броска, пока новый CollisionEvent ещё не долетел.
     useEffect(() => {
-        if (game?.extraTurnPlayer == null) setPendingCollisionRoll(null);
+        if (game?.extraTurnPlayer == null) {
+            setPendingCollisionRoll(null);
+            // Снимаем "уже сыграли" ТОЛЬКО когда коллизия реально разрешилась
+            // (не на каждый переброс) — см. collisionCommentPlayedRef выше.
+            collisionCommentPlayedRef.current = false;
+        }
     }, [game?.extraTurnPlayer]);
 
     // Звук столкновения — играет ВСЕМ клиентам партии сразу, как только
@@ -1823,21 +1865,22 @@ export default function GameBoardScreen({ route, navigation }) {
     // автоматически разрешённых (одинаковый размер/Мяч) — оба идут через
     // ОДИН и тот же механизм пары в BoardGrid.
     const handleCollisionPoseStart = useCallback(() => {
-        // Одноразовый комментарий (collision_1.wav) — независимо от того,
-        // сколько пар столкнулось одновременно, звучит на КАЖДУЮ новую пару
-        // (та же логика, что и раньше была тут единственной операцией).
-        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
-        // collisionSound (зацикленная, вдвое приглушённая, см. useEffect у
-        // объявления канала выше) — стартует только на ПЕРВОЙ одновременно
-        // активной паре, остальные лишь увеличивают счётчик (см.
-        // handleCollisionPoseEnd ниже — останавливаем только когда счётчик
-        // возвращается к 0, не раньше).
+        // Одноразовый комментарий (collision_*.wav) переехал в onTransient
+        // (см. collisionCommentPlayedRef выше) — тут раньше игрался ОН ЖЕ,
+        // но с задержкой в целый цикл рендера, что и давало обгон другими
+        // звуками, приходящими напрямую (жалоба пользователя, 2026-09-20).
+        // Тут остаётся только зацикленный collisionSound (вдвое приглушённая,
+        // см. useEffect у объявления канала выше) — она осознанно ждёт
+        // РЕАЛЬНОЙ видимой позы, не транзиента, стартует только на ПЕРВОЙ
+        // одновременно активной паре, остальные лишь увеличивают счётчик
+        // (см. handleCollisionPoseEnd ниже — останавливаем только когда
+        // счётчик возвращается к 0, не раньше).
         activeCollisionPosesRef.current += 1;
         if (activeCollisionPosesRef.current === 1) {
             collisionSound.seekTo(0);
             collisionSound.play();
         }
-    }, [collisionSound, playOneShot, commentSound]);
+    }, [collisionSound]);
     const handleCollisionPoseEnd = useCallback(() => {
         activeCollisionPosesRef.current = Math.max(0, activeCollisionPosesRef.current - 1);
         if (activeCollisionPosesRef.current === 0) {
@@ -2106,6 +2149,17 @@ export default function GameBoardScreen({ route, navigation }) {
 
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
+            {/* ВРЕМЕННО (2026-09-20, прототип спрайт-листов, см. CLAUDE.md) —
+                убрать вместе с __SpriteSheetPreview.js и его Stack.Screen в
+                RootNavigator.js, когда сравнение gif/спрайт-лист станет не
+                нужно. Не трогает игровое состояние — просто push поверх. */}
+            <TouchableOpacity
+                style={[styles.spriteProtoBtn, { top: insets.top + 4 }]}
+                onPress={() => navigation.navigate('__SpriteSheetPreview')}
+            >
+                <Text style={styles.spriteProtoBtnText} noGlobalTint>спрайт-тест</Text>
+            </TouchableOpacity>
+
             {/* Гейт trackShiftPhase — по прямому запросу пользователя, 2026-09-09: если
                 game_finish пришёл ОДНОВременно со сдвигом фрагмента (типовой случай —
                 сдвиг уничтожает свободных бегунов соперника, тот уходит в OUT, у
@@ -2231,6 +2285,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     onRunnerCardDoubleTap={handleRunnerCardDoubleTap}
                     width={leftPanelW}
                     switcherHeight={switcherH}
+                    roadBonusValue={game.trackGain}
                 />
             )}
 
@@ -2341,6 +2396,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         switcherAtBottom
                         compactColumns
                         headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
+                        roadBonusValue={game.trackGain}
                     />
                     {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
                         (шов с дорогой, см. комментарий у неё выше) — рамки просто
@@ -2522,4 +2578,24 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
         marginTop: spacing.xs,
     },
+    // ВРЕМЕННО — см. комментарий у места рендера. top переопределяется
+    // инлайн (insets.top+4, см. место рендера) — тут только базовые
+    // свойства. elevation — Android-специфичный аналог zIndex (та же
+    // причина, что и у DiceDie.js: на Android один zIndex не всегда
+    // гарантирует реальный порядок отрисовки поверх остального экрана),
+    // backgroundColor непрозрачный ярче — чтобы не потерялся на фоне
+    // звёзд/доски, крупнее touch-таргет.
+    spriteProtoBtn: {
+        position: 'absolute',
+        right: 8,
+        zIndex: 999,
+        elevation: 999,
+        backgroundColor: colors.danger,
+        paddingVertical: 8,
+        paddingHorizontal: 12,
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: '#fff',
+    },
+    spriteProtoBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
 });

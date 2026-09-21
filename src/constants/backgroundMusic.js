@@ -26,9 +26,21 @@ export const MENU_MUSIC_TRACKS = [
 /**
  * Индекс случайного трека, отличного от excludeIndex (если треков больше
  * одного) — не даёт одной и той же дорожке сыграть дважды подряд.
+ *
+ * `count` — ОБЯЗАТЕЛЬНЫЙ параметр (2026-09-20, реальный краш, живой
+ * скриншот RedBox: "AudioPlayer.replace... 2nd argument cannot be cast...
+ * received null" в hooks/useMenuMusic.js) — раньше функция сама читала
+ * `BACKGROUND_MUSIC_TRACKS.length` (4 трека), но вызывается ДВУМЯ разными
+ * плейлистами: игровым (BACKGROUND_MUSIC_TRACKS, 4 трека, GameBoardScreen)
+ * И меню/лобби (MENU_MUSIC_TRACKS, ТОЛЬКО 2 трека, useMenuMusic.js) — для
+ * второго индекс мог выпасть 2 или 3, `MENU_MUSIC_TRACKS[2/3]` это
+ * `undefined`, `musicSound.replace(undefined)` на Android приводит
+ * `undefined`→`null` и падает с точно такой ошибкой (нельзя присвоить null
+ * невалидируемому типу source). Оба вызывающих места теперь передают ДЛИНУ
+ * СВОЕГО массива явно, не полагаясь на дефолт, привязанный к чужому
+ * плейлисту.
  */
-export function pickRandomTrackIndex(excludeIndex) {
-    const count = BACKGROUND_MUSIC_TRACKS.length;
+export function pickRandomTrackIndex(count, excludeIndex) {
     if (count <= 1) return 0;
     let idx;
     do {

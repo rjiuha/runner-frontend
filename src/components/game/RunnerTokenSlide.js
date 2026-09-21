@@ -1,6 +1,9 @@
 // src/components/game/RunnerTokenSlide.js
 import React, { useLayoutEffect, useRef, useEffect } from 'react';
 import { Animated } from 'react-native';
+import { createLogger } from '../../lib/logger';
+
+const log = createLogger('SLIDEDBG'); // ВРЕМЕННО — диагностика "телепорт/исчезновение", убрать после
 
 // Длительность слайда между клетками — примерно совпадает с длительностью
 // самой pose-анимации (ANIM_DURATION_MS.move в useRunnerAnimations), чтобы
@@ -112,11 +115,15 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
         const fromPos = isFirstRender ? (enterFrom ?? { x, y }) : prevPos.current;
         prevPos.current = { x, y };
 
-        if (isFirstRender && !enterFrom) return; // обычный первый рендер — ехать неоткуда
+        if (isFirstRender && !enterFrom) {
+            log('first render (no enterFrom), x=', x, 'y=', y);
+            return; // обычный первый рендер — ехать неоткуда
+        }
 
         const dx = fromPos.x - x;
         const dy = fromPos.y - y;
         if (dx === 0 && dy === 0) return;
+        log('move: from=', fromPos, 'to=', { x, y }, 'isFirstRender=', isFirstRender, 'scrolled=', scrolled, 'resized=', resized);
 
         if (!isFirstRender && (scrolled || resized)) {
             translate.setValue({ x: 0, y: 0 }); // мгновенно, как и сами сегменты сетки

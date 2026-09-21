@@ -11,6 +11,10 @@ import MainMenuScreen from '../screens/MainMenuScreen';
 import LobbySearchScreen from '../screens/LobbySearchScreen';
 import LobbyScreen from '../screens/LobbyScreen';
 import GameBoardScreen from '../screens/GameBoardScreen';
+// ВРЕМЕННО (2026-09-20, прототип спрайт-листов, см. CLAUDE.md) — убрать
+// вместе с этим импортом, Stack.Screen ниже и кнопкой-входом в
+// GameBoardScreen.js, когда сравнение gif/спрайт-лист будет больше не нужно.
+import SpriteSheetPreview from '../screens/__SpriteSheetPreview';
 
 const Stack = createNativeStackNavigator();
 
@@ -110,6 +114,17 @@ export default function RootNavigator() {
                             gestureEnabled: false,
                             presentation: 'fullScreenModal',
                         }}
+                    />
+
+                    {/* ВРЕМЕННО — см. импорт SpriteSheetPreview выше. Обычный
+                        Stack.Screen (не подмена AuthScreen) — открывается
+                        ПОВЕРХ активной партии кнопкой из GameBoardScreen,
+                        "назад" возвращает в игру, ничего в игровом состоянии
+                        не трогает. */}
+                    <Stack.Screen
+                        name="__SpriteSheetPreview"
+                        component={SpriteSheetPreview}
+                        options={{ headerShown: false }}
                     />
                 </>
             )}

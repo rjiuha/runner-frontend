@@ -1,0 +1,2498 @@
+{
+  "healthy": {
+    "red": {
+      "idle": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 216
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 432
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 636
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 840
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1028
+      },
+      "attack_north": {
+        "frameWidth": 188,
+        "frameHeight": 224,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1216
+      },
+      "attack_north_east": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1440
+      },
+      "attack_north_west": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1644
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1848
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2044
+      },
+      "start": {
+        "frameWidth": 168,
+        "frameHeight": 168,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2240
+      },
+      "fly": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2408
+      },
+      "got_shot": {
+        "frameWidth": 168,
+        "frameHeight": 220,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2624
+      },
+      "destroyed": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2844
+      },
+      "acid": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3060
+      },
+      "burn": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3256
+      }
+    },
+    "blue": {
+      "idle": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 216
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 432
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 636
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 840
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1028
+      },
+      "attack_north": {
+        "frameWidth": 188,
+        "frameHeight": 224,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1216
+      },
+      "attack_north_east": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1440
+      },
+      "attack_north_west": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1644
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1848
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2044
+      },
+      "start": {
+        "frameWidth": 168,
+        "frameHeight": 168,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2240
+      },
+      "fly": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2408
+      },
+      "got_shot": {
+        "frameWidth": 168,
+        "frameHeight": 220,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2624
+      },
+      "destroyed": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2844
+      },
+      "acid": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3060
+      },
+      "burn": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3256
+      }
+    },
+    "green": {
+      "idle": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 216
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 432
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 636
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 840
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1028
+      },
+      "attack_north": {
+        "frameWidth": 188,
+        "frameHeight": 224,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1216
+      },
+      "attack_north_east": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1440
+      },
+      "attack_north_west": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1644
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1848
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2044
+      },
+      "start": {
+        "frameWidth": 168,
+        "frameHeight": 168,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2240
+      },
+      "fly": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2408
+      },
+      "got_shot": {
+        "frameWidth": 168,
+        "frameHeight": 220,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2624
+      },
+      "destroyed": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2844
+      },
+      "acid": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3060
+      },
+      "burn": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3256
+      }
+    },
+    "yellow": {
+      "idle": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 216
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 432
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 636
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 840
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1028
+      },
+      "attack_north": {
+        "frameWidth": 188,
+        "frameHeight": 224,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1216
+      },
+      "attack_north_east": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1440
+      },
+      "attack_north_west": {
+        "frameWidth": 180,
+        "frameHeight": 204,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1644
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1848
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2044
+      },
+      "start": {
+        "frameWidth": 168,
+        "frameHeight": 168,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2240
+      },
+      "fly": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2408
+      },
+      "got_shot": {
+        "frameWidth": 168,
+        "frameHeight": 220,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2624
+      },
+      "destroyed": {
+        "frameWidth": 216,
+        "frameHeight": 216,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2844
+      },
+      "acid": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3060
+      },
+      "burn": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 13,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3256
+      }
+    }
+  },
+  "damaged": {
+    "red": {
+      "idle": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 212
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 424
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 628
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 832
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1020
+      },
+      "attack_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1208
+      },
+      "attack_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1420
+      },
+      "attack_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1624
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1828
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2024
+      },
+      "fly": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2220
+      },
+      "got_shot": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2432
+      },
+      "destroyed": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2644
+      },
+      "heal": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2856
+      },
+      "broken": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3068
+      }
+    },
+    "blue": {
+      "idle": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 212
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 424
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 628
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 832
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1020
+      },
+      "attack_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1208
+      },
+      "attack_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1420
+      },
+      "attack_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1624
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1828
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2024
+      },
+      "fly": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2220
+      },
+      "got_shot": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2432
+      },
+      "destroyed": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2644
+      },
+      "heal": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2856
+      },
+      "broken": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3068
+      }
+    },
+    "green": {
+      "idle": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 212
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 424
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 628
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 832
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1020
+      },
+      "attack_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1208
+      },
+      "attack_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1420
+      },
+      "attack_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1624
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1828
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2024
+      },
+      "fly": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2220
+      },
+      "got_shot": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2432
+      },
+      "destroyed": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2644
+      },
+      "heal": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2856
+      },
+      "broken": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3068
+      }
+    },
+    "yellow": {
+      "idle": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 8,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 0
+      },
+      "move_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 212
+      },
+      "move_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 424
+      },
+      "move_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 628
+      },
+      "move_south_east": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 832
+      },
+      "move_south_west": {
+        "frameWidth": 188,
+        "frameHeight": 188,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1020
+      },
+      "attack_north": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1208
+      },
+      "attack_north_east": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1420
+      },
+      "attack_north_west": {
+        "frameWidth": 204,
+        "frameHeight": 204,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1624
+      },
+      "collision_east": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 1828
+      },
+      "collision_west": {
+        "frameWidth": 196,
+        "frameHeight": 196,
+        "frameCount": 11,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2024
+      },
+      "fly": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2220
+      },
+      "got_shot": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2432
+      },
+      "destroyed": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2644
+      },
+      "heal": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 2856
+      },
+      "broken": {
+        "frameWidth": 212,
+        "frameHeight": 212,
+        "frameCount": 9,
+        "delaysMs": [
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200,
+          200
+        ],
+        "rowY": 3068
+      }
+    }
+  }
+}

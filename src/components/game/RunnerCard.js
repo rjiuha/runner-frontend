@@ -15,39 +15,37 @@ import {
 import { colors, font, spacing } from '../../theme';
 
 /**
- * Карточка одного бегуна — 2026-09-19, второй заход того же дня (см. первый
- * заход в git-истории: свободная абсолютно-позиционированная раскладка,
- * масштабируемая от ширины карточки — живой прогон показал "всё разъехалось"
- * и на вебе, и на Android; вдобавок карточка стала значительно ВЫШЕ старой,
- * что противоречило прямому запросу пользователя не увеличивать высоту).
+ * Карточка одного бегуна.
  *
- * ЭТОТ заход — назад к FLEX-РЯДУ (та же структура, что была ДО всей этой
- * переверстки: аватар слева фиксированного размера → высота карточки
- * ПРИРОДНО определяется высотой аватара + паддингом, как и раньше, никакой
- * отдельной математики аспект-рейшо/ширины не нужно — по прямому запросу
- * пользователя "уместить в ширину, не увеличивая высоту плитки, которая
- * была раньше"). АВАТАР при этом заметно КРУПНЕЕ старого (AVATAR_SIZE=64,
- * было 36/30 в альбомной/компактной раскладке) — "не уменьшать размеры
- * аватарки" — рамка вокруг растёт вместе с ним, а не наоборот, и высота
- * ряда/карточки ВСЁ РАВНО остаётся в районе старой (~80dp), потому что
- * раньше высоту УЖЕ определял самый высокий элемент строки (там был
- * значок), теперь та же логика, просто с более крупным значком.
+ * ДВЕ раскладки контента, переключаются пропом `compact` (= compactColumns,
+ * портретная раскладка — см. PlayerInfoPanel.js):
  *
- * Компактная/альбомная раскладка — ОДНА и та же (по решению пользователя
- * "везде, компактную тоже переделать") — размеры ФИКСИРОВАННЫЕ (не считаются
- * от ширины карточки), поэтому на узкой компактной колонке ничего не
- * переполняется по горизонтали: гибкая часть (имя+жетоны) — `flex:1`,
- * сжимается сама, как и в САМОЙ ПЕРВОЙ версии карточки этого проекта.
+ * - Обычная (compact=false, альбомная раскладка) — горизонтальный ряд:
+ *   аватар слева фиксированного размера (AVATAR_SIZE) → высота карточки
+ *   природно определяется высотой аватара + паддингом (~80dp), имя+жетоны
+ *   посередине (flex:1), слот кубика справа.
+ *
+ * - Компактная/ВЕРТИКАЛЬНАЯ (compact=true) — 2026-09-20, по прямому запросу
+ *   пользователя: "сделать плитки бегунов вертикально ориентированными и
+ *   разместить рядом" — три такие плитки в ряд занимают высоту ОДНОЙ плитки
+ *   вместо трёх стопкой, что и решает исходную задачу ("чтобы все 4 плитки
+ *   [Жнец+3] всегда умещались без прокрутки"), без урезания панели и без
+ *   ужимания под измеренную высоту — просто другая геометрия. Аватар сверху
+ *   по центру → имя (скрыто на Android, как и раньше) → жетоны повреждения
+ *   в ряд → слот кубика снизу. Сама плитка — flex:1 внутри ряда (см.
+ *   PlayerInfoPanel.js#runnerRow), не width:'100%'. Живой мокап-макет,
+ *   утверждённый пользователем перед переносом в код:
+ *   https://claude.ai/artifact/VBATd4odKsf658qyLfFtRV
  *
  * Декоративная рамка корпуса — PersonPanel (person_panel_*), аватар и слот
  * кубика — каждый в своей мини-рамке FramePanel (frame_panel_* для аватара,
  * person_panel_* — дефолт FramePanel — для слота кубика, см. её докстринг).
  *
  * `active`/`turnActive`/`pulseHighlight`/`hoverState`/`pending`/`healTarget`/
- * `remeasureTick` — семантика не изменилась с прошлого захода (см. git-diff
- * первой версии): рамку раньше красил borderColor, теперь красит растровый
- * PersonPanel, поэтому все состояния — полупрозрачная заливка/контур поверх
- * (тот же приём, что и в AbilityZone).
+ * `remeasureTick` — работают одинаково в обеих раскладках: рамку красит
+ * растровый PersonPanel, все состояния — полупрозрачная заливка/контур
+ * поверх (тот же приём, что и в AbilityZone), не зависят от того, как
+ * расположен контент внутри.
  *
  * Жетоны повреждения — по прямому решению пользователя, ПРОСТО занято/
  * свободно (dmg_red/dmg_green), без 5 типов/цветов/кодов, что были раньше
@@ -56,18 +54,35 @@ import { colors, font, spacing } from '../../theme';
  *
  * "Ход"/"Накат" — один слот кубика (diceSlot) показывает АКТИВНОЕ значение
  * (rollDiceValue в приоритете — во время наката runner.dice уже 0, не null,
- * `??` его не заменит) + отдельный маленький счётчик "×N" — сколько накатов
- * ЕЩЁ доступно в этом раунде (2 − runner.rollMoves, НЕ то же самое, что
- * rollDiceValue).
+ * `??` его не заменит). Счётчик накатов "×N" — сколько накатов ЕЩЁ доступно
+ * в этом раунде (2 − runner.rollMoves, НЕ то же самое, что rollDiceValue) —
+ * 2026-09-20, по прямому запросу пользователя ПЕРЕЕХАЛ из уголка-бейджа
+ * ПОВЕРХ слота кубика в ОТДЕЛЬНЫЙ элемент под ним (rollCount/rollCountCompact
+ * в styles) — раньше и это, и слот кубика были одним визуальным пятном,
+ * пользователь попросил развести.
  *
- * Текстовая строка статуса убрана (не было для неё места и раньше в
- * компактной раскладке) — уничтоженный бегун виден через `cardDestroyed`
- * (приглушение всей карточки), как и было в компактной раскладке до этого.
+ * Бонус хода (roadBonus проп, число|null) — 2026-09-20, по прямому решению
+ * пользователя: "пока не трогаем бэк" (Runner::$trackGain на бэке ЕСТЬ, но
+ * Runner::toArray() его не отдаёт — физически показать можно только когда
+ * данные РЕАЛЬНО приходят, т.е. пока у игрока идёт шаг ROAD_BONUS именно для
+ * ЭТОГО бегуна, см. PlayerInfoPanel.js#hasRoadBonus) — в остальное время
+ * `null`, ничего не рисуется, "пусто".
+ *
+ * Текстовая строка статуса убрана — уничтоженный бегун виден через
+ * `cardDestroyed` (приглушение всей карточки).
  */
 const DOUBLE_TAP_MS = 300;
 const AVATAR_SIZE = 64;
 const DICE_SIZE = 44;
 const DAMAGE_ICON_SIZE = 22;
+// Вертикальная раскладка (compact) — заметно меньше горизонтальной: три
+// такие плитки должны уместиться в РЯД по ширине левой колонки, тогда как
+// горизонтальная плитка рассчитана на ВСЮ ширину колонки (см. докстринг
+// файла). Пропорция аватар/кубик (44/64≈0.6875) сохранена, как и в
+// обычной раскладке.
+const AVATAR_SIZE_COMPACT = 44;
+const DICE_SIZE_COMPACT = 30;
+const DAMAGE_ICON_SIZE_COMPACT = 14;
 // Platform.OS не меняется в течение жизни приложения — модульная константа,
 // не пересчитывается на каждый рендер. См. isAndroid ниже (имя бегуна
 // скрыто, кружки урона вертикально — по прямому запросу пользователя,
@@ -82,9 +97,12 @@ const isAndroid = Platform.OS === 'android';
 // пропсы ПО ССЫЛКЕ (shallow), и разные объекты с одинаковыми полями всё
 // равно считаются "изменившимися". Вынесенные наружу константы дают ТУ ЖЕ
 // ссылку на каждом рендере — memo реально пропускает пере-рендер (и вместе
-// с ним — реконсиляцию ~20 дочерних `<Image>` у каждого FramePanel).
+// с ним — реконсиляцию ~20 дочерних `<Image>` у каждого FramePanel). Два
+// набора (обычный/compact) — оба стабильны по той же причине.
 const AVATAR_FRAME_SIZE = { width: AVATAR_SIZE, height: AVATAR_SIZE };
 const DICE_FRAME_SIZE = { width: DICE_SIZE, height: DICE_SIZE };
+const AVATAR_FRAME_SIZE_COMPACT = { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT };
+const DICE_FRAME_SIZE_COMPACT = { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT };
 
 // React.memo (2026-09-19, живая жалоба "тормозит именно когда двигаешь
 // кубиком по плиткам") — БЕЗ этого КАЖДЫЙ рендер PlayerInfoPanel (включая
@@ -109,9 +127,9 @@ function RunnerCard({
     rollDiceValue = null,
     hoverState,
     onMoveDiceMeasured,
-    // eslint-disable-next-line no-unused-vars -- сохранён для совместимости вызывающего кода, см. шапку файла
     compact = false,
     remeasureTick = 0,
+    roadBonus = null,
 }) {
     const display = RUNNER_DISPLAY[runner.type];
     const slots = runner.damageTokens ?? [null, null];
@@ -126,17 +144,19 @@ function RunnerCard({
     // работающий здесь measureInWindow (тот самый, что годами используется
     // для drag-n-drop зоны — там реальный размер приходит верно).
     const [cardSize, setCardSize] = useState(null);
-    // Ширина СРЕДНЕЙ зоны (имя+жетоны, между аватаром и кубиком) — живая
+    // Ширина СРЕДНЕЙ зоны (имя+жетоны, между аватаром и кубиком) — ТОЛЬКО
+    // горизонтальная раскладка (см. infoCol в её JSX-ветке ниже); живая
     // жалоба пользователя: в узкой компактной колонке на 2 жетона физически
-    // не хватает места (avatar 64 + dice ~48 почти не оставляют места), а
-    // `infoCol` без явного `minWidth:0` не ужимается меньше "естественного"
-    // размера контента (классический баг RN/CSS flexbox) — жетоны визуально
-    // вылезали в зону кубика ("кружки ушли под рамку для кубика"). Вместо
-    // клиппинга — реальное масштабирование: меряем зону через ЕЁ СОБСТВЕННЫЙ
-    // onLayout (обычный, НЕ абсолютно спозиционированный flex-ребёнок — тот
-    // самый путь измерения, что уже надёжно работает везде в проекте, в
-    // отличие от бага PersonPanel.js выше) и ужимаем иконки жетонов под
-    // реально доступную ширину.
+    // не хватало места, а `infoCol` без явного `minWidth:0` не ужимается
+    // меньше "естественного" размера контента (классический баг RN/CSS
+    // flexbox) — жетоны визуально вылезали в зону кубика. Вместо клиппинга —
+    // реальное масштабирование: меряем зону через ЕЁ СОБСТВЕННЫЙ onLayout
+    // (обычный, НЕ абсолютно спозиционированный flex-ребёнок — тот самый
+    // путь измерения, что уже надёжно работает везде в проекте, в отличие от
+    // бага PersonPanel.js выше) и ужимаем иконки жетонов под реально
+    // доступную ширину. Вертикальная раскладка (compact) в этом не
+    // нуждается — там жетоны в своём фиксированном компактном размере
+    // (DAMAGE_ICON_SIZE_COMPACT), ширина плитки и так узкая по построению.
     const [infoWidth, setInfoWidth] = useState(null);
 
     const lastTapAtRef = useRef(0);
@@ -201,13 +221,13 @@ function RunnerCard({
     const diceValue = rollDiceValue ?? moveDiceValue;
     const rollsAvailable = Math.max(0, 2 - (runner.rollMoves ?? 0));
 
-    // Иконка жетона — родной DAMAGE_ICON_SIZE, если помещается; иначе жмётся
-    // под реально измеренную ширину infoCol (минимум 10px, чтобы совсем не
-    // пропасть на экстремально узких экранах). DAMAGE_ICON_GAP — зазор МЕЖДУ
-    // двумя иконками, тоже ужимается вместе с ними, а не остаётся фиксированным.
-    // На Android (см. isAndroid/damageRowVertical ниже) кружки стоят ДРУГ ПОД
-    // ДРУГОМ, а не бок о бок — делить доступную ширину на 2 больше не нужно,
-    // каждый кружок может занимать её почти целиком.
+    // Иконка жетона (горизонтальная раскладка) — родной DAMAGE_ICON_SIZE,
+    // если помещается; иначе жмётся под реально измеренную ширину infoCol
+    // (минимум 10px, чтобы совсем не пропасть на экстремально узких
+    // экранах). DAMAGE_ICON_GAP — зазор МЕЖДУ двумя иконками, тоже ужимается
+    // вместе с ними. На Android (см. isAndroid/damageRowVertical ниже)
+    // кружки стоят ДРУГ ПОД ДРУГОМ, не бок о бок — делить доступную ширину
+    // на 2 больше не нужно, каждый кружок может занимать её почти целиком.
     const DAMAGE_ICON_GAP = 4;
     const damageIconSize = infoWidth != null
         ? isAndroid
@@ -219,9 +239,21 @@ function RunnerCard({
         <TouchableOpacity
             ref={cardRef}
             onLayout={measure}
-            style={[styles.card, destroyed && styles.cardDestroyed]}
+            style={[compact ? styles.cardCompact : styles.card, destroyed && styles.cardDestroyed]}
             onPress={handlePress}
             activeOpacity={0.8}
+            // hitSlop — ТОЛЬКО вертикальная раскладка (2026-09-20, живая
+            // жалоба пользователя: "раньше при выборе бегуна автоматом был
+            // переход [двойной тап]" — перестал надёжно ловиться). Плитка
+            // теперь flex:1 в ряду из трёх (см. cardCompact) — заметно уже,
+            // чем прежняя полноширинная горизонтальная карточка, а двойной
+            // тап (handlePress/lastTapAtRef выше) требует попасть ВТОРЫМ
+            // тапом в ТУ ЖЕ область за 300мс — на узкой плитке промахнуться
+            // стало заметно легче. Горизонтально — совсем немного (половина
+            // gap между плитками, runnerRow в PlayerInfoPanel.js), чтобы не
+            // перекрыть зону соседней плитки; вертикально — больше, там
+            // соседей нет.
+            hitSlop={compact ? { top: 6, bottom: 6, left: 2, right: 2 } : undefined}
         >
             <PersonPanel size={cardSize} />
             {/* borderRadius — та же величина, что у PersonPanel.js#styles.wrap
@@ -233,91 +265,154 @@ function RunnerCard({
             {active && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.activeRing, { borderColor: color }]} />}
             <PulseHighlight active={pulseHighlight && hoverState == null} borderRadius={6} borderWidth={2} />
 
-            <View style={styles.row}>
-                <View style={styles.avatarBox}>
-                    {/* Единственное место, где заливка рамки — FRAME_PANEL_
-                        BACKGROUND (не дефолтный PERSON_PANEL_BACKGROUND у
-                        FramePanel) — по прямому запросу пользователя:
-                        "frame_background и frame_background_corner это чисто
-                        для аватарки бегуна". */}
-                    <FramePanel
-                        size={AVATAR_FRAME_SIZE}
-                        backgroundSource={FRAME_PANEL_BACKGROUND}
-                        backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
-                        backgroundTileSize={60}
-                    />
-                    {/* size=AVATAR_SIZE + imageScale=0.85 — по прямому запросу пользователя
-                        "растяни бегунов внутри фрейма для аватарки по размеру фрейма"
-                        (2026-09-19): раньше size был AVATAR_SIZE*0.72, а imageScale
-                        (см. RunnerToken.js — доля size, которую реально занимает
-                        картинка) брал дефолт 0.68 — итоговый бокс картинки был
-                        46*0.68≈31px внутри 64px рамки, заметно мельче кадра.
-                        imgBoxStyle в RunnerToken.js = size*imageScale, resizeMode
-                        "contain" — картинка не будет искажена (если ассет не
-                        квадратный, letterbox по короткой стороне). imageScale=1 (в
-                        точности размер рамки) → уменьшили на ~10% (0.9) → ещё на 5% (0.85). */}
-                    <RunnerToken
-                        type={runner.type}
-                        status={runner.status}
-                        avatar
-                        color={color}
-                        size={AVATAR_SIZE}
-                        imageScale={0.85}
-                        selected={active}
-                        showRing={false}
-                    />
-                </View>
-
-                <View
-                    style={styles.infoCol}
-                    onLayout={(e) => setInfoWidth(e.nativeEvent.layout.width)}
-                >
-                    {/* Имя бегуна ("Танк"/"Атлет"/"Скаут") — скрыто ТОЛЬКО на
-                        Android (2026-09-19, по прямому запросу пользователя).
-                        Веб/iOS не тронуты — там имя остаётся как было. Побочный
-                        эффект: `nameTurnActive` (подсветка зелёным на своём ходу)
-                        на Android теперь визуально не видна вообще — отдельного
-                        замещающего сигнала не заводили, пользователь просил
-                        именно "убрать", не "заменить чем-то ещё". */}
+            {compact ? (
+                // ВЕРТИКАЛЬНАЯ раскладка — см. докстринг файла. Аватар сверху
+                // по центру → имя (скрыто на Android) → жетоны в ряд → слот
+                // кубика снизу.
+                <View style={styles.colInner}>
+                    <View style={styles.avatarBoxCompact}>
+                        <FramePanel
+                            size={AVATAR_FRAME_SIZE_COMPACT}
+                            backgroundSource={FRAME_PANEL_BACKGROUND}
+                            backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
+                            backgroundTileSize={60}
+                        />
+                        <RunnerToken
+                            type={runner.type}
+                            status={runner.status}
+                            avatar
+                            color={color}
+                            size={AVATAR_SIZE_COMPACT}
+                            imageScale={0.85}
+                            selected={active}
+                            showRing={false}
+                        />
+                    </View>
                     {!isAndroid && (
-                        <Text style={[styles.name, turnActive && styles.nameTurnActive]} numberOfLines={1} noGlobalTint>
+                        <Text style={[styles.nameCompact, turnActive && styles.nameTurnActive]} numberOfLines={1} noGlobalTint>
                             {display?.label ?? runner.type}
                         </Text>
                     )}
-                    {/* Кружки урона — на Android СТОЛБИКОМ (друг под другом),
-                        не в ряд, по прямому запросу пользователя ("кружки урона
-                        размести вертикально") — на освободившееся от имени место. */}
-                    <View style={[styles.damageRow, isAndroid && styles.damageRowVertical]}>
+                    <View style={styles.damageRowCompact}>
                         {[0, 1].map((i) => (
                             <Image
                                 key={i}
                                 source={slots[i] ? DAMAGE_SLOT_ICONS.filled : DAMAGE_SLOT_ICONS.empty}
                                 resizeMode="contain"
-                                style={
-                                    isAndroid
-                                        ? { width: damageIconSize, height: damageIconSize, marginBottom: i === 0 ? DAMAGE_ICON_GAP : 0 }
-                                        : { width: damageIconSize, height: damageIconSize, marginRight: i === 0 ? DAMAGE_ICON_GAP : 0 }
-                                }
+                                style={[styles.damageIconCompact, i === 1 && styles.damageIconCompactGap]}
                             />
                         ))}
                     </View>
+                    <View style={styles.diceBoxCompact}>
+                        <FramePanel size={DICE_FRAME_SIZE_COMPACT} />
+                        <Text style={styles.diceValueCompact} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
+                    </View>
+                    {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой ПОД слотом кубика
+                        (2026-09-20, по прямому запросу пользователя "не
+                        кружочком рядом с фреймом кубика, а отдельно") —
+                        раньше был уголком-бейджем ПОВЕРХ diceBoxCompact. */}
+                    <Text style={styles.rollCountCompact} noGlobalTint>×{rollsAvailable}</Text>
+                    {/* Бонус хода — см. roadBonus проп/докстринг файла — ТОЛЬКО
+                        когда данные реально пришли с бэка, иначе пусто. */}
+                    {roadBonus != null && (
+                        <Text style={styles.roadBonusCompact} noGlobalTint>+{roadBonus}</Text>
+                    )}
                 </View>
+            ) : (
+                // Горизонтальная раскладка (альбомная) — аватар слева, имя+
+                // жетоны посередине, слот кубика справа. Не тронута этим
+                // заходом.
+                <View style={styles.row}>
+                    <View style={styles.avatarBox}>
+                        {/* Единственное место, где заливка рамки — FRAME_PANEL_
+                            BACKGROUND (не дефолтный PERSON_PANEL_BACKGROUND у
+                            FramePanel) — по прямому запросу пользователя:
+                            "frame_background и frame_background_corner это чисто
+                            для аватарки бегуна". */}
+                        <FramePanel
+                            size={AVATAR_FRAME_SIZE}
+                            backgroundSource={FRAME_PANEL_BACKGROUND}
+                            backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
+                            backgroundTileSize={60}
+                        />
+                        {/* size=AVATAR_SIZE + imageScale=0.85 — по прямому запросу пользователя
+                            "растяни бегунов внутри фрейма для аватарки по размеру фрейма"
+                            (2026-09-19): раньше size был AVATAR_SIZE*0.72, а imageScale
+                            (см. RunnerToken.js — доля size, которую реально занимает
+                            картинка) брал дефолт 0.68 — итоговый бокс картинки был
+                            46*0.68≈31px внутри 64px рамки, заметно мельче кадра.
+                            imgBoxStyle в RunnerToken.js = size*imageScale, resizeMode
+                            "contain" — картинка не будет искажена (если ассет не
+                            квадратный, letterbox по короткой стороне). imageScale=1 (в
+                            точности размер рамки) → уменьшили на ~10% (0.9) → ещё на 5% (0.85). */}
+                        <RunnerToken
+                            type={runner.type}
+                            status={runner.status}
+                            avatar
+                            color={color}
+                            size={AVATAR_SIZE}
+                            imageScale={0.85}
+                            selected={active}
+                            showRing={false}
+                        />
+                    </View>
 
-                <View style={styles.diceCol}>
-                    <View style={styles.diceBox}>
-                        <FramePanel size={DICE_FRAME_SIZE} />
-                        <Text style={styles.diceValue} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
-                        {/* Счётчик накатов — уголок-бейдж ПОВЕРХ слота кубика
-                            (не отдельная строка под ним) — иначе колонка кубика
-                            становится ВЫШЕ, чем аватар (64+badge), и снова
-                            тянет вверх высоту всей карточки, чего пользователь
-                            как раз попросил избежать. */}
-                        <View style={styles.rollBadge} pointerEvents="none">
-                            <Text style={styles.rollBadgeText} noGlobalTint>×{rollsAvailable}</Text>
+                    <View
+                        style={styles.infoCol}
+                        onLayout={(e) => setInfoWidth(e.nativeEvent.layout.width)}
+                    >
+                        {/* Имя бегуна ("Танк"/"Атлет"/"Скаут") — скрыто ТОЛЬКО на
+                            Android (2026-09-19, по прямому запросу пользователя).
+                            Веб/iOS не тронуты — там имя остаётся как было. Побочный
+                            эффект: `nameTurnActive` (подсветка зелёным на своём ходу)
+                            на Android теперь визуально не видна вообще — отдельного
+                            замещающего сигнала не заводили, пользователь просил
+                            именно "убрать", не "заменить чем-то ещё". */}
+                        {!isAndroid && (
+                            <Text style={[styles.name, turnActive && styles.nameTurnActive]} numberOfLines={1} noGlobalTint>
+                                {display?.label ?? runner.type}
+                            </Text>
+                        )}
+                        {/* Кружки урона — на Android СТОЛБИКОМ (друг под другом),
+                            не в ряд, по прямому запросу пользователя ("кружки урона
+                            размести вертикально") — на освободившееся от имени место. */}
+                        <View style={[styles.damageRow, isAndroid && styles.damageRowVertical]}>
+                            {[0, 1].map((i) => (
+                                <Image
+                                    key={i}
+                                    source={slots[i] ? DAMAGE_SLOT_ICONS.filled : DAMAGE_SLOT_ICONS.empty}
+                                    resizeMode="contain"
+                                    style={
+                                        isAndroid
+                                            ? { width: damageIconSize, height: damageIconSize, marginBottom: i === 0 ? DAMAGE_ICON_GAP : 0 }
+                                            : { width: damageIconSize, height: damageIconSize, marginRight: i === 0 ? DAMAGE_ICON_GAP : 0 }
+                                    }
+                                />
+                            ))}
                         </View>
                     </View>
+
+                    <View style={styles.diceCol}>
+                        <View style={styles.diceBox}>
+                            <FramePanel size={DICE_FRAME_SIZE} />
+                            <Text style={styles.diceValue} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
+                        </View>
+                        {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой ПОД слотом кубика
+                            (2026-09-20, по прямому запросу пользователя "не
+                            кружочком рядом с фреймом кубика, а отдельно") —
+                            раньше был уголком-бейджем ПОВЕРХ diceBox (тот
+                            приём держал diceCol в пределах высоты аватара —
+                            теперь колонка кубика немного выше него, пользователь
+                            явно попросил переезд, это осознанный компромисс). */}
+                        <Text style={styles.rollCount} noGlobalTint>×{rollsAvailable}</Text>
+                        {/* Бонус хода — см. roadBonus проп/докстринг файла — ТОЛЬКО
+                            когда данные реально пришли с бэка, иначе пусто. */}
+                        {roadBonus != null && (
+                            <Text style={styles.roadBonus} noGlobalTint>+{roadBonus}</Text>
+                        )}
+                    </View>
                 </View>
-            </View>
+            )}
         </TouchableOpacity>
     );
 }
@@ -329,6 +424,17 @@ const styles = StyleSheet.create({
         width: '100%',
         padding: spacing.sm,
         marginBottom: spacing.xs,
+    },
+    // Вертикальная раскладка — flex:1 внутри ряда (см. PlayerInfoPanel.js#
+    // runnerRow), НЕ width:'100%' — три такие плитки должны разделить
+    // ширину колонки поровну. minWidth:0 — та же классическая ловушка
+    // flexbox, что и у infoCol ниже (без него flex-элемент не ужимается
+    // меньше "естественного" размера контента).
+    cardCompact: {
+        flex: 1,
+        minWidth: 0,
+        paddingVertical: spacing.sm,
+        paddingHorizontal: spacing.xs,
     },
     cardDestroyed: { opacity: 0.45 },
     // borderRadius=6 — та же величина, что у PersonPanel.js#styles.wrap
@@ -354,22 +460,23 @@ const styles = StyleSheet.create({
     diceCol: { alignItems: 'center', justifyContent: 'center', width: DICE_SIZE + spacing.xs },
     diceBox: { width: DICE_SIZE, height: DICE_SIZE, alignItems: 'center', justifyContent: 'center' },
     diceValue: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
-    // Бейдж накатов — уголок ПОВЕРХ diceBox (см. коммент у места рендера),
-    // не отдельная строка снизу — держит diceCol в пределах DICE_SIZE, не
-    // выше аватара.
-    rollBadge: {
-        position: 'absolute',
-        top: -6,
-        right: -6,
-        minWidth: 16,
-        height: 16,
-        paddingHorizontal: 3,
-        borderRadius: 8,
-        backgroundColor: colors.bg,
-        borderWidth: 1,
-        borderColor: colors.textOnDarkSecondary,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-    rollBadgeText: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 9 },
+    // Счётчик накатов — отдельной строкой ПОД слотом кубика (см. коммент у
+    // места рендера), не бейджем поверх него.
+    rollCount: { color: colors.textOnDarkSecondary, fontWeight: 'bold', fontSize: 11, marginTop: 2 },
+    // Бонус хода — зелёный (colors.success), тот же язык, что уже красит
+    // кнопку "Бонус +N" в баннере хода (GameBoardScreen.js) — отличает его
+    // от нейтрального накат-счётчика рядом.
+    roadBonus: { color: colors.success, fontWeight: 'bold', fontSize: 11, marginTop: 1 },
+
+    // --- Вертикальная раскладка (compact) ---
+    colInner: { alignItems: 'center', width: '100%' },
+    avatarBoxCompact: { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT, alignItems: 'center', justifyContent: 'flex-end' },
+    nameCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 11, marginTop: 3, maxWidth: '100%' },
+    damageRowCompact: { flexDirection: 'row', marginTop: 3 },
+    damageIconCompact: { width: DAMAGE_ICON_SIZE_COMPACT, height: DAMAGE_ICON_SIZE_COMPACT },
+    damageIconCompactGap: { marginLeft: 4 },
+    diceBoxCompact: { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+    diceValueCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 12 },
+    rollCountCompact: { color: colors.textOnDarkSecondary, fontWeight: 'bold', fontSize: 10, marginTop: 2 },
+    roadBonusCompact: { color: colors.success, fontWeight: 'bold', fontSize: 10, marginTop: 1 },
 });

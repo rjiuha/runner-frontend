@@ -1,8 +1,21 @@
 // src/components/game/RunnerToken.js
 import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, View } from 'react-native';
-import { RUNNER_DISPLAY } from '../../constants/GameConstants';
+import { RUNNER_DISPLAY, RUNNER_TYPES } from '../../constants/GameConstants';
 import { colorKeyForHex, getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
+import { SCOUT_SPRITE_SHEETS, getScoutSpriteRef } from '../../constants/scoutSpriteSheets';
+// SpriteSheetAnimation — RN Image+Animated рендерер спрайт-листа скаута.
+// 2026-09-21: пробовали заменить на Skia (Canvas+Reanimated, см. историю в
+// CLAUDE.md) в надежде устранить decode-паузы на смену source — на практике
+// принесла НОВЫЕ, более тяжёлые баги (разрыв между shared values при смене
+// клипа — видимые фрагменты чужого кадра; двойной телепорт позиции вперёд-
+// назад), которые не удалось надёжно починить за несколько живых заходов.
+// Skia-код удалён целиком (@shopify/react-native-skia выпилена из
+// зависимостей) — вернулись на этот компонент, уже подтверждённо чёткий
+// (исходная жалоба на блюр/мигание gif была решена ИМ, ДО Skia) и с тем же
+// классом бага "телепорт на старте" уже почищенным давно обкатанным в этом
+// проекте механизмом (useEffect→useLayoutEffect), без новых Reanimated-гонок.
+import SpriteSheetAnimation from '../ui/SpriteSheetAnimation';
 import { colors } from '../../theme';
 
 // Вращающийся пунктирный ореол вокруг активного бегуна (см. selected проп) —
@@ -107,7 +120,29 @@ export default function RunnerToken({
 }) {
     const display = RUNNER_DISPLAY[type];
     const colorKey = colorKeyForHex(color);
-    const source = display
+    // Скаут (не avatar) — спрайт-лист вместо gif, 2026-09-20 (см. докстринг
+    // SpriteSheetAnimation.js). Avatar (карточка в панели, RunnerCard) ОСТАЁТСЯ
+    // на gif — отдельный контекст/размер, не был частью изначальной жалобы
+    // на "дёргание"/блики на доске, не включён в scope этой миграции. Остальные
+    // типы (танк/атлет/жнец/мяч) тоже остаются на gif — RUNNER_ANIMATION_SETS
+    // для них не трогали, спрайт-листы для скаута никак на них не влияют.
+    //
+    // **ТОЛЬКО Android** (2026-09-20, тем же днём, прямой запрос пользователя):
+    // на вебе спрайт-лист начал ощутимо тормозить игру — там уже отлично
+    // работает старый gif-путь ("всё работает отлично с ними"), проблема
+    // (Android decode-паузы/блики на смене gif source) веба не касалась
+    // вообще, так что мигрировать его не было причины — сама миграция
+    // затевалась ИСКЛЮЧИТЕЛЬНО ради Android. iOS намеренно не выделен
+    // отдельно (тут нет живого способа это проверить) — приравнен к вебу,
+    // безопасный (уже проверенный) gif-путь остаётся дефолтом для всего,
+    // кроме Android.
+    const isScoutSprite = Platform.OS === 'android' && type === RUNNER_TYPES.SPRINTER && !avatar;
+    const spriteRef = isScoutSprite ? getScoutSpriteRef(status, anim) : null;
+    const spriteBucket = spriteRef
+        ? (SCOUT_SPRITE_SHEETS[spriteRef.statusFolder][colorKey] ?? SCOUT_SPRITE_SHEETS[spriteRef.statusFolder].blue)
+        : null;
+
+    const source = !isScoutSprite && display
         ? (avatar ? getRunnerAvatarImage(type, status, colorKey) : getRunnerAnimationImage(type, status, anim, colorKey))
         : null;
 
@@ -128,7 +163,7 @@ export default function RunnerToken({
     const [fadingSource, setFadingSource] = useState(null);
     const fadeOpacity = useRef(new Animated.Value(1)).current;
     useEffect(() => {
-        if (Platform.OS === 'web') return;
+        if (Platform.OS === 'web' || isScoutSprite) return;
         if (prevSourceRef.current === source) return;
         // Возврат в idle (anim===null) — БЕЗ кроссфейда (2026-09-13, живая
         // жалоба "при переходе от move к idle наслоение анимаций" — на
@@ -292,20 +327,33 @@ export default function RunnerToken({
                     обоих <Image>, чтобы не накладывался ДВОЙНОЙ фейд поверх
                     собственного (управляемого, контролируемой длительности)
                     ниже. */}
-                {fadingSource && (
-                    <Image
-                        source={fadingSource}
-                        style={[styles.imgLayer, imgBoxStyle]}
-                        resizeMode="contain"
-                        fadeDuration={0}
+                {isScoutSprite ? (
+                    <SpriteSheetAnimation
+                        source={spriteBucket.source}
+                        sheetWidth={spriteBucket.sheetWidth}
+                        sheetHeight={spriteBucket.sheetHeight}
+                        clips={spriteBucket.clips}
+                        activeClip={spriteRef.clipName}
+                        boxSize={imgBoxStyle.width}
                     />
+                ) : (
+                    <>
+                        {fadingSource && (
+                            <Image
+                                source={fadingSource}
+                                style={[styles.imgLayer, imgBoxStyle]}
+                                resizeMode="contain"
+                                fadeDuration={0}
+                            />
+                        )}
+                        <Animated.Image
+                            source={source}
+                            style={[styles.imgLayer, imgBoxStyle, fadingSource && { opacity: fadeOpacity }]}
+                            resizeMode="contain"
+                            fadeDuration={0}
+                        />
+                    </>
                 )}
-                <Animated.Image
-                    source={source}
-                    style={[styles.imgLayer, imgBoxStyle, fadingSource && { opacity: fadeOpacity }]}
-                    resizeMode="contain"
-                    fadeDuration={0}
-                />
             </View>
         </View>
     );

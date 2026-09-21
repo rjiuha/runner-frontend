@@ -6,6 +6,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "web"],
       "port": 8081
+    },
+    {
+      "name": "runner-web-alt",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["expo", "start", "--web", "--port", "8175"],
+      "port": 8175
     }
   ]
 }

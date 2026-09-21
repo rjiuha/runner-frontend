@@ -5,10 +5,18 @@ import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
 import AbilityZones from './AbilityZones';
 import RunnerCard from './RunnerCard';
-import RunnerToken from './RunnerToken';
+import ReaperCard from './ReaperCard';
 import PulseText from '../ui/PulseText';
 import PulseHighlight from '../ui/PulseHighlight';
-import { DICE_FACE_IMAGES, PLAYER_ABILITIES, PLAYER_STEP, RUNNER_ORDER, RUNNER_TYPES } from '../../constants/GameConstants';
+import PersonPanel from '../ui/PersonPanel';
+import FramePanel from '../ui/FramePanel';
+import {
+    DICE_FACE_IMAGES,
+    PLAYER_ABILITIES,
+    PLAYER_STEP,
+    RUNNER_ORDER,
+    RUNNER_TYPES,
+} from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
 // Ghost-превью кубика при драге — только веб (см. dragGhost ниже).
@@ -52,6 +60,15 @@ export default function PlayerInfoPanel({
     switcherAtBottom = false,
     headerContent = null,
     compactColumns = false,
+    // Бонус хода (2026-09-20, по прямому решению пользователя — "пока не
+    // трогаем бэк, просто отобрази, когда данные приходят") — game.trackGain
+    // с GameBoardScreen. Бэк ХРАНИТ per-runner флаг наличия бонуса
+    // (Runner::$trackGain), но НЕ отдаёт его в Runner::toArray() — фронт
+    // физически видит бонус только В ОДИН момент: пока у ЭТОГО игрока
+    // player.step===ROAD_BONUS (см. runnerCards ниже) — до и после этого
+    // шага для любого бегуна тут всегда null (пусто), не потому что бонуса
+    // нет, а потому что бэк об этом не сообщает.
+    roadBonusValue = null,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -147,9 +164,9 @@ export default function PlayerInfoPanel({
         if (Platform.OS === 'web') setDragGhostValue(null);
     }, []);
 
-    // Пока кубик НЕ тащат — подсвечиваем ИСТОЧНИК (панель+заголовок кубиков):
-    // на SELECT — "Кубики перемещения/Кубики", на ABILITY — то же самое (та
-    // же панель), плюс кнопка "Пропустить усиление" (см. GameBoardScreen,
+    // Пока кубик НЕ тащат — подсвечиваем ИСТОЧНИК (фон вокруг трея кубиков
+    // внутри общей плитки, см. diceAbilitiesTile) — на SELECT и на ABILITY
+    // (плюс кнопка "Пропустить усиление", см. GameBoardScreen,
     // highlightAbilityIdle туда и сюда — одно и то же условие). Как только
     // кубик взяли в драг — подсветка ПЕРЕКЛЮЧАЕТСЯ на ЦЕЛЬ (бегуны/усиления,
     // см. runnersHighlight/abilityPulseKeys ниже) — источник гаснет, там
@@ -279,27 +296,17 @@ export default function PlayerInfoPanel({
         </View>
     );
 
+    // Плитка Жнеца — по аналогии с плиткой бегуна (RunnerCard, через новый
+    // ReaperCard.js, см. её докстринг), по прямому запросу пользователя
+    // 2026-09-20: "avatar анимация жнеца во фрейме, рядом просто текст, на
+    // поле он или в резерве". Раньше тут была голая строка (маленький
+    // RunnerToken без рамки + Text) — заменена целиком.
     const reaperNode = reaper && (
-        <View style={[styles.reaperRow, compactColumns && styles.reaperRowCompact]}>
-            <RunnerToken
-                type={RUNNER_TYPES.REAPER}
-                color={activePlayer.color}
-                size={compactColumns ? 22 : 30}
-                selected={String(reaper.id) === String(activePlayer.activeRunnerId)}
-                showRing={false}
-            />
-            {/* Зелёный НАВСЕГДА, пока Жнец стоит на поле — по прямому запросу
-                пользователя, БЕЗ пульсации (в отличие от turnActive у обычных
-                бегунов, тут не привязано к тому, чей сейчас ход, см.
-                CLAUDE.md, 2026-09-14). */}
-            <Text
-                style={[styles.reaperText, reaper.segment != null && styles.reaperTextOnField]}
-                numberOfLines={1}
-                noGlobalTint
-            >
-                {reaper.segment != null ? 'Жнец — на поле' : 'Жнец — в резерве'}
-            </Text>
-        </View>
+        <ReaperCard
+            reaper={reaper}
+            color={activePlayer.color}
+            active={String(reaper.id) === String(activePlayer.activeRunnerId)}
+        />
     );
 
     const runnerCards = trackedRunners.map((runner) => {
@@ -312,6 +319,14 @@ export default function PlayerInfoPanel({
         const pendingValue = isPending ? activePlayer.dice[pendingSelect.diceIndex] : null;
         const moveDiceValue = isPending && pendingSelect.type === 'DICE' ? pendingValue : runner.dice ?? null;
         const rollDiceValue = isPending && pendingSelect.type === 'ROLL' ? pendingValue : runner.rollDice ?? null;
+        // Бонус хода — см. roadBonusValue выше: видим его ТОЛЬКО пока у
+        // ЭТОГО игрока (activePlayer, не обязательно "моего" — панель
+        // переключаемая) реально идёт шаг ROAD_BONUS И именно ЭТОТ бегун
+        // только что закончил ход (activeRunnerId). Остальное время —
+        // null (пусто), бэк больше ничего не сообщает.
+        const hasRoadBonus = activePlayer.step === PLAYER_STEP.ROAD_BONUS
+            && String(runner.id) === String(activePlayer.activeRunnerId)
+            && roadBonusValue != null;
         // onPress={onRunnerCardPress} — СТАБИЛЬНАЯ ссылка, НЕ инлайн-замыкание
         // (было `() => onRunnerCardPress(runner)`) — 2026-09-19, живая жалоба
         // "тормозит при перетаскивании кубика по плиткам", см. докстринг
@@ -331,6 +346,7 @@ export default function PlayerInfoPanel({
                 onDoubleTap={onRunnerCardDoubleTap}
                 moveDiceValue={moveDiceValue}
                 rollDiceValue={rollDiceValue}
+                roadBonus={hasRoadBonus ? roadBonusValue : null}
                 hoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
                 onMoveDiceMeasured={handleMeasured}
                 compact={compactColumns}
@@ -339,23 +355,140 @@ export default function PlayerInfoPanel({
         );
     });
 
+    // Текст-заголовок ("УСИЛЕНИЯ"/"Усиления — перетащи кубик на зону") убран
+    // по прямому запросу пользователя (2026-09-20), вместе с "КУБИКИ"/"Кубики
+    // перемещения" (см. diceAbilitiesTile ниже) — обе секции объединены в
+    // одну декоративную плитку (PersonPanel, тот же приём, что уже красит
+    // корпус RunnerCard), сама плитка даёт визуальную группировку без подписей.
     const abilitiesNode = (
-        <>
-            <Text style={styles.sectionTitle} noGlobalTint>
-                {compactColumns ? 'Усиления' : 'Усиления — перетащи кубик на зону'}
-            </Text>
-            <AbilityZones
-                assignments={abilityAssignments}
-                hoverKey={hover.key}
-                hoverValid={hover.valid}
-                onMeasured={handleMeasured}
-                onPressZone={onPressAbilityZone}
-                remeasureTick={remeasureTick}
-                compact={compactColumns}
-                color={activePlayer.color}
-                pulseKeys={abilityPulseKeys}
-            />
-        </>
+        <AbilityZones
+            assignments={abilityAssignments}
+            hoverKey={hover.key}
+            hoverValid={hover.valid}
+            onMeasured={handleMeasured}
+            onPressZone={onPressAbilityZone}
+            remeasureTick={remeasureTick}
+            compact={compactColumns}
+            color={activePlayer.color}
+            pulseKeys={abilityPulseKeys}
+        />
+    );
+
+    // "Кубики" и "Усиления" — теперь ОДНА плитка (декоративная рамка
+    // PersonPanel), по прямому запросу пользователя "аналогично плитке
+    // персонажа". Размер — ОБЯЗАТЕЛЬНО измеренный СНАРУЖИ через
+    // measureInWindow (см. докстринг PersonPanel.js/RunnerCard.js за полным
+    // разбором, почему PersonPanel сам себя мерить не может).
+    //
+    // **RAF+setTimeout(150), не только RAF** (2026-09-20, живая жалоба
+    // "усиления на Android выпирают за границу общей рамки") — настоящая
+    // причина: одного requestAnimationFrame НЕ хватало, чтобы поймать
+    // ФИНАЛЬНУЮ (устаканившуюся) ширину этой плитки на Android — она
+    // растягивается по родителю (rightColumn/панель), а не по своему
+    // контенту, и на Android разрешение процентной/flex-ширины родителя
+    // иногда занимает лишний проход layout'а. `PersonPanel`, нарисованный по
+    // СТАРОЙ (более узкой) ширине с первого RAF, оставался мельче, чем
+    // реально заняла сетка усилений (та отрисовывается обычным flow, не по
+    // этому state, поэтому её ширина не зависит от того, успел ли измериться
+    // dATileSize) — визуально казалось, что плитки усилений "вылезают" за
+    // край декоративной рамки. Тот же класс проблемы уже задокументирован в
+    // AbilityZone.js#measure — там та же пара RAF+setTimeout(150) уже
+    // применяется по аналогичной причине (у неё — рост бокса от иконки).
+    // `overflow:'hidden'` на styles.dATile — доп. страховка НА СЛУЧАЙ, если
+    // измерение всё-таки на мгновение отстанет: контент физически не сможет
+    // нарисоваться за пределами плитки, даже пока PersonPanel её ещё не
+    // "догнал".
+    const dATileRef = useRef(null);
+    const [dATileSize, setDATileSize] = useState(null);
+    const measureDATile = useCallback(() => {
+        const run = () => {
+            dATileRef.current?.measureInWindow((x, y, width, height) => {
+                setDATileSize({ width, height });
+            });
+        };
+        requestAnimationFrame(run);
+        setTimeout(run, 150);
+    }, []);
+
+    // Кубики — теперь ТОЖЕ в декоративной рамке (FramePanel, тот же приём,
+    // что и у КАЖДОЙ зоны усиления, см. AbilityZone.js) — по прямому запросу
+    // пользователя "сделай, чтобы кубики тоже были в рамке, как усиления".
+    // ОДНА рамка на ВЕСЬ трей (все 4 кубика вместе), не по рамке на кубик —
+    // пользователь явно уточнил "все кубики в одной рамке". Тот же
+    // RAF+setTimeout(150) паттерн, что и у dATile выше — по той же причине
+    // (эта обёртка тоже растягивается по родителю, не по контенту).
+    const diceTrayRef = useRef(null);
+    const [diceTraySize, setDiceTraySize] = useState(null);
+    const measureDiceTray = useCallback(() => {
+        const run = () => {
+            diceTrayRef.current?.measureInWindow((x, y, width, height) => {
+                setDiceTraySize({ width, height });
+            });
+        };
+        requestAnimationFrame(run);
+        setTimeout(run, 150);
+    }, []);
+
+    const diceAbilitiesTile = (
+        <View
+            ref={dATileRef}
+            onLayout={measureDATile}
+            style={[styles.dATile, compactColumns && styles.dATileCompact]}
+        >
+            <PersonPanel size={dATileSize} />
+            <View ref={diceTrayRef} onLayout={measureDiceTray} style={styles.diceTrayWrap}>
+                {/* targetCornerSize=8 (было 12, дефолт FramePanel) — 2026-09-20,
+                    живая жалоба "рамка кубиков/усилений касается рамки общей
+                    плитки на Android, на вебе норм". НЕ трогаем padding/размер
+                    ОБЩЕЙ плитки (dATile) — тот прошлый вариант фикса пользователь
+                    отклонил явно ("надо было менять размер фреймов, а не общей
+                    плитки", "зачем увеличил высоту общей плитки"): dATile — auto-
+                    height от контента, ЛЮБОЙ доп. зазор (padding на dATile ИЛИ
+                    margin вокруг diceTrayWrap — геометрически одно и то же)
+                    неизбежно раздувает её итоговую высоту, это не обходной путь.
+                    Вместо этого — тоньше сама декоративная дуга ВНУТРЕННЕГО
+                    фрейма (FramePanel.js#targetCornerSize масштабирует ВЕСЬ
+                    набор угол+грани одним коэффициентом, см. её докстринг) —
+                    её видимая "краска" короче, меньше заходит в тот же
+                    небольшой зазор, где раньше обе рамки накладывались друг на
+                    друга. Сам бокс diceTrayWrap/зоны — ТОТ ЖЕ размер, что и был,
+                    высота/ширина плитки не меняется ни на пиксель.
+                    Фон — ДЕФОЛТ FramePanel (PERSON_PANEL_BACKGROUND/_CORNER,
+                    тайл 39) — тот же самый фон, что рисует PersonPanel у
+                    самой карточки-плитки (dATile), явных backgroundSource/
+                    backgroundCornerSource/backgroundTileSize больше нет
+                    (2026-09-20, по прямому запросу пользователя "сделай задний
+                    фон для фрейма с кубиками как у плиток" — было переопределено
+                    на чёрный фон аватара чуть раньше в тот же день, решение
+                    пересмотрено). */}
+                <FramePanel
+                    size={diceTraySize}
+                    targetCornerSize={8}
+                />
+                {/* borderRadius=4 — та же величина, что у FramePanel.js#styles.wrap
+                    (тот же фикс "рамка/заливка острым углом поверх скруглённой
+                    дуги", что уже применён в AbilityZone.js/RunnerCard.js). */}
+                <PulseHighlight active={diceHighlight} borderRadius={4} showBackground showBorder={false} />
+                <DiceTray
+                    dice={trayDice}
+                    draggable={dragMode != null}
+                    onDragStart={handleDieDragStart}
+                    onDragMove={handleDragMove}
+                    onDrop={handleDrop}
+                    onDragEnd={handleDieDragEnd}
+                    // Размер кубика в compactColumns — 28→40 (2026-09-20, по
+                    // прямому запросу пользователя "сделай кубики побольше",
+                    // сразу после того, как они переехали в 2×2-сетку внутри
+                    // общей рамки, см. DiceTray.js). Раньше 28 было нужно,
+                    // чтобы влезли 4 кубика В ОДИН РЯД — 2×2 занимает вдвое
+                    // меньше по ширине на ряд, места с запасом хватает на
+                    // заметно более крупный размер (проверено живьём на
+                    // Android — не выпирает).
+                    {...(compactColumns ? { size: 40 } : {})}
+                />
+            </View>
+            <View style={styles.abilitiesWrap}>{abilitiesNode}</View>
+        </View>
     );
 
     return (
@@ -370,43 +503,30 @@ export default function PlayerInfoPanel({
                     имя уже видно в кнопках переключателя, дублировать незачем. */}
                 {headerContent}
 
-                {/* Альбомная раскладка — кубики закреплены НАД скроллом (не внутри
-                    ScrollView), полной ширины панели, как и раньше. В
-                    compactColumns кубики переехали в правую колонку, НАД
-                    усилениями (см. ниже) — по прямому запросу пользователя:
-                    левая колонка (бегуны) должна начинаться сразу под
-                    шапкой, не терять место под общий на всю ширину трей. */}
-                {!compactColumns && (
-                    <>
-                        <PulseText active={diceHighlight} style={styles.sectionTitle}>Кубики перемещения</PulseText>
-                        <View style={styles.diceTrayWrap}>
-                            <PulseHighlight active={diceHighlight} borderRadius={radius.md} showBackground showBorder={false} />
-                            <DiceTray
-                                dice={trayDice}
-                                draggable={dragMode != null}
-                                onDragStart={handleDieDragStart}
-                                onDragMove={handleDragMove}
-                                onDrop={handleDrop}
-                                onDragEnd={handleDieDragEnd}
-                            />
-                        </View>
-                    </>
-                )}
+                {/* Альбомная раскладка — плитка кубики+усиления закреплена НАД
+                    скроллом (не внутри ScrollView), полной ширины панели, как
+                    и раньше стоял отдельный трей кубиков. В compactColumns та
+                    же плитка переехала в правую колонку целиком (см. ниже) —
+                    по прямому запросу пользователя: левая колонка (бегуны)
+                    должна начинаться сразу под шапкой, не терять место под
+                    общий на всю ширину трей. */}
+                {!compactColumns && diceAbilitiesTile}
 
                 {/* compactColumns (портретная раскладка) — бегуны+жнец слева (шире,
                     основное пространство отдано им по прямому запросу
-                    пользователя), кубики+усиления справа (уже, кубики сверху —
-                    "над зоной усилений, но не над зоной плиток бегунов").
-                    Карточки ужаты (compact), чтобы влезло как можно больше, но
-                    гарантии на ЛЮБОМ экране нет — левая колонка поэтому со
-                    своим ScrollView (по прямому запросу пользователя после того,
-                    как один из бегунов уехал за нижний край экрана). Зона дропа
-                    кубика хода — теперь ВСЯ карточка целиком (см. RunnerCard,
-                    сама меряет и репортит себя), а не маленький вложенный
-                    элемент — раньше именно его маленький размер плюс устаревающее
-                    при скролле measureInWindow ловили промах дропа "куда ни
-                    кинь". remeasureTick (см. bumpRemeasure) перемеряет карточки
-                    после каждого скролла/флика этой колонки. */}
+                    пользователя), плитка кубики+усиления справа. Жнец — сверху,
+                    3 карточки бегунов — В РЯД, вертикально ориентированные
+                    (RunnerCard#compact, см. её докстринг) — 2026-09-20, по
+                    прямому запросу пользователя: высота ряда теперь равна
+                    высоте ОДНОЙ плитки, а не трёх стопкой, чтобы все 4 плитки
+                    (Жнец+3) помещались без прокрутки. ScrollView оставлен
+                    структурной подстраховкой (по прямому запросу пользователя
+                    после того, как раньше один из бегунов уехал за нижний край
+                    экрана) — в обычных условиях ряд короче колонки и скроллить
+                    нечего. Зона дропа кубика хода — вся карточка целиком (см.
+                    RunnerCard, сама меряет и репортит себя). remeasureTick
+                    (см. bumpRemeasure) перемеряет карточки после каждого
+                    скролла/флика этой колонки. */}
                 {compactColumns ? (
                     <View style={styles.columns}>
                         <ScrollView
@@ -417,15 +537,15 @@ export default function PlayerInfoPanel({
                             onMomentumScrollEnd={bumpRemeasure}
                         >
                             {reaperNode}
-                            {runnerCards}
+                            <View style={styles.runnerRow}>{runnerCards}</View>
                         </ScrollView>
                         {/* ScrollView, не голый View (было раньше) — при сжатом panelH
                             (см. useBoardLayout/PANEL_MAX_H, 2026-08-30) контент правой
-                            колонки (кубики+усиления) может не поместиться по высоте;
-                            без ScrollView лишнее просто визуально вылезало за пределы
-                            колонки и перекрывало переключатель игроков под ней (жалоба
-                            пользователя со скриншотом). Тот же remeasure-паттерн, что
-                            и у leftColumn. */}
+                            колонки (плитка кубики+усиления) может не поместиться по
+                            высоте; без ScrollView лишнее просто визуально вылезало за
+                            пределы колонки и перекрывало переключатель игроков под ней
+                            (жалоба пользователя со скриншотом). Тот же remeasure-
+                            паттерн, что и у leftColumn. */}
                         <ScrollView
                             style={styles.rightColumn}
                             contentContainerStyle={styles.rightColumnContent}
@@ -433,30 +553,14 @@ export default function PlayerInfoPanel({
                             onScrollEndDrag={bumpRemeasure}
                             onMomentumScrollEnd={bumpRemeasure}
                         >
-                            <PulseText active={diceHighlight} style={styles.sectionTitle}>Кубики</PulseText>
-                            <View style={styles.diceTrayWrap}>
-                                <PulseHighlight active={diceHighlight} borderRadius={radius.md} showBackground showBorder={false} />
-                                <DiceTray
-                                    dice={trayDice}
-                                    draggable={dragMode != null}
-                                    onDragStart={handleDieDragStart}
-                                    onDragMove={handleDragMove}
-                                    onDrop={handleDrop}
-                                    onDragEnd={handleDieDragEnd}
-                                    // Правая колонка теперь заметно уже — мельче кубики
-                                    // и разрешаем им переноситься в 2 ряда (см. DiceTray).
-                                    size={28}
-                                />
-                            </View>
-                            {abilitiesNode}
+                            {diceAbilitiesTile}
                         </ScrollView>
                     </View>
                 ) : (
                     // Живой прогон (веб) вскрыл тот же баг устаревающего measureInWindow
-                    // тут — зоны усилений и карточки бегунов делят один ScrollView,
-                    // и после прокрутки хит-тестинг дропа промахивался в СОСЕДНЮЮ зону
-                    // (подсвечивалось усиление, которое физически ниже перетащенного).
-                    // Тот же remeasureTick, что уже чинит это для compactColumns.
+                    // тут — карточки бегунов лежат в СВОЁМ ScrollView (плитка кубики+
+                    // усиления теперь закреплена отдельно, см. выше), но остаток
+                    // (Бегуны) всё ещё может прокручиваться.
                     <ScrollView
                         style={styles.infoColumn}
                         contentContainerStyle={styles.scrollContent}
@@ -464,7 +568,6 @@ export default function PlayerInfoPanel({
                         onScrollEndDrag={bumpRemeasure}
                         onMomentumScrollEnd={bumpRemeasure}
                     >
-                        {abilitiesNode}
                         {reaperNode}
                         {/* Текст "— перетащи кубик хода на бегуна" убран (по прямому
                             запросу пользователя) — то же самое теперь показывает
@@ -553,13 +656,64 @@ const styles = StyleSheet.create({
         marginTop: spacing.md,
         marginBottom: spacing.xs,
     },
-    // Обёртка вокруг DiceTray — только чтобы дать PulseHighlight
-    // (position:'absolute') родителя (2026-09-14, см. diceHighlight выше).
-    diceTrayWrap: { borderRadius: radius.md },
-    reaperRow: { flexDirection: 'row', alignItems: 'center', marginTop: spacing.sm, marginBottom: spacing.sm },
-    reaperRowCompact: { marginTop: 2, marginBottom: 4 },
-    reaperText: { color: colors.textOnDark, fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
-    reaperTextOnField: { color: colors.success },
+    // Обёртка вокруг DiceTray — теперь САМА декоративная рамка (FramePanel,
+    // см. diceAbilitiesTile), не просто носитель для PulseHighlight. padding
+    // — тот же приём, что у AbilityZone.js#styles.zone (иначе кубики упирались
+    // бы в декоративную дугу рамки).
+    //
+    // БЕЗ overflow:'hidden' (2026-09-20, живая жалоба пользователя — "кубики
+    // при передвижении на android заходят ЗА фрейм усиления") — раньше тут
+    // стоял тот же приём, что у styles.dATile ("страховка от вылезания
+    // контента за раму"), но это ТОЧКА, ИЗ КОТОРОЙ кубик перетаскивают —
+    // overflow:'hidden' на источнике драга в принципе неверен: пока кубик
+    // тащат, он ДОЛЖЕН визуально покидать эту рамку, чтобы долететь до
+    // усиления/карточки бегуна где-то ещё в панели. На Android transform
+    // (Animated, см. DiceDie.js) поверх overflow:'hidden' — известная
+    // кросс-платформенная особенность RN: трансформированный потомок иногда
+    // всё равно "прорывается" визуально сквозь родительский клип, но при
+    // этом ТЕРЯЕТ приоритет z-порядка (elevation/zIndex считаются
+    // относительно исходного, уже "обрезающего" родителя) — отсюда кубик
+    // оказывался виден, но НИЖЕ декоративной рамки усилений, а не поверх
+    // неё, как задумано. Сама декоративная дуга (FramePanel) не пострадает
+    // — она сидит НЕ внутри diceTrayWrap как контент, который надо
+    // обрезать, а сама и есть первый слой этой View, ей клип не нужен.
+    diceTrayWrap: { borderRadius: 4, padding: spacing.xs },
+    // Общая плитка "Кубики+Усиления" (2026-09-20, PersonPanel-рамка, см.
+    // diceAbilitiesTile) — padding, чтобы контент не упирался в декоративную
+    // дугу рамки (тот же приём, что и у RunnerCard.js#styles.card).
+    // overflow:'hidden' — страховка на случай, если PersonPanel хоть на
+    // мгновение отстанет от реальной ширины плитки (см. комментарий у
+    // measureDATile) — без неё контент рисовался бы поверх/за пределами уже
+    // готовой декоративной рамки, а не просто ждал бы её. В compactColumns
+    // плитка — ЕДИНСТВЕННЫЙ контент своей колонки (рядом больше ничего не
+    // рендерится), поэтому marginBottom не нужен; в альбомной раскладке
+    // плитка стоит НАД отдельным скроллящимся списком бегунов — небольшой
+    // отступ отделяет её от него.
+    dATile: { padding: spacing.sm, marginBottom: spacing.sm, overflow: 'hidden' },
+    // paddingHorizontal/paddingVertical РАЗДЕЛЬНО (не общий `padding`,
+    // 2026-09-20) — dATile НЕ имеет своей фиксированной ширины (растянута
+    // родителем — правой колонкой), поэтому paddingHorizontal просто
+    // перераспределяет УЖЕ имеющуюся ширину контенту, ничего не добавляя к
+    // итоговому размеру плитки — безопасно увеличен посильнее (md), чинит
+    // касание рамок усилений/кубиков с рамкой плитки по бокам БЕЗ побочных
+    // эффектов. paddingVertical — другое дело: высота dATile auto-считается
+    // ОТ контента, любой лишний вертикальный зазор напрямую её увеличивает
+    // (прошлая попытка — единый `padding: spacing.md` — так и сделала,
+    // пользователь справедливо отклонил: "зачем увеличил высоту общей
+    // плитки", "надо было менять размер фреймов, а не общей плитки").
+    // Прирост тут — ТОЛЬКО +spacing.xs (4→8, было бы +11 при md) — и
+    // СРАЗУ компенсирован уменьшением зазора кубики/усиления (см.
+    // abilitiesWrap ниже, тоже −4), по прямому предложению пользователя
+    // "сделать расстояние между фреймами усилений и кубиков меньше, может
+    // вернуть правки без увеличения общей плитки" — чистый прирост высоты
+    // ~0-4px, а не +22px, как было в откаченной версии.
+    dATileCompact: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: 0, overflow: 'hidden' },
+    // Зазор между треем кубиков и сеткой усилений внутри общей плитки —
+    // раньше его давал marginTop у заголовка "УСИЛЕНИЯ" (убран вместе с
+    // текстом, см. abilitiesNode), без него сетка липла вплотную к кубикам.
+    // spacing.xs (было spacing.sm) — уменьшен на 2026-09-20, компенсирует
+    // прирост paddingVertical у dATileCompact выше (см. её комментарий).
+    abilitiesWrap: { marginTop: spacing.xs },
     // compactColumns (портретная раскладка) — бегуны+жнец слева (основное
     // пространство), кубики+усиления справа, заметно уже — по прямому
     // запросу пользователя "сделать зону усилений поуже, дать место плиткам
@@ -599,6 +753,10 @@ const styles = StyleSheet.create({
     // "уменьшить ширину" обеих зон) — видимый отступ с обеих сторон, сама
     // ширина колонок (2:1) не меняется.
     leftColumnContent: { paddingBottom: spacing.sm, paddingHorizontal: spacing.xs },
+    // Ряд из 3 вертикальных плиток бегунов, ПОД Жнецом (2026-09-20, см.
+    // RunnerCard.js#compact) — gap, тот же приём, что уже используют columns/
+    // DiceTray/turnBtnRow в этом файле/проекте.
+    runnerRow: { flexDirection: 'row', gap: spacing.xs },
     rightColumn: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingHorizontal: spacing.xs },
     rightColumnContent: { paddingBottom: spacing.sm },
 });

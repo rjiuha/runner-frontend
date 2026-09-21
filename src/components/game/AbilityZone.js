@@ -1,10 +1,19 @@
 // src/components/game/AbilityZone.js
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import PulseHighlight from '../ui/PulseHighlight';
 import FramePanel from '../ui/FramePanel';
-import { PLAYER_ABILITIES, PLAYER_ABILITY_ICONS } from '../../constants/GameConstants';
+import {
+    FRAME_PANEL_BACKGROUND,
+    FRAME_PANEL_BACKGROUND_CORNER,
+    PLAYER_ABILITIES,
+    PLAYER_ABILITY_ICONS,
+} from '../../constants/GameConstants';
 import { colors, spacing } from '../../theme';
+
+// Platform.OS не меняется в течение жизни приложения — модульная константа
+// (тот же приём, что isAndroid в RunnerCard.js/DiceTray.js).
+const isAndroid = Platform.OS === 'android';
 
 /**
  * Зона-цель для перетаскивания кубика. Сама зона не решает, подходит ли ей
@@ -108,7 +117,26 @@ function AbilityZone({
             activeOpacity={filled ? 0.7 : 1}
             style={[styles.zone, compact && styles.zoneCompact]}
         >
-            <FramePanel size={zoneSize} />
+            {/* targetCornerSize=8 (было 12, дефолт) — 2026-09-20, живая жалоба
+                "рамка усилений/кубиков касается рамки общей плитки на
+                Android" (см. PlayerInfoPanel.js#diceTrayWrap за тем же
+                фиксом и полным разбором, почему тут правится толщина
+                декоративной дуги, а не padding общей плитки — та не должна
+                расти). Сам бокс зоны (zoneSize) не меняется.
+                backgroundSource/backgroundCornerSource/backgroundTileSize —
+                ЧЁРНЫЙ фон АВАТАРА бегуна (FRAME_PANEL_BACKGROUND, тот же
+                override и то же backgroundTileSize=60, что и в RunnerCard.js
+                для avatarBox), НЕ дефолт FramePanel (PERSON_PANEL_BACKGROUND
+                — тёмно-серо-синий фон КОРПУСА карточки, был тут раньше) —
+                уточнение пользователя, 2026-09-20: "фон как у аватарки
+                бегунов, он у них чёрный", а не как у корпуса карточки. */}
+            <FramePanel
+                size={zoneSize}
+                targetCornerSize={8}
+                backgroundSource={FRAME_PANEL_BACKGROUND}
+                backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
+                backgroundTileSize={60}
+            />
             {/* borderRadius — та же величина, что у FramePanel.js#styles.wrap
                 (радиус, по которому та обрезает свою заливку под скруглённой
                 декоративной дугой) — без него заливка рисовалась острым
@@ -136,8 +164,16 @@ function AbilityZone({
                 увеличена (см. styles.icon/iconCompact), занимает
                 освободившееся место. hint (диапазон кубика) оставлен — это
                 функциональная информация, не название. */}
-            <Image source={PLAYER_ABILITY_ICONS[abilityKey]} style={[styles.icon, compact && styles.iconCompact]} resizeMode="contain" />
-            <Text style={styles.hint} noGlobalTint>{compact ? ability.shortHint : ability.hint}</Text>
+            <Image source={PLAYER_ABILITY_ICONS[abilityKey]} style={[styles.icon, compact && styles.iconCompact, isAndroid && styles.iconNoHint]} resizeMode="contain" />
+            {/* Подсказка (диапазон кубика) убрана на Android целиком, включая
+                цифры (2026-09-20, по прямому запросу пользователя) — иконка
+                уже даёт основную информацию, а текстовые элементы поверх
+                декоративных FramePanel/PersonPanel на Android и так были
+                источником нескольких живых жалоб в этом файле. Веб/iOS не
+                тронуты — там подсказка остаётся. */}
+            {!isAndroid && (
+                <Text style={styles.hint} noGlobalTint>{compact ? ability.shortHint : ability.hint}</Text>
+            )}
             {/* Число/галочка при занятой зоне убраны целиком (были — только
                 для Лечения, min===max) по прямому запросу пользователя,
                 2026-09-01: подсветка (заливка выше) уже сама по себе
@@ -169,5 +205,8 @@ const styles = StyleSheet.create({
     // усиления (см. комментарий у места рендера).
     icon: { width: 44, height: 44, marginBottom: 2 },
     iconCompact: { width: 34, height: 34, marginBottom: 1 },
+    // Android — под иконкой больше нет текста (см. рендер выше), лишний
+    // нижний отступ иконки не нужен.
+    iconNoHint: { marginBottom: 0 },
     hint: { color: colors.textOnDarkSecondary, fontSize: 10, marginTop: 1 },
 });

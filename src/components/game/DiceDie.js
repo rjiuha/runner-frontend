@@ -107,6 +107,18 @@ export default function DiceDie({ value, draggable = true, onDragStart, onDragMo
             { scale: dragging.value ? 1.18 : 1 },
         ],
         zIndex: dragging.value ? 10 : 1,
+        // elevation — Android-специфичный аналог zIndex (2026-09-20, живая
+        // жалоба "кубики при передвижении на android заходят ЗА фрейм
+        // усиления"): zIndex сам по себе на Android не всегда надёжно
+        // поднимает вид над содержимым СОСЕДНИХ поддеревьев (тот же класс
+        // бага, что уже не раз ловился в этом проекте — см. BoardGrid.js/
+        // MobileFrameOverlay). backgroundColor:'transparent' — известный
+        // спутник elevation на Android без явного фона: без него Android
+        // иногда рисует тень/контур по ПРЯМОУГОЛЬНОЙ границе вида, игнорируя
+        // форму содержимого (тот же фикс, что уже применён в RunnerToken.js
+        // для похожей причины).
+        elevation: dragging.value ? 10 : 0,
+        backgroundColor: 'transparent',
         // На вебе поверх едет независимый "призрак" кубика (см. dragGhost в
         // PlayerInfoPanel) — без этого во время драга были видны ДВА кубика
         // одновременно (этот, застрявший под карточкой по стекингу, и призрак
