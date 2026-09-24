@@ -1,21 +1,26 @@
 // src/components/game/RunnerToken.js
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { Animated, Image, Platform, StyleSheet, View } from 'react-native';
-import { RUNNER_DISPLAY, RUNNER_TYPES } from '../../constants/GameConstants';
-import { colorKeyForHex, getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
-import { SCOUT_SPRITE_SHEETS, getScoutSpriteRef } from '../../constants/scoutSpriteSheets';
-// SpriteSheetAnimation — RN Image+Animated рендерер спрайт-листа скаута.
-// 2026-09-21: пробовали заменить на Skia (Canvas+Reanimated, см. историю в
-// CLAUDE.md) в надежде устранить decode-паузы на смену source — на практике
-// принесла НОВЫЕ, более тяжёлые баги (разрыв между shared values при смене
-// клипа — видимые фрагменты чужого кадра; двойной телепорт позиции вперёд-
-// назад), которые не удалось надёжно починить за несколько живых заходов.
-// Skia-код удалён целиком (@shopify/react-native-skia выпилена из
-// зависимостей) — вернулись на этот компонент, уже подтверждённо чёткий
-// (исходная жалоба на блюр/мигание gif была решена ИМ, ДО Skia) и с тем же
-// классом бага "телепорт на старте" уже почищенным давно обкатанным в этом
-// проекте механизмом (useEffect→useLayoutEffect), без новых Reanimated-гонок.
-import SpriteSheetAnimation from '../ui/SpriteSheetAnimation';
+import { RUNNER_DISPLAY } from '../../constants/GameConstants';
+import { colorKeyForHex } from '../../constants/runnerAnimHelpers';
+import { resolveSpriteAvatarFrame, resolveSpriteRef } from '../../constants/spritePacks';
+import { getAvatarGif, hasAvatarGif } from '../../constants/avatarGifs';
+// SpritePackAnimation — рендерер нового AI-спрайт-пака (assets/sprites/,
+// 2026-09-23, см. CLAUDE.md) — заменяет ЦЕЛИКОМ старую gif-анимацию
+// (constants/runnerAnimations.js, всё ещё в репозитории, просто больше не
+// импортируется отсюда) И старый комбинированный gif-спрайт-хак только для
+// Скаута/Android (constants/scoutSpriteSheets.js/SpriteSheetAnimation.js —
+// тоже оставлены нетронутыми, но теперь ничем не импортируются вообще —
+// их единственный потребитель, screens/__SpriteSheetPreview.js, удалён при
+// этой миграции, см. CLAUDE.md). Единый путь для ВСЕХ 5 типов и ОБЕИХ платформ —
+// никакого Platform.OS-ветвления тут больше не нужно: один заранее
+// перекрашенный PNG-лист на тип+статус+цвет декодируется ОДИН раз при
+// монтировании токена, смена анимационной позы — чистый сдвиг row/frameIndex
+// внутри уже загруженного листа, не смена source — тот самый класс
+// Android-decode-паузы, ради которого затевался старый scout-only хак,
+// снимается СТРУКТУРНО для всех типов сразу, без крос-фейда (не нужен, см.
+// докстринг SpritePackAnimation.js).
+import SpritePackAnimation from '../ui/SpritePackAnimation';
 import { colors } from '../../theme';
 
 // Вращающийся пунктирный ореол вокруг активного бегуна (см. selected проп) —
@@ -31,56 +36,32 @@ import { colors } from '../../theme';
 const HALO_SCALE = 1.08;
 const HALO_SPIN_MS = 3000;
 
-// Кроссфейд между сменами source — держит ПРЕДЫДУЩУЮ картинку видимой, пока
-// новая набирает opacity, маскируя паузу декодирования нового gif на Android
-// (Fresco). Это НЕ платформенный дефолт RN Image (тот отдельно подавлен
-// fadeDuration={0} ниже, см. комментарий там) — свой, контролируемой
-// длительности. Был в проекте с 2026-09-01 (тогда — на паре {base,mask}), но
-// потерялся при переходе на готовые одноцветные ассеты 2026-09-02 (тот
-// рефакторинг схлопнул dual-layer в один <Image>, вместе с ним ушёл и
-// crossfade-слой) — обнаружено и восстановлено 2026-09-09 по жалобе
-// пользователя "мерцание при анимации передвижения... стоит там, откуда
-// начал, потом резко продолжение" — ТОЛЬКО на Android, что и указывало на
-// decode-паузу (сам слайд позиции идёт независимо через RunnerTokenSlide,
-// не блокируется декодированием — а вот СПРАЙТ до готовности нового кадра,
-// похоже, продолжал показывать старый, отставая от уже проехавшей позиции).
-const CROSSFADE_MS = 120;
-
 /**
  * Иконка бегуна в цветном кольце владельца. Один и тот же компонент рисует
  * бегуна и на доске (BoardGrid), и в панели игрока (RunnerCard) — так фишки
  * на поле и карточки в панели выглядят одинаково и легко узнаются.
  *
  * `anim` — { kind: 'move'|'attack'|'fly'|'gotShot'|'destroyed'|'collision', direction?, side?, fromStatus? } | null
- * (idle), см. constants/runnerAnimations#getRunnerAnimationImage — доска
- * передаёт сюда текущее анимационное состояние бегуна (useRunnerAnimations в
+ * (idle), см. constants/spritePacks#resolveSpriteRef — доска передаёт сюда
+ * текущее анимационное состояние бегуна (useRunnerAnimations в
  * GameBoardScreen), карточка в панели — не передаёт (там `avatar`).
  *
  * `avatar` — карточка бегуна в панели игрока (RunnerCard) использует
- * отдельный статичный ассет "avatar" вместо игровых анимаций — не связан с
- * `anim` вообще.
+ * отдельный статичный кадр (см. resolveSpriteAvatarFrame) вместо игровых
+ * анимаций — не связан с `anim` вообще.
  *
- * Для типа без набора анимаций (constants/runnerAnimations —
- * RUNNER_ANIMATION_SETS не содержит запись для него) `display` будет `null`,
- * компонент рендерит пустоту (см. `if (!display) return null` ниже) — новый
- * тип бегуна получает анимации просто добавлением записи в
- * RUNNER_ANIMATION_SETS, без правок этого компонента. Старый статичный
- * фолбэк на `RUNNER_DISPLAY[type].icon` убран 2026-09-12 (папка ассетов
- * удалена, а сам фолбэк был мёртв — у ВСЕХ зарегистрированных типов уже есть
- * полный набор анимаций, `getRunnerAnimationImage`/`getRunnerAvatarImage`
- * никогда не возвращают null для них).
+ * Для типа без записи в SPRITE_PACKS (constants/spritePacks.js) `display`
+ * будет `null`, компонент рендерит пустоту (см. `if (!display) return null`
+ * ниже) — новый тип бегуна получает анимации добавлением записи в
+ * SPRITE_PACKS, без правок этого компонента.
  *
- * **Перекраска под цвет игрока — готовые ассеты, не рантайм-tintColor**
- * (2026-09-02): раньше каждая анимация была ПАРОЙ {base, mask} — два
- * наложенных `<Image>`, mask с `tintColor` цвета игрока поверх base. Это
- * означало ДВОЙНОЙ decode на Android при каждой смене анимации. Теперь
- * `getRunnerAnimationImage`/`getRunnerAvatarImage` принимают `colorKey`
- * ('red'/'blue'/'green'/'yellow', см. colorKeyForHex) и возвращают ОДИН уже
- * заранее перекрашенный (реверс-маскинг: неон родной, "сталь" тонирована
- * полупрозрачно в цвет команды) require()-ассет — один `<Image>` вместо двух.
- * `color` проп остаётся HEX (как и был, для кольца-обводки) — colorKeyForHex
- * резолвит его в ключ ассета внутри этого компонента, вызывающий код
- * (BoardGrid/RunnerCard) не меняется.
+ * **Перекраска под цвет игрока — готовые PNG-варианты, не рантайм-tintColor**:
+ * `resolveSpriteRef`/`resolveSpriteAvatarFrame` (constants/spritePacks.js)
+ * принимают `colorKey` ('red'/'blue'/'green'/'yellow', см. colorKeyForHex) и
+ * возвращают ссылку на ОДИН из 4 заранее перекрашенных PNG-листов (colorize
+ * по luma, см. CLAUDE.md 2026-09-23) — `color` проп остаётся HEX (как и был,
+ * для кольца-обводки), colorKeyForHex резолвит его в ключ ассета внутри
+ * этого компонента, вызывающий код (BoardGrid/RunnerCard) не меняется.
  *
  * `imageScale` — доля `size`, которую занимает картинка ВНУТРИ кольца
  * (по умолчанию 0.68, как было изначально). По прямому запросу пользователя,
@@ -120,80 +101,27 @@ export default function RunnerToken({
 }) {
     const display = RUNNER_DISPLAY[type];
     const colorKey = colorKeyForHex(color);
-    // Скаут (не avatar) — спрайт-лист вместо gif, 2026-09-20 (см. докстринг
-    // SpriteSheetAnimation.js). Avatar (карточка в панели, RunnerCard) ОСТАЁТСЯ
-    // на gif — отдельный контекст/размер, не был частью изначальной жалобы
-    // на "дёргание"/блики на доске, не включён в scope этой миграции. Остальные
-    // типы (танк/атлет/жнец/мяч) тоже остаются на gif — RUNNER_ANIMATION_SETS
-    // для них не трогали, спрайт-листы для скаута никак на них не влияют.
-    //
-    // **ТОЛЬКО Android** (2026-09-20, тем же днём, прямой запрос пользователя):
-    // на вебе спрайт-лист начал ощутимо тормозить игру — там уже отлично
-    // работает старый gif-путь ("всё работает отлично с ними"), проблема
-    // (Android decode-паузы/блики на смене gif source) веба не касалась
-    // вообще, так что мигрировать его не было причины — сама миграция
-    // затевалась ИСКЛЮЧИТЕЛЬНО ради Android. iOS намеренно не выделен
-    // отдельно (тут нет живого способа это проверить) — приравнен к вебу,
-    // безопасный (уже проверенный) gif-путь остаётся дефолтом для всего,
-    // кроме Android.
-    const isScoutSprite = Platform.OS === 'android' && type === RUNNER_TYPES.SPRINTER && !avatar;
-    const spriteRef = isScoutSprite ? getScoutSpriteRef(status, anim) : null;
-    const spriteBucket = spriteRef
-        ? (SCOUT_SPRITE_SHEETS[spriteRef.statusFolder][colorKey] ?? SCOUT_SPRITE_SHEETS[spriteRef.statusFolder].blue)
-        : null;
-
-    const source = !isScoutSprite && display
-        ? (avatar ? getRunnerAvatarImage(type, status, colorKey) : getRunnerAnimationImage(type, status, anim, colorKey))
-        : null;
 
     if (!display) return null;
 
     const imgBoxStyle = { width: size * imageScale, height: size * imageScale };
 
-    // Своя crossfade-логика (см. CROSSFADE_MS выше) — ТОЛЬКО native
-    // (2026-09-11, по прямому запросу пользователя: на вебе смена <img> src
-    // и так мгновенна, причина кроссфейда — пауза декодирования нового gif
-    // именно на Android/Fresco — там просто не воспроизводится, лишний
-    // Animated-цикл на каждую смену анимации не имеет смысла запускать).
-    // prevSourceRef хранит source ПРЕДЫДУЩЕГО рендера — как только он реально
-    // меняется, старое значение переезжает в fadingSource (рисуется под
-    // новым, статично, без анимации само по себе) и гаснет по мере роста
-    // opacity у нового поверх него.
-    const prevSourceRef = useRef(source);
-    const [fadingSource, setFadingSource] = useState(null);
-    const fadeOpacity = useRef(new Animated.Value(1)).current;
-    useEffect(() => {
-        if (Platform.OS === 'web' || isScoutSprite) return;
-        if (prevSourceRef.current === source) return;
-        // Возврат в idle (anim===null) — БЕЗ кроссфейда (2026-09-13, живая
-        // жалоба "при переходе от move к idle наслоение анимаций" — на
-        // Android виден момент, где старая (move — силуэт на бегу) и новая
-        // (idle — стоящий силуэт) картинки полупрозрачно наложены друг на
-        // друга: это ДВЕ визуально РАЗНЫЕ позы, альфа-блендинг между ними
-        // выглядит двойной экспозицией, а не плавным переходом. Оригинальная
-        // причина кроссфейда (маскировать паузу декодирования НОВОГО gif на
-        // Android) тут не актуальна — idle к моменту ЛЮБОГО перехода "к
-        // idle" уже гарантированно был показан РАНЬШЕ (переход в idle
-        // происходит только ПОСЛЕ того, как какая-то другая поза уже
-        // отыгралась на этом же бегуне — а до неё он уже был в idle или
-        // только что вышел из start, который сам показывает idle сразу
-        // после себя) — decode уже случился, маскировать нечего. Кроссфейд
-        // между ДРУГИМИ позами (idle→move, move→attack и т.п., где новый gif
-        // РЕАЛЬНО ещё не декодирован) не тронут — там альфа-блендинг между
-        // похожими по силуэту кадрами не даёт такого выраженного двоения.
-        if (anim == null) {
-            prevSourceRef.current = source;
-            return;
-        }
-        setFadingSource(prevSourceRef.current);
-        prevSourceRef.current = source;
-        fadeOpacity.setValue(0);
-        Animated.timing(fadeOpacity, {
-            toValue: 1,
-            duration: CROSSFADE_MS,
-            useNativeDriver: true,
-        }).start(() => setFadingSource(null));
-    }, [source, anim, fadeOpacity]);
+    // Аватар (карточка в панели игрока) — по прямому запросу пользователя,
+    // 2026-09-24, отдельный набор анимированных GIF (constants/avatarGifs.js,
+    // assets/images/avatars/), И для healthy, И для damaged (scout/tank/
+    // athlete) — вместо статичного кадра из спрайт-пака. Drone (Жнец) — один
+    // сет без разделения по статусу (он и не получает damaged по игровым
+    // правилам). Мяч без аватарки вообще — hasAvatarGif для него всегда
+    // false, используется прежний фолбэк (статичный кадр спрайт-пака).
+    const avatarGifSource = avatar && hasAvatarGif(type, status) ? getAvatarGif(type, status, colorKey) : null;
+
+    // Доска — анимированный кадр текущего `anim` (спрайт-пак). Аватар без
+    // gif (damaged) — статичный кадр "south" из спрайт-пака, как и раньше.
+    const frame = avatarGifSource
+        ? null
+        : avatar
+            ? resolveSpriteAvatarFrame(type, status, colorKey)
+            : resolveSpriteRef(type, status, anim, colorKey);
 
     // Вращение ореола — ОДИН Animated.Value, растёт линейно 0→1 и сразу
     // зацикливается (не туда-обратно, как было бы у пульса) — стабильное
@@ -307,52 +235,14 @@ export default function RunnerToken({
                 />
             )}
             <View style={imgBoxStyle}>
-                {/* Явные width/height (НЕ StyleSheet.absoluteFill) — на
-                    react-native-web <Image> с position:absolute и только
-                    top/left/right/bottom (без явного width/height)
-                    откатывается на НАТУРАЛЬНЫЙ пиксельный размер файла вместо
-                    растяжения под родителя (тот же класс бага, что уже
-                    ловили на MobileFrameOverlay/wipeOverlayCells в
-                    BoardGrid.js — жалоба пользователя, 2026-09-09: "размеры
-                    огромны", после того как этот слой добавился под
-                    кроссфейд). На native оба варианта работали одинаково,
-                    баг был только на вебе — но явный size надёжнее в любом
-                    случае, absoluteFill тут не даёт ничего взамен.
-
-                    fadeDuration=0 на ОБОИХ слоях — на Android <Image> по
-                    умолчанию кросс-фейдит (~300мс) при КАЖДОЙ смене source
-                    сам по себе (жалоба пользователя, 2026-09-08: "плавные
-                    исчезновения одной gif и появление другого") — это
-                    платформенный дефолт RN Image, не наш код, гасим его на
-                    обоих <Image>, чтобы не накладывался ДВОЙНОЙ фейд поверх
-                    собственного (управляемого, контролируемой длительности)
-                    ниже. */}
-                {isScoutSprite ? (
-                    <SpriteSheetAnimation
-                        source={spriteBucket.source}
-                        sheetWidth={spriteBucket.sheetWidth}
-                        sheetHeight={spriteBucket.sheetHeight}
-                        clips={spriteBucket.clips}
-                        activeClip={spriteRef.clipName}
-                        boxSize={imgBoxStyle.width}
-                    />
+                {avatarGifSource ? (
+                    <Image source={avatarGifSource} resizeMode="contain" fadeDuration={0} style={imgBoxStyle} />
                 ) : (
-                    <>
-                        {fadingSource && (
-                            <Image
-                                source={fadingSource}
-                                style={[styles.imgLayer, imgBoxStyle]}
-                                resizeMode="contain"
-                                fadeDuration={0}
-                            />
-                        )}
-                        <Animated.Image
-                            source={source}
-                            style={[styles.imgLayer, imgBoxStyle, fadingSource && { opacity: fadeOpacity }]}
-                            resizeMode="contain"
-                            fadeDuration={0}
-                        />
-                    </>
+                    <SpritePackAnimation
+                        frame={frame}
+                        boxSize={imgBoxStyle.width}
+                        staticFrameIndex={avatar ? frame?.frameIndex : null}
+                    />
                 )}
             </View>
         </View>
@@ -363,14 +253,6 @@ const styles = StyleSheet.create({
     ring: {
         alignItems: 'center',
         justifyContent: 'center',
-    },
-    // top/left:0 фиксированы тут, width/height добавляются рядом через
-    // imgBoxStyle (динамический, зависит от size/imageScale) — см. комментарий
-    // у мест использования про то, почему не StyleSheet.absoluteFill.
-    imgLayer: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
     },
     ringBottom: {
         justifyContent: 'flex-end',

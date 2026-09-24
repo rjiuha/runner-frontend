@@ -104,6 +104,19 @@ const DICE_FRAME_SIZE = { width: DICE_SIZE, height: DICE_SIZE };
 const AVATAR_FRAME_SIZE_COMPACT = { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT };
 const DICE_FRAME_SIZE_COMPACT = { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT };
 
+// Стабильные ссылки (тот же принцип, что и у *_FRAME_SIZE выше — React.memo
+// сравнивает пропсы по ссылке, новый массив на каждый рендер сломал бы это) —
+// только количество занятых слотов имеет значение (см. рендер ниже —
+// `slots[i] ? filled : empty`, содержимое объекта не читается).
+const DAMAGE_SLOTS_NONE = [null, null];
+const DAMAGE_SLOTS_ONE = [{ filled: true }, null];
+const DAMAGE_SLOTS_BOTH = [{ filled: true }, { filled: true }];
+function damageSlotsFromStatus(status) {
+    if (status === RUNNER_STATUS.BROKEN || status === RUNNER_STATUS.DESTROYED) return DAMAGE_SLOTS_BOTH;
+    if (status === RUNNER_STATUS.DAMAGED) return DAMAGE_SLOTS_ONE;
+    return DAMAGE_SLOTS_NONE;
+}
+
 // React.memo (2026-09-19, живая жалоба "тормозит именно когда двигаешь
 // кубиком по плиткам") — БЕЗ этого КАЖДЫЙ рендер PlayerInfoPanel (включая
 // те, что вызваны сменой hoverState/pulse ТОЛЬКО у ОДНОЙ карточки во время
@@ -132,7 +145,16 @@ function RunnerCard({
     roadBonus = null,
 }) {
     const display = RUNNER_DISPLAY[runner.type];
-    const slots = runner.damageTokens ?? [null, null];
+    // Жетоны повреждения — считаются НАПРЯМУЮ от runner.status (2026-09-24, по
+    // прямому запросу пользователя), не от накопленной истории событий
+    // (runner.damageTokens/useRunnerDamageTokens — та инфраструктура остаётся
+    // в проекте нетронутой, просто здесь больше не читается): DAMAGED — один
+    // занятый (red) слот, BROKEN/DESTROYED — оба, HEALTHY — ни одного. Статус
+    // синхронизируется через обычный снапшот и НИКОГДА не теряется при
+    // reconnect/relaunch — в отличие от истории событий, которая теряется
+    // (см. докстринг useRunnerDamageTokens.js), это гарантированно верно
+    // всегда, а не только пока жив тот же живой Mercure-коннект.
+    const slots = damageSlotsFromStatus(runner.status);
     const destroyed = runner.status === RUNNER_STATUS.DESTROYED;
     const zoneKey = `move:${runner.id}`;
     const cardRef = useRef(null);

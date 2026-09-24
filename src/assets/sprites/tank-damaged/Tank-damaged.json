@@ -1,0 +1,261 @@
+{
+  "character": {
+    "id": "d173788c-a71a-473c-8bd5-bcedfdfcd08a",
+    "name": "damaged",
+    "prompt": "sci-fi space runner character, large heavy massive juggernaut build, bold black outlines, cel-shaded flat pixel shading, dark navy-slate metallic armor base (#1c2430, #2e3a4a) shifting toward heavier gunmetal-iron tones (#3a3f42), thick layered panzer-style backplate, oversized rounded riveted pauldrons, reinforced forearm guards, wide stocky stance with slab-like shin guards and heavy boots, broad wide shoulders, structural glowing cyan-teal neon (#7fe0e6) as segmented lines along the spine, shoulder blades, upper arms and outer thighs plus a bright glowing energy core between the shoulder blades and neon light bleeding through cracks and seams in the heavy armor, small exhaust vents on the back with faint steam, reinforced helmet with a thick brow ridge, top-down back view seen from behind, elevated camera, standing still in neutral heavy upright pose arms down at sides, full body, isolated on transparent background, retro indie game asset style, same character series as reference, clean stylized",
+    "size": {
+      "width": 168,
+      "height": 168
+    },
+    "directions": 8,
+    "view": "low top-down"
+  },
+  "spritesheet": {
+    "path": "Tank-damaged.png",
+    "cell_size": {
+      "width": 216,
+      "height": 216
+    },
+    "sheet_size": {
+      "width": 2808,
+      "height": 6048
+    },
+    "columns": 13,
+    "pivot": "cell-center",
+    "rows": [
+      {
+        "row": 0,
+        "type": "rotations",
+        "frame_count": 8,
+        "directions": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ]
+      },
+      {
+        "row": 1,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "destroyed",
+        "animation_group_id": "04589bf6-543b-4c3a-863f-3c8fe70d0627",
+        "direction": "north"
+      },
+      {
+        "row": 2,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "058907fc-a874-48da-9644-c1151236420b",
+        "direction": "north-east"
+      },
+      {
+        "row": 3,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "attack",
+        "animation_group_id": "058907fc-a874-48da-9644-c1151236420b",
+        "direction": "north"
+      },
+      {
+        "row": 4,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "058907fc-a874-48da-9644-c1151236420b",
+        "direction": "north-west"
+      },
+      {
+        "row": 5,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "acid",
+        "animation_group_id": "07a2bf91-0b57-4789-a992-da78c0139455",
+        "direction": "north"
+      },
+      {
+        "row": 6,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "heal",
+        "animation_group_id": "58a5eb03-29b6-43b8-b4fe-fbdda056321b",
+        "direction": "north"
+      },
+      {
+        "row": 7,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "fly",
+        "animation_group_id": "5b8bab4c-683d-4afe-9d7c-a55ee7f90ded",
+        "direction": "north"
+      },
+      {
+        "row": 8,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south"
+      },
+      {
+        "row": 9,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-east"
+      },
+      {
+        "row": 10,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-east"
+      },
+      {
+        "row": 11,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-east"
+      },
+      {
+        "row": 12,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-east"
+      },
+      {
+        "row": 13,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "north-east"
+      },
+      {
+        "row": 14,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "north"
+      },
+      {
+        "row": 15,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "north-west"
+      },
+      {
+        "row": 16,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-west"
+      },
+      {
+        "row": 17,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-west"
+      },
+      {
+        "row": 18,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-west"
+      },
+      {
+        "row": 19,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-west"
+      },
+      {
+        "row": 20,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-west"
+      },
+      {
+        "row": 21,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "6c933486-9159-43eb-9125-83932e491a8c",
+        "direction": "south-west"
+      },
+      {
+        "row": 22,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "Idle",
+        "animation_group_id": "87edd35b-27c0-4e8c-ac97-1792026eed0e",
+        "direction": "north"
+      },
+      {
+        "row": 23,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "broken",
+        "animation_group_id": "a0e4d25d-2070-4aca-a29c-15f0891c93af",
+        "direction": "north"
+      },
+      {
+        "row": 24,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "shot",
+        "animation_group_id": "be47de15-cac4-407f-9bed-2775485b0c2d",
+        "direction": "north"
+      },
+      {
+        "row": 25,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "d2c93b38-4c62-4bb6-82b6-e318b4585ed9",
+        "direction": "east"
+      },
+      {
+        "row": 26,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "d2c93b38-4c62-4bb6-82b6-e318b4585ed9",
+        "direction": "west"
+      },
+      {
+        "row": 27,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "burn",
+        "animation_group_id": "f3dd629d-0fed-4c92-a519-640706f93455",
+        "direction": "north"
+      }
+    ]
+  },
+  "export_version": "1.0",
+  "export_date": "2026-09-21T14:53:24.021527+00:00"
+}

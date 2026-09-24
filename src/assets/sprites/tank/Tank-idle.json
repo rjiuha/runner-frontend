@@ -1,0 +1,189 @@
+{
+  "character": {
+    "id": "e2809b35-e5a2-4674-8c6a-a7a800abd70e",
+    "name": "idle",
+    "prompt": "sci-fi space runner character, large heavy massive juggernaut build, bold black outlines, cel-shaded flat pixel shading, dark navy-slate metallic armor base (#1c2430, #2e3a4a) shifting toward heavier gunmetal-iron tones (#3a3f42), thick layered panzer-style backplate, oversized rounded riveted pauldrons, reinforced forearm guards, wide stocky stance with slab-like shin guards and heavy boots, broad wide shoulders, structural glowing cyan-teal neon (#7fe0e6) as segmented lines along the spine, shoulder blades, upper arms and outer thighs plus a bright glowing energy core between the shoulder blades and neon light bleeding through cracks and seams in the heavy armor, small exhaust vents on the back with faint steam, reinforced helmet with a thick brow ridge, top-down back view seen from behind, elevated camera, standing still in neutral heavy upright pose arms down at sides, full body, isolated on transparent background, retro indie game asset style, same character series as reference, clean stylized",
+    "size": {
+      "width": 168,
+      "height": 168
+    },
+    "directions": 8,
+    "view": "low top-down"
+  },
+  "spritesheet": {
+    "path": "Tank-idle.png",
+    "cell_size": {
+      "width": 216,
+      "height": 216
+    },
+    "sheet_size": {
+      "width": 2808,
+      "height": 4104
+    },
+    "columns": 13,
+    "pivot": "cell-center",
+    "rows": [
+      {
+        "row": 0,
+        "type": "rotations",
+        "frame_count": 8,
+        "directions": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ]
+      },
+      {
+        "row": 1,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "24d8be22-5b0b-4e8a-a2af-047caa0200b9",
+        "direction": "east"
+      },
+      {
+        "row": 2,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "24d8be22-5b0b-4e8a-a2af-047caa0200b9",
+        "direction": "west"
+      },
+      {
+        "row": 3,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "burn",
+        "animation_group_id": "3a7d4cfe-9b74-4b31-86ce-ecd47246b3e4",
+        "direction": "north"
+      },
+      {
+        "row": 4,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "4e857cea-2bbe-42f9-8e64-a8c8f2bf3c98",
+        "direction": "north-east"
+      },
+      {
+        "row": 5,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "4e857cea-2bbe-42f9-8e64-a8c8f2bf3c98",
+        "direction": "north"
+      },
+      {
+        "row": 6,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "4e857cea-2bbe-42f9-8e64-a8c8f2bf3c98",
+        "direction": "north-west"
+      },
+      {
+        "row": 7,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "start",
+        "animation_group_id": "6a7dfe76-5457-4480-ada6-bf532ef1d0e6",
+        "direction": "north"
+      },
+      {
+        "row": 8,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "destroyed",
+        "animation_group_id": "7a18ab08-bc6f-4e94-b9f2-715835366bd5",
+        "direction": "north"
+      },
+      {
+        "row": 9,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "Idle",
+        "animation_group_id": "89cac611-4adb-467d-b946-3db4aca4b279",
+        "direction": "north"
+      },
+      {
+        "row": 10,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "acid",
+        "animation_group_id": "9919658f-808f-4706-bffd-56906a9bff4d",
+        "direction": "north"
+      },
+      {
+        "row": 11,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "shot",
+        "animation_group_id": "e65e4edb-de62-4e0d-9f5e-6a135482da03",
+        "direction": "north"
+      },
+      {
+        "row": 12,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "f4beaa73-6bc7-4e53-9618-9669e0774878",
+        "direction": "south"
+      },
+      {
+        "row": 13,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "f4beaa73-6bc7-4e53-9618-9669e0774878",
+        "direction": "south-east"
+      },
+      {
+        "row": 14,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "f4beaa73-6bc7-4e53-9618-9669e0774878",
+        "direction": "north-east"
+      },
+      {
+        "row": 15,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "f4beaa73-6bc7-4e53-9618-9669e0774878",
+        "direction": "north"
+      },
+      {
+        "row": 16,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "f4beaa73-6bc7-4e53-9618-9669e0774878",
+        "direction": "north-west"
+      },
+      {
+        "row": 17,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "move",
+        "animation_group_id": "f4beaa73-6bc7-4e53-9618-9669e0774878",
+        "direction": "south-west"
+      },
+      {
+        "row": 18,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "fly",
+        "animation_group_id": "ff2662ad-1f2a-471a-b874-4ef88d2c4a26",
+        "direction": "north"
+      }
+    ]
+  },
+  "export_version": "1.0",
+  "export_date": "2026-09-21T14:53:29.770538+00:00"
+}

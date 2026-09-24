@@ -1,5 +1,5 @@
 // src/lib/runnerDamageTokens.js
-import { statusWorsened } from '../constants/runnerAnimations';
+import { statusWorsened } from '../constants/runnerAnimHelpers';
 
 /**
  * Бэк не отдаёт тип жетона повреждения — `Runner::toArray()` шлёт только

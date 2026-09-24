@@ -1,0 +1,109 @@
+{
+  "character": {
+    "id": "7d702068-3277-4d37-934c-4fe871a484fb",
+    "name": "Idle",
+    "prompt": "Sci-fi drone, compact body (blend of rounded and angular shapes, metallic), crisp black outlines, cel-shaded style (flat shading), dark blue-gray metallic armor plating (#1c2430, #2e3a4a), glowing neon elements (cyan-turquoise, #7fe0e6) in the form of segmented lines along body seams and a central glowing \"eye\" (optical sensor lens), slightly tilted, hovering in mid-air, rear-quarter view (seen from behind and slightly above), high camera angle, isolated on a transparent background, retro indie game asset style, part of the same character series as the reference, clean stylized design.",
+    "size": {
+      "width": 168,
+      "height": 168
+    },
+    "directions": 8,
+    "view": "low top-down"
+  },
+  "spritesheet": {
+    "path": "Sci-fi_drone_compact_bod-Idle.png",
+    "cell_size": {
+      "width": 168,
+      "height": 168
+    },
+    "sheet_size": {
+      "width": 2856,
+      "height": 1512
+    },
+    "columns": 17,
+    "pivot": "cell-center",
+    "rows": [
+      {
+        "row": 0,
+        "type": "rotations",
+        "frame_count": 8,
+        "directions": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ]
+      },
+      {
+        "row": 1,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "start",
+        "animation_group_id": "41543e80-71b2-412c-96cd-a6c617bf8fc6",
+        "direction": "south"
+      },
+      {
+        "row": 2,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "destroy",
+        "animation_group_id": "89809553-a6ce-44b6-8650-062a60d5c814",
+        "direction": "south"
+      },
+      {
+        "row": 3,
+        "type": "animation",
+        "frame_count": 17,
+        "animation": "acid",
+        "animation_group_id": "9f625ea3-fa05-4c53-b628-7b39ea7ad0b2",
+        "direction": "south"
+      },
+      {
+        "row": 4,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "Idle",
+        "animation_group_id": "c4b6e7b7-cdc5-4b75-bc4f-5d0733d9322e",
+        "direction": "south"
+      },
+      {
+        "row": 5,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "fly",
+        "animation_group_id": "c7940da5-701b-407f-a894-18f2efaa69e6",
+        "direction": "south"
+      },
+      {
+        "row": 6,
+        "type": "animation",
+        "frame_count": 17,
+        "animation": "burn",
+        "animation_group_id": "da1a5d80-64b7-43a0-ac77-ea2e56ea86f7",
+        "direction": "south"
+      },
+      {
+        "row": 7,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "e313b1eb-29d5-4274-8d87-5cbe28342646",
+        "direction": "east"
+      },
+      {
+        "row": 8,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "e313b1eb-29d5-4274-8d87-5cbe28342646",
+        "direction": "west"
+      }
+    ]
+  },
+  "export_version": "1.0",
+  "export_date": "2026-09-21T14:34:15.641035+00:00"
+}

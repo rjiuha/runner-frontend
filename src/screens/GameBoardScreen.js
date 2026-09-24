@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -31,7 +31,6 @@ import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent, DEATH_K
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
 import { identifyGhostPass } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
-import { getRunnerAnimationImage, colorKeyForHex } from '../constants/runnerAnimations';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
 import { COMMENT_SOUNDS } from '../constants/commentSounds';
 import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
@@ -451,8 +450,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // trigger()-вызовов, который гейтинг как раз и нарушал). Если захочется
     // вернуться к этой идее — НЕ трогать порядок/тайминг вызовов
     // runnerAnim.trigger вообще, ограничиться ЧИСТЫМ прогревом decode без
-    // блокировки (тот же паттерн, что уже работает у reaperAttackPreloadSource
-    // выше — прогрев, а не гейт).
+    // блокировки. (Сам класс проблемы — Android decode-пауза при первом
+    // показе редко используемого ассета — с переходом на единый спрайт-лист
+    // на тип+статус+цвет, 2026-09-23, скорее всего снят структурно: весь лист
+    // декодируется один раз при монтировании токена, а не по кадру/анимации
+    // — точечный прогрев конкретного ассета типа reaperAttackPreloadSource
+    // (был здесь, удалён при миграции) больше не нужен, но не проверено
+    // живьём.)
     const triggerWithSound = useCallback(
         (runnerId, kind, extra) => {
             // Подавляем ТОЛЬКО визуальный триггер (дублирующий walk-цикл) —
@@ -955,31 +959,6 @@ export default function GameBoardScreen({ route, navigation }) {
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
-
-    // Точечный "прогрев" декодера ОДНОГО ассета — атака Жнеца (всегда
-    // direction UP → resolveMoveAssetDirection возвращает 'north' безусловно,
-    // см. constants/runnerAnimations, так что вариант ровно один, не 3) — по
-    // прямому запросу пользователя, 2026-09-08: "дрон, когда нажимаешь на
-    // выстрел, исчезает почему-то на полсекунды". Похоже на ту же Android
-    // decode-паузу первого показа РЕДКО используемого gif, что уже частично
-    // решалась для обычных бегунов (fadeDuration=0, см. RunnerToken.js) — но
-    // тут сам fadeDuration=0 играет ПРОТИВ: раньше платформенный кросс-фейд
-    // (~300мс) маскировал паузу декодирования как плавный переход, теперь
-    // паузу НЕЧЕМ прикрыть, и она видна как явный пробел. НЕ повторяем
-    // "Track 1" (см. CLAUDE.md, 2026-09-02, откачен целиком) — там
-    // одновременно держались смонтированными ~240 анимаций разом, что само по
-    // себе зацикленно проигрывало и убивало производительность на Android.
-    // Здесь — РОВНО ОДИН скрытый (1×1, opacity 0) `<Image>`, смонтированный
-    // только на время, пока Жнец ждёт решения "стрелять/пропустить"
-    // (pendingReaperPlacement) — этого времени (≥REAPER_PREVIEW_MS=2200мс до
-    // того, как подсветка вообще появляется) с большим запасом хватает,
-    // чтобы декодер успел подготовить кадры ДО того, как игрок реально
-    // сможет нажать «выстрелить».
-    const reaperAttackPreloadSource = useMemo(() => {
-        if (!pendingReaperPlacement) return null;
-        const colorKey = colorKeyForHex(playerColorById[myPlayer?.id] ?? '#fff');
-        return getRunnerAnimationImage(RUNNER_TYPES.REAPER, RUNNER_STATUS.HEALTHY, { kind: 'attack', direction: 'UP' }, colorKey);
-    }, [pendingReaperPlacement, playerColorById, myPlayer?.id]);
 
     // Чей сейчас ход — на экране раньше не было видно вообще (см. CLAUDE.md,
     // живой прогон). game.playerOrder хранит RunnerPlayer.id как строку.
@@ -2149,17 +2128,6 @@ export default function GameBoardScreen({ route, navigation }) {
 
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
-            {/* ВРЕМЕННО (2026-09-20, прототип спрайт-листов, см. CLAUDE.md) —
-                убрать вместе с __SpriteSheetPreview.js и его Stack.Screen в
-                RootNavigator.js, когда сравнение gif/спрайт-лист станет не
-                нужно. Не трогает игровое состояние — просто push поверх. */}
-            <TouchableOpacity
-                style={[styles.spriteProtoBtn, { top: insets.top + 4 }]}
-                onPress={() => navigation.navigate('__SpriteSheetPreview')}
-            >
-                <Text style={styles.spriteProtoBtnText} noGlobalTint>спрайт-тест</Text>
-            </TouchableOpacity>
-
             {/* Гейт trackShiftPhase — по прямому запросу пользователя, 2026-09-09: если
                 game_finish пришёл ОДНОВременно со сдвигом фрагмента (типовой случай —
                 сдвиг уничтожает свободных бегунов соперника, тот уходит в OUT, у
@@ -2177,11 +2145,6 @@ export default function GameBoardScreen({ route, navigation }) {
                 winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
                 onExit={goToMainMenu}
             />
-
-            {/* Скрытый прогрев декодера для атаки Жнеца — см. reaperAttackPreloadSource выше. */}
-            {reaperAttackPreloadSource && (
-                <Image source={reaperAttackPreloadSource} style={styles.hiddenPreload} pointerEvents="none" />
-            )}
 
             {/* Кат-сцена сдвига фрагментов (см. эффект у trackShiftPhase выше) —
                 видна ВСЕМ игрокам одновременно, не только тому, кто вызвал сдвиг:
@@ -2470,11 +2433,6 @@ const styles = StyleSheet.create({
     // position:'relative' оставлен для консистентности с остальными
     // stack-обёртками в этом файле.
     boardGridStack: { position: 'relative' },
-    // Полностью невидимый (opacity:0, 1×1) — см. reaperAttackPreloadSource
-    // выше, единственная задача этого элемента — заставить Android
-    // декодировать gif заранее, сам он никогда не должен быть виден/мешать
-    // раскладке.
-    hiddenPreload: { position: 'absolute', top: 0, left: 0, width: 1, height: 1, opacity: 0 },
     panelFrameWrap: { position: 'relative' },
     // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
     // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому
@@ -2578,24 +2536,4 @@ const styles = StyleSheet.create({
         paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
         marginTop: spacing.xs,
     },
-    // ВРЕМЕННО — см. комментарий у места рендера. top переопределяется
-    // инлайн (insets.top+4, см. место рендера) — тут только базовые
-    // свойства. elevation — Android-специфичный аналог zIndex (та же
-    // причина, что и у DiceDie.js: на Android один zIndex не всегда
-    // гарантирует реальный порядок отрисовки поверх остального экрана),
-    // backgroundColor непрозрачный ярче — чтобы не потерялся на фоне
-    // звёзд/доски, крупнее touch-таргет.
-    spriteProtoBtn: {
-        position: 'absolute',
-        right: 8,
-        zIndex: 999,
-        elevation: 999,
-        backgroundColor: colors.danger,
-        paddingVertical: 8,
-        paddingHorizontal: 12,
-        borderRadius: 8,
-        borderWidth: 1,
-        borderColor: '#fff',
-    },
-    spriteProtoBtnText: { color: '#fff', fontSize: 13, fontWeight: 'bold' },
 });

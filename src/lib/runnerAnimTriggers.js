@@ -1,5 +1,5 @@
 // src/lib/runnerAnimTriggers.js
-import { statusWorsened } from '../constants/runnerAnimations';
+import { statusWorsened } from '../constants/runnerAnimHelpers';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
 import { RUNNER_TYPES } from '../constants/GameConstants';
 

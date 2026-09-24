@@ -1,0 +1,189 @@
+{
+  "character": {
+    "id": "6070cad7-9477-408e-bdaa-b20517dfaa01",
+    "name": "Idle",
+    "prompt": "sci-fi space runner character, athletic balanced sprinter build, bold black outlines, cel-shaded flat pixel shading, dark navy-slate metallic armor plates (#1c2430, #2e3a4a), aerodynamic streamlined sport-armor not bulky, structural glowing cyan-teal neon (#7fe0e6) running as continuous segmented lines along the spine, shoulder blades, upper arms and outer thighs plus a glowing energy core between the shoulder blades, neon reads as the character's main accent, top-down back view seen from behind, elevated camera, standing still in neutral upright ready pose arms down at sides, aerodynamic helmet with a low swept fin, full body, isolated on transparent background, retro indie game asset style, clean stylized",
+    "size": {
+      "width": 168,
+      "height": 168
+    },
+    "directions": 8,
+    "view": "low top-down"
+  },
+  "spritesheet": {
+    "path": "Athlete-Idle.png",
+    "cell_size": {
+      "width": 204,
+      "height": 204
+    },
+    "sheet_size": {
+      "width": 2652,
+      "height": 3876
+    },
+    "columns": 13,
+    "pivot": "cell-center",
+    "rows": [
+      {
+        "row": 0,
+        "type": "rotations",
+        "frame_count": 8,
+        "directions": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ]
+      },
+      {
+        "row": 1,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "acid",
+        "animation_group_id": "2bfc626b-2b52-4151-a353-3a7489c36e66",
+        "direction": "north"
+      },
+      {
+        "row": 2,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "burn",
+        "animation_group_id": "2c54217d-f063-4a1b-8cb8-ee734d5c9044",
+        "direction": "north"
+      },
+      {
+        "row": 3,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "idle breathing",
+        "animation_group_id": "315a8c44-06aa-4e69-857e-5aa045c4ddbb",
+        "direction": "north"
+      },
+      {
+        "row": 4,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "456677b2-d37c-4820-8453-c449a45eb25a",
+        "direction": "east"
+      },
+      {
+        "row": 5,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "456677b2-d37c-4820-8453-c449a45eb25a",
+        "direction": "west"
+      },
+      {
+        "row": 6,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "heal",
+        "animation_group_id": "99e25f80-f55f-4b31-aa42-d3f7abe20a6b",
+        "direction": "north"
+      },
+      {
+        "row": 7,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "shot",
+        "animation_group_id": "af328416-95c9-4c6c-b503-0022a570756d",
+        "direction": "north"
+      },
+      {
+        "row": 8,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "destroy",
+        "animation_group_id": "c301938e-cd40-4e07-bc90-5a09806d4ae4",
+        "direction": "north"
+      },
+      {
+        "row": 9,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "cfc7cf06-fc28-4642-a033-56ddff52a68d",
+        "direction": "south"
+      },
+      {
+        "row": 10,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "cfc7cf06-fc28-4642-a033-56ddff52a68d",
+        "direction": "south-east"
+      },
+      {
+        "row": 11,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "cfc7cf06-fc28-4642-a033-56ddff52a68d",
+        "direction": "north-east"
+      },
+      {
+        "row": 12,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "cfc7cf06-fc28-4642-a033-56ddff52a68d",
+        "direction": "north"
+      },
+      {
+        "row": 13,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "cfc7cf06-fc28-4642-a033-56ddff52a68d",
+        "direction": "north-west"
+      },
+      {
+        "row": 14,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "cfc7cf06-fc28-4642-a033-56ddff52a68d",
+        "direction": "south-west"
+      },
+      {
+        "row": 15,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "f0a48956-d5df-4920-8ab4-15b1225e49d9",
+        "direction": "north-east"
+      },
+      {
+        "row": 16,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "f0a48956-d5df-4920-8ab4-15b1225e49d9",
+        "direction": "north"
+      },
+      {
+        "row": 17,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "attack",
+        "animation_group_id": "f0a48956-d5df-4920-8ab4-15b1225e49d9",
+        "direction": "north-west"
+      },
+      {
+        "row": 18,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "fly",
+        "animation_group_id": "f45840ee-9feb-4c59-b9d5-5a4699fd66f5",
+        "direction": "north"
+      }
+    ]
+  },
+  "export_version": "1.0",
+  "export_date": "2026-09-21T15:08:57.297255+00:00"
+}

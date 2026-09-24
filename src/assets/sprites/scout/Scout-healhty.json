@@ -1,0 +1,205 @@
+{
+  "character": {
+    "id": "b4d5c94e-44f4-4bda-9d7b-2d612f182497",
+    "name": "healhty",
+    "prompt": "sci-fi space runner character, female, small slim agile lightweight build, bold black outlines, cel-shaded flat pixel shading, dark navy-slate metallic armor plates (#1c2430, #2e3a4a), slim streamlined reduced upper-body armor for mobility, disproportionately powerful sprinter thighs and calves with ribbed muscle plating, twin compact turbine thrusters embedded in the boot heels glowing cyan-teal with faint exhaust glow, structural glowing cyan-teal neon (#7fe0e6) as continuous segmented lines along the spine, shoulder blades, upper arms and outer thighs plus a glowing energy core between the shoulder blades, neon reads as the main accent, smaller aerodynamic helmet with a low swept fin, top-down back view seen from behind, elevated camera, standing still in neutral upright ready pose arms down at sides, low center of mass, full body, isolated on transparent background, retro indie game asset style, same character series as reference, clean stylized",
+    "size": {
+      "width": 168,
+      "height": 168
+    },
+    "directions": 8,
+    "view": "low top-down"
+  },
+  "spritesheet": {
+    "path": "Scout-healhty.png",
+    "cell_size": {
+      "width": 236,
+      "height": 236
+    },
+    "sheet_size": {
+      "width": 3068,
+      "height": 4956
+    },
+    "columns": 13,
+    "pivot": "cell-center",
+    "rows": [
+      {
+        "row": 0,
+        "type": "rotations",
+        "frame_count": 8,
+        "directions": [
+          "south",
+          "south-east",
+          "east",
+          "north-east",
+          "north",
+          "north-west",
+          "west",
+          "south-west"
+        ]
+      },
+      {
+        "row": 1,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "destroyed",
+        "animation_group_id": "0d844193-6d10-4e1c-8ee2-0421810b17fb",
+        "direction": "north"
+      },
+      {
+        "row": 2,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "start",
+        "animation_group_id": "1b92b048-0493-4edd-9fd2-316f8e0c166c",
+        "direction": "north"
+      },
+      {
+        "row": 3,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "fly",
+        "animation_group_id": "287dba19-d540-43b7-8fcd-59b57a004e54",
+        "direction": "north"
+      },
+      {
+        "row": 4,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "attack",
+        "animation_group_id": "69ce130b-f101-4fe7-9533-f6d68194d377",
+        "direction": "north-east"
+      },
+      {
+        "row": 5,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "attack",
+        "animation_group_id": "69ce130b-f101-4fe7-9533-f6d68194d377",
+        "direction": "north"
+      },
+      {
+        "row": 6,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "attack",
+        "animation_group_id": "69ce130b-f101-4fe7-9533-f6d68194d377",
+        "direction": "north"
+      },
+      {
+        "row": 7,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "attack",
+        "animation_group_id": "69ce130b-f101-4fe7-9533-f6d68194d377",
+        "direction": "north-west"
+      },
+      {
+        "row": 8,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "acid",
+        "animation_group_id": "73658998-a6fe-4afd-a0e3-03b89d6bcd64",
+        "direction": "south"
+      },
+      {
+        "row": 9,
+        "type": "animation",
+        "frame_count": 13,
+        "animation": "acid",
+        "animation_group_id": "73658998-a6fe-4afd-a0e3-03b89d6bcd64",
+        "direction": "south"
+      },
+      {
+        "row": 10,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "shot",
+        "animation_group_id": "8c8a2f25-2008-4b9c-88b8-bbd4452ccdb9",
+        "direction": "north"
+      },
+      {
+        "row": 11,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "90ae817c-bb80-45fa-80e0-e81ff5e24673",
+        "direction": "south"
+      },
+      {
+        "row": 12,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "90ae817c-bb80-45fa-80e0-e81ff5e24673",
+        "direction": "south-east"
+      },
+      {
+        "row": 13,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "90ae817c-bb80-45fa-80e0-e81ff5e24673",
+        "direction": "north-east"
+      },
+      {
+        "row": 14,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "90ae817c-bb80-45fa-80e0-e81ff5e24673",
+        "direction": "north"
+      },
+      {
+        "row": 15,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "90ae817c-bb80-45fa-80e0-e81ff5e24673",
+        "direction": "north-west"
+      },
+      {
+        "row": 16,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "move",
+        "animation_group_id": "90ae817c-bb80-45fa-80e0-e81ff5e24673",
+        "direction": "south-west"
+      },
+      {
+        "row": 17,
+        "type": "animation",
+        "frame_count": 8,
+        "animation": "idle breathing",
+        "animation_group_id": "99940bf2-572a-42d3-b35a-9dc2ee4b9a8f",
+        "direction": "north"
+      },
+      {
+        "row": 18,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "c3e714de-03b5-48c2-b0ad-8dd22ffe4d7a",
+        "direction": "east"
+      },
+      {
+        "row": 19,
+        "type": "animation",
+        "frame_count": 11,
+        "animation": "collision",
+        "animation_group_id": "c3e714de-03b5-48c2-b0ad-8dd22ffe4d7a",
+        "direction": "west"
+      },
+      {
+        "row": 20,
+        "type": "animation",
+        "frame_count": 9,
+        "animation": "burn",
+        "animation_group_id": "cf9cc355-67bd-43e8-892a-e0d6772080a7",
+        "direction": "north"
+      }
+    ]
+  },
+  "export_version": "1.0",
+  "export_date": "2026-09-21T14:55:14.987665+00:00"
+}
