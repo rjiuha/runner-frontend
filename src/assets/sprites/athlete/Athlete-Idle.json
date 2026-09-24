@@ -82,7 +82,7 @@
         "row": 6,
         "type": "animation",
         "frame_count": 11,
-        "animation": "heal",
+        "animation": "start",
         "animation_group_id": "99e25f80-f55f-4b31-aa42-d3f7abe20a6b",
         "direction": "north"
       },

@@ -7,7 +7,11 @@ import {
 } from '../../constants/GameConstants';
 import { indexRunnersByCell, BASE_IMAGE_TYPE } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
+import { createLogger } from '../../lib/logger';
 import RunnerToken from './RunnerToken';
+
+// ВРЕМЕННО — диагностика "телепорт" (см. RunnerTokenSlide.js#SLIDEDBG), убрать после.
+const dbgLog = createLogger('WINDBG');
 import RunnerTokenSlide, { SLIDE_DURATION_MS } from './RunnerTokenSlide';
 
 // Прилёт Жнеца из резерва — вдвое медленнее обычного слайда (см. RunnerTokenSlide#duration),
@@ -438,6 +442,7 @@ export default function BoardGrid({
             for (const r of visible) {
                 const prevKnown = lastKnownCellRef.current[r.id];
                 if (prevKnown) enterFromByRunnerId[r.id] = cellPixelPos(prevKnown.segment, prevKnown.positionX, prevKnown.positionY);
+                else if (runnerAnims?.[r.id]) dbgLog('НЕТ prevKnown для', r.id, 'anim=', runnerAnims[r.id]?.kind);
                 lastKnownCellRef.current[r.id] = { segment, positionX, positionY: row };
             }
 
@@ -451,7 +456,14 @@ export default function BoardGrid({
             // сегментов дороги"). positionX — локальная колонка ВНУТРИ
             // сегмента данных, а не внутри вьюпорта.
             const globalCol = segment * BOARD_LAYOUT.COLS + positionX;
-            if (globalCol < windowStart || globalCol >= windowEnd) continue;
+            if (globalCol < windowStart || globalCol >= windowEnd) {
+                for (const r of visible) {
+                    if (runnerAnims?.[r.id]) {
+                        dbgLog('ВЫПАЛ из окна бегун', r.id, 'globalCol=', globalCol, 'windowStart=', windowStart, 'windowEnd=', windowEnd, 'anim=', runnerAnims[r.id]?.kind);
+                    }
+                }
+                continue;
+            }
             const localCol = globalCol - windowStart;
             const x = isPortrait
                 ? row * segmentW

@@ -60,14 +60,12 @@ export default function PlayerInfoPanel({
     switcherAtBottom = false,
     headerContent = null,
     compactColumns = false,
-    // Бонус хода (2026-09-20, по прямому решению пользователя — "пока не
-    // трогаем бэк, просто отобрази, когда данные приходят") — game.trackGain
-    // с GameBoardScreen. Бэк ХРАНИТ per-runner флаг наличия бонуса
-    // (Runner::$trackGain), но НЕ отдаёт его в Runner::toArray() — фронт
-    // физически видит бонус только В ОДИН момент: пока у ЭТОГО игрока
-    // player.step===ROAD_BONUS (см. runnerCards ниже) — до и после этого
-    // шага для любого бегуна тут всегда null (пусто), не потому что бонуса
-    // нет, а потому что бэк об этом не сообщает.
+    // Бонус хода — числовое значение бонуса этого раунда (game.trackGain,
+    // с GameBoardScreen). С 2026-09-24 бэк (коммит 59aea0f) отдаёт per-runner
+    // флаг Runner::$trackGain в Runner::toArray() (RunnerViewModel) и в
+    // событиях step_selection/runner_<suffix>/player_reset — см. runnerCards
+    // ниже, hasRoadBonus теперь читает runner.trackGain напрямую, не гейтится
+    // шагом/активным бегуном.
     roadBonusValue = null,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
@@ -319,14 +317,12 @@ export default function PlayerInfoPanel({
         const pendingValue = isPending ? activePlayer.dice[pendingSelect.diceIndex] : null;
         const moveDiceValue = isPending && pendingSelect.type === 'DICE' ? pendingValue : runner.dice ?? null;
         const rollDiceValue = isPending && pendingSelect.type === 'ROLL' ? pendingValue : runner.rollDice ?? null;
-        // Бонус хода — см. roadBonusValue выше: видим его ТОЛЬКО пока у
-        // ЭТОГО игрока (activePlayer, не обязательно "моего" — панель
-        // переключаемая) реально идёт шаг ROAD_BONUS И именно ЭТОТ бегун
-        // только что закончил ход (activeRunnerId). Остальное время —
-        // null (пусто), бэк больше ничего не сообщает.
-        const hasRoadBonus = activePlayer.step === PLAYER_STEP.ROAD_BONUS
-            && String(runner.id) === String(activePlayer.activeRunnerId)
-            && roadBonusValue != null;
+        // Бонус хода — runner.trackGain (см. roadBonusValue выше) теперь
+        // приходит с бэка напрямую на КАЖДОМ бегуне, не только во время
+        // шага ROAD_BONUS активного бегуна — зеркалит бэковое условие
+        // PlayerStepService::offersRoadBonus() (runner.trackGain===true &&
+        // game.trackGain>0).
+        const hasRoadBonus = runner.trackGain === true && roadBonusValue > 0;
         // onPress={onRunnerCardPress} — СТАБИЛЬНАЯ ссылка, НЕ инлайн-замыкание
         // (было `() => onRunnerCardPress(runner)`) — 2026-09-19, живая жалоба
         // "тормозит при перетаскивании кубика по плиткам", см. докстринг

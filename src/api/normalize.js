@@ -51,7 +51,21 @@ export function normalizeRunnerGame(raw) {
     return {
         ...raw,
         version: raw.version ?? 0,
-        gamePlayers: raw.gamePlayers ?? [],
+        // Защитная коррекция бэкового бага (коммит 59aea0f, 2026-09-24) —
+        // RunnerPlayerViewModel::$step объявлен ?string вместо ?int (PlayerStep
+        // на бэке честный int-backed enum), PHP молча приводит число в строку
+        // при присваивании. Только GET /api/runner_game (эта ViewModel) —
+        // живые Mercure-события (player_step/step_selection/step_begin) шлют
+        // 'step' => $player->getStep() напрямую, без ViewModel, там тип верный
+        // (сверено чтением всех трёх файлов, не по памяти). Без коррекции
+        // ЛЮБОЕ строгое сравнение myStep === PLAYER_STEP.XXX по всему фронту
+        // молча никогда не совпадает после REST-снапшота/reconnect — "Твой
+        // ход" показывается (playerOrder сравнивается через String()), а
+        // подсказки/драг кубиков — нет (жалоба пользователя, 2026-09-24).
+        gamePlayers: (raw.gamePlayers ?? []).map((p) => ({
+            ...p,
+            step: p.step == null ? p.step : Number(p.step),
+        })),
         runners: raw.runners ?? [],
     };
 }

@@ -100,6 +100,28 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
     const prevSize = useRef({ width, height });
     const currentTranslateRef = useRef({ x: 0, y: 0 });
 
+    // "Прогрев" нативного графа анимации (2026-09-24, по прямому запросу
+    // пользователя — продолжение незакрытого расследования "телепорт в
+    // начале движения" из CLAUDE.md, 2026-09-20/21) — САМЫЙ ПЕРВЫЙ реальный
+    // слайд токена (см. ниже, useLayoutEffect) — это и первый раз, когда
+    // `Animated.timing(translate,...,{useNativeDriver:true}).start()`
+    // вызывается на ЭТОМ `translate` — именно в этот момент RN подключает
+    // нативный узел (`connectAnimatedNodes`) к нативному модулю аниматора.
+    // Этот же класс узла уже был источником подтверждённого краша в этом
+    // проекте (2026-09-15, RunnerToken#halo) — гипотеза: на первом слайде
+    // возможно окно, где Fabric красит уже НОВЫЕ left/top (обычный style-
+    // проп, обычный коммит), а компенсирующий transform (отдельный нативный
+    // модуль, НЕ тот же коммит) ещё не успел долететь/подключиться — токен
+    // на кадр виден в конечной точке БЕЗ компенсации, что и читается как
+    // "телепортировал, потом заиграла анимация". Прогоняем no-op анимацию
+    // (0→0, длительность 0) сразу при монтировании — граф подключается в
+    // спокойный момент, а не во время первого настоящего перемещения.
+    // НЕ подтверждено живьём в этой сессии (нет доступа к устройству) —
+    // обоснованная, но не стопроцентно доказанная гипотеза, см. CLAUDE.md.
+    useEffect(() => {
+        Animated.timing(translate, { toValue: { x: 0, y: 0 }, duration: 0, useNativeDriver: true }).start();
+    }, [translate]);
+
     useEffect(() => {
         const id = translate.addListener((value) => { currentTranslateRef.current = value; });
         return () => translate.removeListener(id);
@@ -108,7 +130,25 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
     useLayoutEffect(() => {
         const scrolled = prevWindowStart.current !== windowStart;
         prevWindowStart.current = windowStart;
-        const resized = prevSize.current.width !== width || prevSize.current.height !== height;
+        // 2026-09-24, по живой жалобе пользователя ("каждый раз, с каждым
+        // бегуном" — мгновенный "телепорт" вместо слайда) — width/height
+        // (item.boxW/boxH в BoardGrid.js) считаются через floating-point
+        // умножение (tokenSize * BOARD_TOKEN_IMAGE_SCALE, где сам
+        // BOARD_TOKEN_IMAGE_SCALE = 1.18*1.3*1.15 — не целое число). Строгое
+        // !== ловит ЛЮБОЕ саб-пиксельное дрожание segmentW/segmentH между
+        // рендерами (обычное дело на Android при повторных layout-проходах —
+        // онлайн-соседний контент/безопасные отступы/т.п. слегка колеблют
+        // измеренную ширину контейнера доски на доли пикселя) как "реальный
+        // ресайз" — ветка ниже (scrolled||resized) мгновенно СБРАСЫВАЕТ
+        // компенсирующий transform в 0 БЕЗ анимации, то есть токен прыгает
+        // прямо на новую позицию вместо слайда — ровно на КАЖДОМ ходу, если
+        // эта саб-пиксельная дрожь достаточно часта. Допуск в половину
+        // пикселя — реальный ресайз (поворот экрана, смена раскладки) всегда
+        // даёт разницу в разы больше этого порога, ложные срабатывания на
+        // шум исключены.
+        const RESIZE_EPS = 0.5;
+        const resized = Math.abs(prevSize.current.width - width) > RESIZE_EPS
+            || Math.abs(prevSize.current.height - height) > RESIZE_EPS;
         prevSize.current = { width, height };
 
         const isFirstRender = prevPos.current == null;

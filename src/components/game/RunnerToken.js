@@ -6,22 +6,39 @@ import { colorKeyForHex } from '../../constants/runnerAnimHelpers';
 import { resolveSpriteAvatarFrame, resolveSpriteRef } from '../../constants/spritePacks';
 import { getAvatarGif, hasAvatarGif } from '../../constants/avatarGifs';
 // SpritePackAnimation — рендерер нового AI-спрайт-пака (assets/sprites/,
-// 2026-09-23, см. CLAUDE.md) — заменяет ЦЕЛИКОМ старую gif-анимацию
-// (constants/runnerAnimations.js, всё ещё в репозитории, просто больше не
-// импортируется отсюда) И старый комбинированный gif-спрайт-хак только для
-// Скаута/Android (constants/scoutSpriteSheets.js/SpriteSheetAnimation.js —
-// тоже оставлены нетронутыми, но теперь ничем не импортируются вообще —
-// их единственный потребитель, screens/__SpriteSheetPreview.js, удалён при
-// этой миграции, см. CLAUDE.md). Единый путь для ВСЕХ 5 типов и ОБЕИХ платформ —
-// никакого Platform.OS-ветвления тут больше не нужно: один заранее
-// перекрашенный PNG-лист на тип+статус+цвет декодируется ОДИН раз при
-// монтировании токена, смена анимационной позы — чистый сдвиг row/frameIndex
-// внутри уже загруженного листа, не смена source — тот самый класс
-// Android-decode-паузы, ради которого затевался старый scout-only хак,
-// снимается СТРУКТУРНО для всех типов сразу, без крос-фейда (не нужен, см.
-// докстринг SpritePackAnimation.js).
+// 2026-09-23, см. CLAUDE.md) — заменяет старый комбинированный gif-спрайт-
+// хак только для Скаута/Android (constants/scoutSpriteSheets.js/
+// SpriteSheetAnimation.js — оставлены нетронутыми, но ничем не импортируются
+// вообще — их единственный потребитель, screens/__SpriteSheetPreview.js,
+// удалён при этой миграции, см. CLAUDE.md). Один заранее перекрашенный PNG-
+// лист на тип+статус+цвет декодируется ОДИН раз при монтировании токена,
+// смена анимационной позы — чистый сдвиг row/frameIndex внутри уже
+// загруженного листа, не смена source — тот самый класс Android-decode-
+// паузы, ради которого затевался старый scout-only хак, снимается
+// СТРУКТУРНО, без крос-фейда (не нужен, см. докстринг SpritePackAnimation.js).
 import SpritePackAnimation from '../ui/SpritePackAnimation';
+// Старая gif-анимация (constants/runnerAnimations.js) — 2026-09-24, ВЕРНУЛИ
+// на веб (см. AI-summary ниже, "тормоза жуткие"). Уже 2026-09-20 живым
+// прогоном на реальном браузере пользователя было подтверждено: сама
+// техника многострочного PNG-листа (тогда — комбинированный gif-хак, теперь
+// — SpritePackAnimation) заметно тормозит именно веб-рендерер (react-native-
+// web гоняет каждую смену кадра через полноценный DOM/CSS reflow, не через
+// нативный decode, как на Android) — тогда решение было "спрайты только для
+// Android, веб — старые gif" (см. RunnerToken.js в истории коммитов). Этот
+// же класс регрессии вернулся 2026-09-23, когда компонент переписали на
+// ЕДИНЫЙ путь для обеих платформ без Platform.OS-ветвления вообще — заодно с
+// миграцией пользователь удалил всю папку `assets/images/runners/` (все
+// require() в этом файле стали битыми, никто их больше не импортировал —
+// сборка молчала, потому что мёртвый импорт никогда не резолвится).
+// Восстановлено из git-истории (`git checkout 13383bb --
+// src/assets/images/runners/`, коммит прямо ПЕРЕД миграцией на спрайты) —
+// файлы снова на месте, `getRunnerAnimationImage`/`getRunnerAvatarImage`
+// покрывают ВСЕ 5 типов (не только Скаута, как в самом первом scout-хаке) —
+// восстановление веб-ветки не требует отдельного хака под конкретный тип.
+import { getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
 import { colors } from '../../theme';
+
+const IS_WEB = Platform.OS === 'web';
 
 // Вращающийся пунктирный ореол вокруг активного бегуна (см. selected проп) —
 // по прямому запросу пользователя, 2026-09-09, ВМЕСТО прежней белой рамки-
@@ -95,7 +112,7 @@ const HALO_SPIN_MS = 3000;
  * контейнер (см. BoardGrid#styles.tokenLayerBottom), этот проп красит только
  * внутреннее позиционирование картинки относительно кольца.
  */
-export default function RunnerToken({
+function RunnerToken({
     type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
     showRing = false, imageAlign = 'center', style,
 }) {
@@ -109,15 +126,27 @@ export default function RunnerToken({
     // Аватар (карточка в панели игрока) — по прямому запросу пользователя,
     // 2026-09-24, отдельный набор анимированных GIF (constants/avatarGifs.js,
     // assets/images/avatars/), И для healthy, И для damaged (scout/tank/
-    // athlete) — вместо статичного кадра из спрайт-пака. Drone (Жнец) — один
-    // сет без разделения по статусу (он и не получает damaged по игровым
-    // правилам). Мяч без аватарки вообще — hasAvatarGif для него всегда
-    // false, используется прежний фолбэк (статичный кадр спрайт-пака).
+    // athlete) — вместо статичного кадра из спрайт-пака/старой gif-системы.
+    // Drone (Жнец) — один сет без разделения по статусу (он и не получает
+    // damaged по игровым правилам). Мяч без аватарки вообще — hasAvatarGif
+    // для него всегда false, используется платформенный фолбэк ниже.
     const avatarGifSource = avatar && hasAvatarGif(type, status) ? getAvatarGif(type, status, colorKey) : null;
 
-    // Доска — анимированный кадр текущего `anim` (спрайт-пак). Аватар без
-    // gif (damaged) — статичный кадр "south" из спрайт-пака, как и раньше.
-    const frame = avatarGifSource
+    // ВЕБ — старая gif-анимация (constants/runnerAnimations.js), НЕ спрайт-
+    // пак, см. докстринг импорта выше ("тормоза жуткие"). Один <Image> на
+    // состояние — GIF анимируется нативным браузерным декодером, без единого
+    // React-ре-рендера на кадр (в отличие от SpritePackAnimation, которая
+    // тикает JS-таймером и двигает layout-позицию каждые ~120мс на КАЖДЫЙ
+    // токен). Не используется, если avatarGifSource уже покрыл аватар выше.
+    const webGifSource = IS_WEB && !avatarGifSource
+        ? (avatar ? getRunnerAvatarImage(type, status, colorKey) : getRunnerAnimationImage(type, status, anim, colorKey))
+        : null;
+
+    // Native (Android/iOS) ИЛИ веб без покрытия в старом наборе (не должно
+    // случаться — все 5 типов есть в runnerAnimations.js, см. докстринг
+    // импорта) — спрайт-пак, как и было. На вебе, когда webGifSource уже
+    // нашёлся, resolveSpriteRef вызывать незачем — избегаем лишней работы.
+    const frame = avatarGifSource || webGifSource
         ? null
         : avatar
             ? resolveSpriteAvatarFrame(type, status, colorKey)
@@ -235,13 +264,19 @@ export default function RunnerToken({
                 />
             )}
             <View style={imgBoxStyle}>
-                {avatarGifSource ? (
-                    <Image source={avatarGifSource} resizeMode="contain" fadeDuration={0} style={imgBoxStyle} />
+                {avatarGifSource || webGifSource ? (
+                    <Image source={avatarGifSource || webGifSource} resizeMode="contain" fadeDuration={0} style={imgBoxStyle} />
                 ) : (
                     <SpritePackAnimation
                         frame={frame}
                         boxSize={imgBoxStyle.width}
                         staticFrameIndex={avatar ? frame?.frameIndex : null}
+                        // loop=false для ЛЮБОГО транзиентного шага очереди
+                        // (move/attack/gotShot/fly/start/bomb/heal/destroyed/
+                        // burn/acid) — играется один раз и держит последний
+                        // кадр, см. докстринг SpritePackAnimation.js. loop=true
+                        // ТОЛЬКО для настоящего idle (anim==null).
+                        loop={!anim}
                     />
                 )}
             </View>
@@ -249,6 +284,30 @@ export default function RunnerToken({
     );
 }
 
+// React.memo (2026-09-24, "тормоза жуткие" на обоих устройствах, обе
+// платформы) — ЖИВОЙ `dumpsys gfxinfo` на реальном Android-эмуляторе показал
+// 48.88% janky-кадров, доминирующая категория — "Slow issue draw commands"
+// (55к из 115к) — И ЭТО СОХРАНЯЛОСЬ В ПОЛНОМ ПРОСТОЕ (никто не ходит,
+// 48.48% на свежем сэмпле) — то есть нагрузка НЕ привязана к конкретному
+// действию/анимации, а фоновая, постоянная. `RunnerToken` (в отличие от
+// `RunnerCard`/`ReaperCard`/`FramePanel`/`PersonPanel`, уже мемоизированных
+// раньше по той же причине, см. их докстринги) НЕ был обёрнут в memo — на
+// доске (`BoardGrid`) он вызывается напрямую (не через `RunnerCard`), и
+// КАЖДЫЙ рендер `BoardGrid` (происходит на КАЖДОЕ применённое Mercure-
+// событие партии — частое дело в активной игре) заново прогонял весь этот
+// компонент + `resolveSpriteRef`(новый объект на каждый вызов, см.
+// spritePacks.js) + всё дерево `SpritePackAnimation` (3 вложенных View/Image)
+// для КАЖДОГО токена на доске, ДАЖЕ для тех, кто просто стоит в idle и чьи
+// пропсы физически не изменились. Для типового "все стоят" случая пропсы
+// сюда приходят СТАБИЛЬНЫМИ (примитивы + `anim===null`/`style===null`,
+// проверено чтением BoardGrid.js) — default (shallow) `React.memo` тут
+// реально отсекает лишнюю работу. Для АКТИВНО анимирующегося токена `anim`/
+// `style` иногда приходят НОВЫМ объектом на каждый рендер (коллизионная
+// пара/призрак) — memo в этом случае продолжит пере-рендерить как и раньше
+// (не хуже, чем без memo), просто не помогает именно этому меньшинству
+// токенов — не проверено живьём, дало ли это заметный эффект в игре с
+// БОЛЬШИМ числом одновременно активных токенов (было протестировано на 5
+// idle-бегунах, см. CLAUDE.md).
 const styles = StyleSheet.create({
     ring: {
         alignItems: 'center',
@@ -273,3 +332,5 @@ const styles = StyleSheet.create({
         animationIterationCount: 'infinite',
     },
 });
+
+export default React.memo(RunnerToken);
