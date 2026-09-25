@@ -161,6 +161,16 @@ export default function BoardGrid({
     // персонажа на дороге в браузере такими же, как на android"), платформенная
     // развилка убрана целиком — оба используют одни и те же значения.
     const BOARD_TOKEN_IMAGE_SCALE = 1.18 * 1.3 * 1.15;
+    // 2026-09-25 — попытка платформенной развилки (+10%, потом +25% СВЕРХУ
+    // BOARD_TOKEN_IMAGE_SCALE, только Android) ОТКАЧЕНА по прямому запросу
+    // пользователя для всех типов, КРОМЕ скаута — тот увеличение сохраняет.
+    // Общий множитель (переменная выше) снова как до 2026-09-25, унификация
+    // веб/android от 2026-09-09 не тронута для tank/athlete/reaper/ball.
+    // Только SPRINTER на Android получает доп. ×1.25 — см. использование
+    // ниже, в самом JSX (imageScale у солового RunnerToken), не здесь: это
+    // per-type решение, не общая константа геометрии (та нужна и для
+    // pairSize/tokenSize, которые ДОЛЖНЫ остаться едиными для всех типов).
+    const SPRINTER_ANDROID_IMAGE_SCALE = BOARD_TOKEN_IMAGE_SCALE * (Platform.OS === 'android' ? 1.25 : 1);
     // Пара при коллизии — несколько раундов живой правки на Android
     // (2026-08-31/09-01, по факту увиденного пользователем): 0.575 → 0.75 →
     // 0.9 от одиночной картинки, зазор 0.06 → 0.02 от сегмента. Финально —
@@ -1004,12 +1014,32 @@ export default function BoardGrid({
                                 status={item.runner.status}
                                 color={playerColorById[item.runner.playerId]}
                                 size={item.tokenSize}
-                                imageScale={BOARD_TOKEN_IMAGE_SCALE}
+                                imageScale={item.runner.type === RUNNER_TYPES.SPRINTER ? SPRINTER_ANDROID_IMAGE_SCALE : BOARD_TOKEN_IMAGE_SCALE}
                                 showRing={false}
                                 imageAlign={item.anchorBottom ? 'bottom' : 'center'}
                                 selected={item.runnerId === selectedRunnerId}
                                 anim={item.anim}
-                                style={item.innerOffsetX ? { transform: [{ translateX: item.innerOffsetX }] } : null}
+                                style={
+                                    // Скаут (SPRINTER) — на 10% высоты сегмента ниже, чем
+                                    // остальные типы, ТОЛЬКО на Android (2026-09-25, прямой
+                                    // запрос пользователя, потом РАСШИРЕН на коллизию тоже —
+                                    // применяется ВЕЗДЕ, включая пару; затем уточнено, что
+                                    // сдвиг нужен только на Android, как и SPRINTER_ANDROID_
+                                    // IMAGE_SCALE выше — веб не трогаем). ОДИН объект style
+                                    // с ОДНИМ массивом transform — если писать innerOffsetX
+                                    // и этот сдвиг двумя РАЗНЫМИ объектами в style-массиве,
+                                    // RN не мёрджит их transform, а берёт последний целиком
+                                    // (потерялся бы горизонтальный разъезд пары у скаута в
+                                    // коллизии) — оба транслейта собираются в ОДИН массив,
+                                    // filter(Boolean) убирает неприменимые.
+                                    (item.innerOffsetX || (item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android')) && {
+                                        transform: [
+                                            item.innerOffsetX && { translateX: item.innerOffsetX },
+                                            item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android'
+                                                && { translateY: Math.round(segmentH * 0.1) },
+                                        ].filter(Boolean),
+                                    }
+                                }
                                 // ПРОСТО onAnimStepEnd (стабильная ссылка из
                                 // props, см. GameBoardScreen#runnerAnim.completeStep),
                                 // НЕ инлайн-замыкание — RunnerToken, в отличие

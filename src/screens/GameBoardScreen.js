@@ -563,8 +563,27 @@ export default function GameBoardScreen({ route, navigation }) {
                     if (pendingMineCellIdsRef.current.delete(mineCellKey)) mineBlasts.trigger(mineCellKey);
                 }
                 : undefined;
-            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart)
-                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); }
+            // Звук-комментарий смерти (2026-09-25, живая жалоба пользователя:
+            // "звук смерти проигрывается в самом начале хода, а не тогда,
+            // когда по факту проигрывается анимация смерти") — раньше играл
+            // ПРЯМО ЗДЕСЬ, синхронно с этим вызовом triggerWithSound (т.е. в
+            // момент, когда шаг только ставится в очередь useRunnerAnimations,
+            // см. trigger() там) — если у бегуна уже что-то играло (каскад
+            // отброс→... →destroyed), реальная терминальная поза стартовала
+            // позже, а звук уже прозвучал. Тот же случай, что уже решён для
+            // pendingDeathRunnerIds чуть выше (deathOnStart) — переносим и
+            // звук на ТОТ ЖЕ `onStart`, единственный в проекте сигнал "этот
+            // шаг РЕАЛЬНО начал играть" (advanceQueue в useRunnerAnimations.js
+            // зовёт onStart ровно в момент, когда terminal-поза становится
+            // активной). НЕ трогал collision/anomalyHole/ricochet/miss —
+            // те синхронны с событием НАМЕРЕННО (см. collisionCommentPlayedRef
+            // ниже, фикс 2026-09-20 — синхронизация с позой там раньше давала
+            // обратный порядок звуков).
+            const deathCommentOnStart = (kind === 'destroyed' || kind === 'acid' || kind === 'burn')
+                ? () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed))
+                : undefined;
+            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart || deathCommentOnStart)
+                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); deathCommentOnStart?.(); }
                 : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
             else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra);
@@ -583,18 +602,9 @@ export default function GameBoardScreen({ route, navigation }) {
                 // момента, когда токен реально начинал двигаться визуально).
                 const type = extra?.runnerType ?? gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(startSound, pickStartSoundSource(type));
-            } else if (kind === 'destroyed' || kind === 'acid' || kind === 'burn') {
-                // Любой способ уничтожения (выстрел/стена/ловушка Жнеца/
-                // отброс за край и т.п.) — этот kind триггерится ТОЛЬКО на
-                // реальное ухудшение статуса до 'destroyed', см. statusWorsened
-                // в lib/runnerAnimTriggers.js, повторов на один и тот же
-                // бегун быть не должно. 'acid'/'burn' (2026-09-12/13, по
-                // прямому запросу) — терминальная поза смерти на клетке wall,
-                // это ТОЖЕ уничтожение (см. lib/runnerAnimTriggers.js — оба
-                // kind заменяют обычный 'destroyed', отдельного вызова с
-                // kind==='destroyed' для этого случая никогда не будет).
-                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed));
             }
+            // 'destroyed'/'acid'/'burn' — см. deathCommentOnStart выше, звук
+            // теперь играет через onStart, не здесь.
         },
         [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, releaseHeldCellOnStart, mineBlasts.trigger],
     );

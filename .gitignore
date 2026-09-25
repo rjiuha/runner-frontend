@@ -36,3 +36,7 @@ google-services.json
 .expo/
 node_modules/
 _native_sprites_backup/
+
+# Scratch/debug files (adb screenshots, logcat dumps) — не исходники,
+# случайно попали в коммит 75d9afe 2026-09-25 (~20МБ png), см. CLAUDE.md
+.claude_scratch/

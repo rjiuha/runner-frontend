@@ -263,9 +263,36 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers
                     toPosition: { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY },
                 });
                 if (animHelpers?.onceStepDone && animHelpers?.completeWaitStep) {
+                    // 2026-09-25 (живая жалоба: "при столкновении двух
+                    // одинаковых по размеру бегунов не проигрывается
+                    // анимация коллизии") — настоящая причина: при
+                    // авторазрешаемой коллизии (Collision::collision() на
+                    // бэке — читан, вызывается ТОЛЬКО когда размеры равны,
+                    // без extraTurnPlayer/диалога, см. CLAUDE.md) победитель
+                    // почти всегда УЖЕ settled к моменту, когда приходит
+                    // отброс проигравшего (события идут одним и тем же
+                    // тиком/очень близко друг к другу) — `onceStepDone`
+                    // тогда зовёт колбэк СИНХРОННО, и `completeWaitStep` +
+                    // `trigger('fly', …)` уезжают в ТОМ ЖЕ React-батче, что
+                    // и само появление 'wait'. BoardGrid#tokenOverlay
+                    // (isArriving-гейт) физически не успевает отрисовать ни
+                    // одного кадра с обоими бегунами settled на одной
+                    // клетке — пара мгновенно перескакивает из "победитель
+                    // ещё едет" сразу в "проигравший уже улетает", минуя
+                    // кадр, в который вообще может появиться поза
+                    // столкновения. requestAnimationFrame здесь — не
+                    // угаданная длительность (никакого таймера с числом
+                    // мс), а гарантия РОВНО одного лишнего кадра отрисовки
+                    // между "оба settled" и "проигравший начал fly" — этого
+                    // достаточно, чтобы React закоммитил промежуточное
+                    // состояние, tokenOverlay создал pairKey и
+                    // COLLISION_MIN_HOLD_MS (см. BoardGrid.js) сам удержал
+                    // позу минимум секунду дальше.
                     animHelpers.onceStepDone(pushedFrom.id, () => {
-                        animHelpers.completeWaitStep(patch.id);
-                        trigger(patch.id, 'fly', { toPosition });
+                        requestAnimationFrame(() => {
+                            animHelpers.completeWaitStep(patch.id);
+                            trigger(patch.id, 'fly', { toPosition });
+                        });
                     });
                     return;
                 }

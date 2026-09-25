@@ -480,3 +480,520 @@
 09-25 15:03:28.087 I/ReactNativeJS( 4523): '[15:03:28.086] [android:test] [API]', '<- GET /runner_game 200 OK (2192мс)'
 09-25 15:03:28.087 I/ReactNativeJS( 4523): '[15:03:28.087] [android:test] [MERCURE]', 'sync() OK gen=5 version=19 (из буфера доиграно 0)'
 09-25 15:03:28.133 I/ReactNativeJS( 4523): '[15:03:28.133] [android:test] [MERCURE]', 'SSE open gen=5'
+09-25 15:03:37.437 I/ReactNativeJS( 4523): '[15:03:37.436] [android:test] [POSEDBG]', 'unmount, last frame.source=', 615
+09-25 15:03:37.440 I/ReactNativeJS( 4523): '[15:03:37.439] [android:test] [POSEDBG]', 'unmount, last frame.source=', 66
+09-25 15:03:41.855 I/ReactNativeJS( 4523): Running "main" with {"rootTag":1,"initialProps":{},"fabric":true}
+09-25 15:03:42.183 I/ReactNativeJS( 4523): '[15:03:42.181] [android:test] [AUTH]', 'restore-session', 'id=1 username=test'
+09-25 15:03:42.304 I/ReactNativeJS( 4523): '[15:03:42.304] [android:test] [API]', '-> GET /me', ''
+09-25 15:03:45.448 I/ReactNativeJS( 4523): '[15:03:45.447] [android:test] [API]', '<- GET /me 200 OK (3143мс)'
+09-25 15:03:46.730 I/ReactNativeJS( 4523): '[15:03:46.729] [android:test] [API]', '-> GET /lobbies?limit=20&offset=0', ''
+09-25 15:03:47.571 I/ReactNativeJS( 4523): '[15:03:47.569] [android:test] [API]', '<- GET /lobbies?limit=20&offset=0 200 OK (840мс)'
+09-25 15:03:50.806 I/ReactNativeJS( 4523): '[15:03:50.806] [android:test] [API]', '-> POST /lobby/118/join', ''
+09-25 15:03:52.631 I/ReactNativeJS( 4523): '[15:03:52.631] [android:test] [API]', '<- POST /lobby/118/join 201 OK (1824мс)'
+09-25 15:03:52.694 I/ReactNativeJS( 4523): '[15:03:52.694] [android:test] [MERCURE]', 'connect() gen=1 topic=lobby_118'
+09-25 15:03:52.698 I/ReactNativeJS( 4523): '[15:03:52.697] [android:test] [MERCURE]', 'sync() старт gen=1'
+09-25 15:03:52.702 I/ReactNativeJS( 4523): '[15:03:52.698] [android:test] [API]', '-> GET /lobby/118', ''
+09-25 15:03:53.363 I/ReactNativeJS( 4523): '[15:03:53.363] [android:test] [API]', '<- GET /lobby/118 200 OK (665мс)'
+09-25 15:03:53.365 I/ReactNativeJS( 4523): '[15:03:53.363] [android:test] [MERCURE]', 'sync() OK gen=1 version=1 (из буфера доиграно 0)'
+09-25 15:03:53.943 I/ReactNativeJS( 4523): '[15:03:53.943] [android:test] [MERCURE]', 'SSE open gen=1'
+09-25 15:03:56.093 I/ReactNativeJS( 4523): '[15:03:56.092] [android:test] [MERCURE]', 'event v2 (player_ready) — применено'
+09-25 15:03:56.143 I/ReactNativeJS( 4523): '[15:03:56.143] [android:test] [API]', '-> POST /lobby/ready', ''
+09-25 15:03:56.937 I/ReactNativeJS( 4523): '[15:03:56.937] [android:test] [MERCURE]', 'event v3 (player_ready) — применено'
+09-25 15:03:56.952 I/ReactNativeJS( 4523): '[15:03:56.952] [android:test] [MERCURE]', 'event v4 (game_created) — применено'
+09-25 15:03:57.152 I/ReactNativeJS( 4523): '[15:03:57.150] [android:test] [MERCURE]', 'connect() gen=1 topic=runner_game_98'
+09-25 15:03:57.153 I/ReactNativeJS( 4523): '[15:03:57.152] [android:test] [MERCURE]', 'sync() старт gen=1'
+09-25 15:03:57.155 I/ReactNativeJS( 4523): '[15:03:57.154] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:03:57.167 I/ReactNativeJS( 4523): '[15:03:57.167] [android:test] [API]', '<- POST /lobby/ready 200 OK (1024мс)'
+09-25 15:03:57.934 I/ReactNativeJS( 4523): '[15:03:57.934] [android:test] [API]', '<- GET /runner_game 200 OK (780мс)'
+09-25 15:03:57.941 I/ReactNativeJS( 4523): '[15:03:57.941] [android:test] [MERCURE]', 'sync() OK gen=1 version=1 (из буфера доиграно 0)'
+09-25 15:03:58.261 I/ReactNativeJS( 4523): '[15:03:58.260] [android:test] [MERCURE]', 'SSE open gen=1'
+09-25 15:04:42.190 I/ReactNativeJS( 4523): '[15:04:42.189] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:04:42.965 I/ReactNativeJS( 4523): '[15:04:42.964] [android:test] [API]', '<- GET /runner_game 200 OK (775мс)'
+09-25 15:04:42.965 I/ReactNativeJS( 4523): '[15:04:42.965] [android:test] [MERCURE]', 'stale-check: локально v1, на бэке v1', '— норма'
+09-25 15:05:27.203 I/ReactNativeJS( 4523): '[15:05:27.203] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:05:28.190 I/ReactNativeJS( 4523): '[15:05:28.190] [android:test] [API]', '<- GET /runner_game 200 OK (987мс)'
+09-25 15:05:28.193 I/ReactNativeJS( 4523): '[15:05:28.190] [android:test] [MERCURE]', 'stale-check: локально v1, на бэке v1', '— норма'
+09-25 15:06:12.219 I/ReactNativeJS( 4523): '[15:06:12.219] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:06:13.247 I/ReactNativeJS( 4523): '[15:06:13.247] [android:test] [API]', '<- GET /runner_game 200 OK (1028мс)'
+09-25 15:06:13.247 I/ReactNativeJS( 4523): '[15:06:13.247] [android:test] [MERCURE]', 'stale-check: локально v1, на бэке v1', '— норма'
+09-25 15:06:57.236 I/ReactNativeJS( 4523): '[15:06:57.236] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:06:58.099 I/ReactNativeJS( 4523): '[15:06:58.098] [android:test] [API]', '<- GET /runner_game 200 OK (862мс)'
+09-25 15:06:58.100 I/ReactNativeJS( 4523): '[15:06:58.099] [android:test] [MERCURE]', 'stale-check: локально v1, на бэке v1', '— норма'
+09-25 15:07:42.252 I/ReactNativeJS( 4523): '[15:07:42.252] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:07:43.100 I/ReactNativeJS( 4523): '[15:07:43.100] [android:test] [API]', '<- GET /runner_game 200 OK (848мс)'
+09-25 15:07:43.100 I/ReactNativeJS( 4523): '[15:07:43.100] [android:test] [MERCURE]', 'stale-check: локально v1, на бэке v1', '— норма'
+09-25 15:08:27.270 I/ReactNativeJS( 4523): '[15:08:27.269] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:08:28.177 I/ReactNativeJS( 4523): '[15:08:28.177] [android:test] [API]', '<- GET /runner_game 200 OK (908мс)'
+09-25 15:08:28.177 I/ReactNativeJS( 4523): '[15:08:28.177] [android:test] [MERCURE]', 'stale-check: локально v1, на бэке v1', '— норма'
+09-25 15:09:11.727 I/ReactNativeJS( 4523): '[15:09:11.727] [android:test] [MERCURE]', 'event v2 (step_selection) — применено'
+09-25 15:09:11.812 I/ReactNativeJS( 4523): '[15:09:11.812] [android:test] [MERCURE]', 'event v3 (player_step) — применено'
+09-25 15:09:12.287 I/ReactNativeJS( 4523): '[15:09:12.287] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:09:13.302 I/ReactNativeJS( 4523): '[15:09:13.302] [android:test] [API]', '<- GET /runner_game 200 OK (1015мс)'
+09-25 15:09:13.302 I/ReactNativeJS( 4523): '[15:09:13.302] [android:test] [MERCURE]', 'stale-check: локально v3, на бэке v3', '— норма'
+09-25 15:09:14.938 I/ReactNativeJS( 4523): '[15:09:14.937] [android:test] [MERCURE]', 'transient: step_ability'
+09-25 15:09:15.011 I/ReactNativeJS( 4523): '[15:09:15.011] [android:test] [MERCURE]', 'event v4 (player_step) — применено'
+09-25 15:09:18.170 I/ReactNativeJS( 4523): '[15:09:18.170] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:09:18.181 I/ReactNativeJS( 4523): '[15:09:18.180] [android:test] [MERCURE]', 'event v5 (runner_save) — применено'
+09-25 15:09:18.204 I/ReactNativeJS( 4523): '[15:09:18.199] [android:test] [WINDBG]', 'НЕТ prevKnown для', 773, 'anim=', 'start'
+09-25 15:09:18.284 I/ReactNativeJS( 4523): '[15:09:18.283] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 118, 'y=', 383.5
+09-25 15:09:18.298 I/ReactNativeJS( 4523): '[15:09:18.297] [android:test] [POSEDBG]', 'mount, initial frame.source=', 248, 'loop=', false, 'static=', null
+09-25 15:09:18.301 I/ReactNativeJS( 4523): '[15:09:18.299] [android:test] [POSEDBG]', 'клип сброшен: source=', 248, 'row=', 0, 'frameCount=', 11, 'loop=', false, 'static=', null
+09-25 15:09:19.552 I/ReactNativeJS( 4523): '[15:09:19.552] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 248, 'frameCount=', 11
+09-25 15:09:19.646 I/ReactNativeJS( 4523): '[15:09:19.646] [android:test] [POSEDBG]', 'клип сброшен: source=', 256, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:09:22.960 I/ReactNativeJS( 4523): '[15:09:22.960] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:09:23.078 I/ReactNativeJS( 4523): '[15:09:23.078] [android:test] [MERCURE]', 'event v6 (runner_save) — применено'
+09-25 15:09:23.083 I/ReactNativeJS( 4523): '[15:09:23.083] [android:test] [MERCURE]', 'transient: danger'
+09-25 15:09:23.085 I/ReactNativeJS( 4523): '[15:09:23.084] [android:test] [MERCURE]', 'event v7 (game_cell_updated) — применено'
+09-25 15:09:23.092 I/ReactNativeJS( 4523): '[15:09:23.091] [android:test] [MERCURE]', 'event v8 (runner_save) — применено'
+09-25 15:09:23.093 I/ReactNativeJS( 4523): '[15:09:23.093] [android:test] [MERCURE]', 'transient: damage'
+09-25 15:09:23.094 I/ReactNativeJS( 4523): '[15:09:23.094] [android:test] [MERCURE]', 'event v9 (runner_damage) — применено'
+09-25 15:09:23.099 I/ReactNativeJS( 4523): '[15:09:23.099] [android:test] [MERCURE]', 'transient: rocket'
+09-25 15:09:23.100 I/ReactNativeJS( 4523): '[15:09:23.100] [android:test] [MERCURE]', 'event v10 (runner_save) — применено'
+09-25 15:09:23.102 I/ReactNativeJS( 4523): '[15:09:23.102] [android:test] [MERCURE]', 'event v11 (player_step) — применено'
+09-25 15:09:23.103 I/ReactNativeJS( 4523): '[15:09:23.102] [android:test] [MERCURE]', 'event v12 (player_step) — применено'
+09-25 15:09:23.103 I/ReactNativeJS( 4523): '[15:09:23.103] [android:test] [MERCURE]', 'event v13 (game_turn_changed) — применено'
+09-25 15:09:23.209 I/ReactNativeJS( 4523): '[15:09:23.198] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 383.5 }, 'to=', { x: 118, y: 324.5 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:09:23.391 I/ReactNativeJS( 4523): '[15:09:23.389] [android:test] [POSEDBG]', 'клип сброшен: source=', 352, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:09:24.664 I/ReactNativeJS( 4523): '[15:09:24.663] [android:test] [POSEDBG]', 'клип сброшен: source=', 392, 'row=', 0, 'frameCount=', 11, 'loop=', false, 'static=', null
+09-25 15:09:25.901 I/ReactNativeJS( 4523): '[15:09:25.901] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 392, 'frameCount=', 11
+09-25 15:09:25.963 I/ReactNativeJS( 4523): '[15:09:25.962] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 324.5 }, 'to=', { x: 118, y: 265.5 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:09:25.997 I/ReactNativeJS( 4523): '[15:09:25.996] [android:test] [POSEDBG]', 'клип сброшен: source=', 324, 'row=', 0, 'frameCount=', 9, 'loop=', true, 'static=', null
+09-25 15:09:27.435 I/ReactNativeJS( 4523): '[15:09:27.433] [android:test] [POSEDBG]', 'клип сброшен: source=', 384, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:09:57.303 I/ReactNativeJS( 4523): '[15:09:57.302] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:09:58.228 I/ReactNativeJS( 4523): '[15:09:58.228] [android:test] [API]', '<- GET /runner_game 200 OK (926мс)'
+09-25 15:09:58.229 I/ReactNativeJS( 4523): '[15:09:58.228] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:10:42.319 I/ReactNativeJS( 4523): '[15:10:42.319] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:10:43.284 I/ReactNativeJS( 4523): '[15:10:43.283] [android:test] [API]', '<- GET /runner_game 200 OK (964мс)'
+09-25 15:10:43.284 I/ReactNativeJS( 4523): '[15:10:43.284] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:11:27.337 I/ReactNativeJS( 4523): '[15:11:27.337] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:11:28.182 I/ReactNativeJS( 4523): '[15:11:28.182] [android:test] [API]', '<- GET /runner_game 200 OK (845мс)'
+09-25 15:11:28.183 I/ReactNativeJS( 4523): '[15:11:28.183] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:12:12.352 I/ReactNativeJS( 4523): '[15:12:12.352] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:12:13.248 I/ReactNativeJS( 4523): '[15:12:13.248] [android:test] [API]', '<- GET /runner_game 200 OK (896мс)'
+09-25 15:12:13.249 I/ReactNativeJS( 4523): '[15:12:13.249] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:12:57.370 I/ReactNativeJS( 4523): '[15:12:57.370] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:12:58.308 I/ReactNativeJS( 4523): '[15:12:58.307] [android:test] [API]', '<- GET /runner_game 200 OK (937мс)'
+09-25 15:12:58.308 I/ReactNativeJS( 4523): '[15:12:58.308] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:13:22.460 I/ReactNativeJS( 4523): '[15:13:22.459] [android:test] [MERCURE]', 'SSE error gen=1 — реконнект через 744мс (попытка №1)'
+09-25 15:13:23.238 I/ReactNativeJS( 4523): '[15:13:23.237] [android:test] [MERCURE]', 'connect() gen=2 topic=runner_game_98'
+09-25 15:13:23.238 I/ReactNativeJS( 4523): '[15:13:23.238] [android:test] [MERCURE]', 'sync() старт gen=2'
+09-25 15:13:23.238 I/ReactNativeJS( 4523): '[15:13:23.238] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:13:24.900 I/ReactNativeJS( 4523): '[15:13:24.900] [android:test] [API]', '<- GET /runner_game 200 OK (1662мс)'
+09-25 15:13:24.901 I/ReactNativeJS( 4523): '[15:13:24.901] [android:test] [MERCURE]', 'sync() OK gen=2 version=13 (из буфера доиграно 0)'
+09-25 15:13:24.979 I/ReactNativeJS( 4523): '[15:13:24.979] [android:test] [MERCURE]', 'SSE open gen=2'
+09-25 15:13:42.385 I/ReactNativeJS( 4523): '[15:13:42.385] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:13:43.277 I/ReactNativeJS( 4523): '[15:13:43.277] [android:test] [API]', '<- GET /runner_game 200 OK (892мс)'
+09-25 15:13:43.277 I/ReactNativeJS( 4523): '[15:13:43.277] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:14:27.404 I/ReactNativeJS( 4523): '[15:14:27.403] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:14:28.186 I/ReactNativeJS( 4523): '[15:14:28.186] [android:test] [API]', '<- GET /runner_game 200 OK (783мс)'
+09-25 15:14:28.187 I/ReactNativeJS( 4523): '[15:14:28.186] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:15:12.418 I/ReactNativeJS( 4523): '[15:15:12.417] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:15:13.301 I/ReactNativeJS( 4523): '[15:15:13.300] [android:test] [API]', '<- GET /runner_game 200 OK (883мс)'
+09-25 15:15:13.301 I/ReactNativeJS( 4523): '[15:15:13.301] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:15:57.436 I/ReactNativeJS( 4523): '[15:15:57.435] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:15:58.200 I/ReactNativeJS( 4523): '[15:15:58.200] [android:test] [API]', '<- GET /runner_game 200 OK (765мс)'
+09-25 15:15:58.200 I/ReactNativeJS( 4523): '[15:15:58.200] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:16:42.453 I/ReactNativeJS( 4523): '[15:16:42.452] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:16:43.432 I/ReactNativeJS( 4523): '[15:16:43.432] [android:test] [API]', '<- GET /runner_game 200 OK (980мс)'
+09-25 15:16:43.432 I/ReactNativeJS( 4523): '[15:16:43.432] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:17:27.471 I/ReactNativeJS( 4523): '[15:17:27.470] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:17:28.490 I/ReactNativeJS( 4523): '[15:17:28.489] [android:test] [API]', '<- GET /runner_game 200 OK (1019мс)'
+09-25 15:17:28.491 I/ReactNativeJS( 4523): '[15:17:28.490] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:18:12.488 I/ReactNativeJS( 4523): '[15:18:12.487] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:18:13.408 I/ReactNativeJS( 4523): '[15:18:13.408] [android:test] [API]', '<- GET /runner_game 200 OK (921мс)'
+09-25 15:18:13.408 I/ReactNativeJS( 4523): '[15:18:13.408] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:18:57.504 I/ReactNativeJS( 4523): '[15:18:57.504] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:18:58.380 I/ReactNativeJS( 4523): '[15:18:58.379] [android:test] [API]', '<- GET /runner_game 200 OK (875мс)'
+09-25 15:18:58.382 I/ReactNativeJS( 4523): '[15:18:58.381] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:19:42.519 I/ReactNativeJS( 4523): '[15:19:42.519] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:19:43.521 I/ReactNativeJS( 4523): '[15:19:43.521] [android:test] [API]', '<- GET /runner_game 200 OK (1002мс)'
+09-25 15:19:43.522 I/ReactNativeJS( 4523): '[15:19:43.521] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:20:27.537 I/ReactNativeJS( 4523): '[15:20:27.536] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:20:28.578 I/ReactNativeJS( 4523): '[15:20:28.578] [android:test] [API]', '<- GET /runner_game 200 OK (1042мс)'
+09-25 15:20:28.578 I/ReactNativeJS( 4523): '[15:20:28.578] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:21:12.553 I/ReactNativeJS( 4523): '[15:21:12.553] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:21:13.517 I/ReactNativeJS( 4523): '[15:21:13.517] [android:test] [API]', '<- GET /runner_game 200 OK (964мс)'
+09-25 15:21:13.518 I/ReactNativeJS( 4523): '[15:21:13.518] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:21:57.570 I/ReactNativeJS( 4523): '[15:21:57.570] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:21:58.508 I/ReactNativeJS( 4523): '[15:21:58.508] [android:test] [API]', '<- GET /runner_game 200 OK (938мс)'
+09-25 15:21:58.509 I/ReactNativeJS( 4523): '[15:21:58.509] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:22:42.498 I/ReactNativeJS( 4523): '[15:22:42.498] [android:test] [MERCURE]', 'SSE error gen=2 — реконнект через 585мс (попытка №1)'
+09-25 15:22:42.587 I/ReactNativeJS( 4523): '[15:22:42.587] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:22:43.119 I/ReactNativeJS( 4523): '[15:22:43.119] [android:test] [MERCURE]', 'connect() gen=3 topic=runner_game_98'
+09-25 15:22:43.119 I/ReactNativeJS( 4523): '[15:22:43.119] [android:test] [MERCURE]', 'sync() старт gen=3'
+09-25 15:22:43.120 I/ReactNativeJS( 4523): '[15:22:43.119] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:22:43.668 I/ReactNativeJS( 4523): '[15:22:43.668] [android:test] [API]', '<- GET /runner_game 200 OK (1081мс)'
+09-25 15:22:43.670 I/ReactNativeJS( 4523): '[15:22:43.668] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:22:44.200 I/ReactNativeJS( 4523): '[15:22:44.199] [android:test] [API]', '<- GET /runner_game 200 OK (1080мс)'
+09-25 15:22:44.202 I/ReactNativeJS( 4523): '[15:22:44.202] [android:test] [MERCURE]', 'sync() OK gen=3 version=13 (из буфера доиграно 0)'
+09-25 15:22:44.280 I/ReactNativeJS( 4523): '[15:22:44.280] [android:test] [MERCURE]', 'SSE open gen=3'
+09-25 15:23:27.603 I/ReactNativeJS( 4523): '[15:23:27.603] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:23:28.560 I/ReactNativeJS( 4523): '[15:23:28.560] [android:test] [API]', '<- GET /runner_game 200 OK (957мс)'
+09-25 15:23:28.562 I/ReactNativeJS( 4523): '[15:23:28.560] [android:test] [MERCURE]', 'stale-check: локально v13, на бэке v13', '— норма'
+09-25 15:23:51.676 I/ReactNativeJS( 4523): '[15:23:51.675] [android:test] [GAME]', 'действие: старт (шаг=1)'
+09-25 15:23:51.677 I/ReactNativeJS( 4523): '[15:23:51.676] [android:test] [API]', '-> POST /runner_game/select', { runnerId: 775, dice: 4, type: 'DICE' }
+09-25 15:23:54.323 I/ReactNativeJS( 4523): '[15:23:54.322] [android:test] [MERCURE]', 'event v14 (step_selection) — применено'
+09-25 15:23:54.408 I/ReactNativeJS( 4523): '[15:23:54.408] [android:test] [MERCURE]', 'event v15 (player_step) — применено'
+09-25 15:23:54.411 I/ReactNativeJS( 4523): '[15:23:54.411] [android:test] [API]', '<- POST /runner_game/select 200 OK (2735мс)'
+09-25 15:23:54.412 I/ReactNativeJS( 4523): '[15:23:54.412] [android:test] [GAME]', 'действие: успех'
+09-25 15:23:56.605 I/ReactNativeJS( 4523): '[15:23:56.605] [android:test] [GAME]', 'действие: старт (шаг=2)'
+09-25 15:23:56.607 I/ReactNativeJS( 4523): '[15:23:56.605] [android:test] [API]', '-> POST /runner_game/ability', { accept: false, details: null }
+09-25 15:23:59.045 I/ReactNativeJS( 4523): '[15:23:59.045] [android:test] [MERCURE]', 'transient: step_ability'
+09-25 15:23:59.109 I/ReactNativeJS( 4523): '[15:23:59.109] [android:test] [MERCURE]', 'event v16 (player_step) — применено'
+09-25 15:23:59.131 I/ReactNativeJS( 4523): '[15:23:59.131] [android:test] [API]', '<- POST /runner_game/ability 200 OK (2526мс)'
+09-25 15:23:59.131 I/ReactNativeJS( 4523): '[15:23:59.131] [android:test] [GAME]', 'действие: успех'
+09-25 15:23:59.742 I/ReactNativeJS( 4523): '[15:23:59.742] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:23:59.743 I/ReactNativeJS( 4523): '[15:23:59.743] [android:test] [API]', '-> POST /runner_game/move', { firstPosition: 3, direction: null }
+09-25 15:24:02.089 I/ReactNativeJS( 4523): '[15:24:02.088] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:24:02.153 I/ReactNativeJS( 4523): '[15:24:02.153] [android:test] [MERCURE]', 'event v17 (runner_save) — применено'
+09-25 15:24:02.166 I/ReactNativeJS( 4523): '[15:24:02.166] [android:test] [API]', '<- POST /runner_game/move 200 OK (2423мс)'
+09-25 15:24:02.166 I/ReactNativeJS( 4523): '[15:24:02.166] [android:test] [GAME]', 'действие: успех'
+09-25 15:24:02.173 I/ReactNativeJS( 4523): '[15:24:02.173] [android:test] [WINDBG]', 'НЕТ prevKnown для', 775, 'anim=', 'start'
+09-25 15:24:02.286 I/ReactNativeJS( 4523): '[15:24:02.285] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 177, 'y=', 354
+09-25 15:24:02.302 I/ReactNativeJS( 4523): '[15:24:02.301] [android:test] [POSEDBG]', 'mount, initial frame.source=', 65, 'loop=', false, 'static=', null
+09-25 15:24:02.303 I/ReactNativeJS( 4523): '[15:24:02.302] [android:test] [POSEDBG]', 'клип сброшен: source=', 65, 'row=', 0, 'frameCount=', 11, 'loop=', false, 'static=', null
+09-25 15:24:03.553 I/ReactNativeJS( 4523): '[15:24:03.552] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 65, 'frameCount=', 11
+09-25 15:24:03.636 I/ReactNativeJS( 4523): '[15:24:03.635] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:24:04.254 I/ReactNativeJS( 4523): '[15:24:04.254] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:24:04.257 I/ReactNativeJS( 4523): '[15:24:04.255] [android:test] [API]', '-> POST /runner_game/move', { firstPosition: null, direction: 'UP' }
+09-25 15:24:06.715 I/ReactNativeJS( 4523): '[15:24:06.715] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:24:06.777 I/ReactNativeJS( 4523): '[15:24:06.777] [android:test] [MERCURE]', 'event v18 (runner_save) — применено'
+09-25 15:24:06.795 I/ReactNativeJS( 4523): '[15:24:06.795] [android:test] [API]', '<- POST /runner_game/move 200 OK (2540мс)'
+09-25 15:24:06.797 I/ReactNativeJS( 4523): '[15:24:06.795] [android:test] [GAME]', 'действие: успех'
+09-25 15:24:06.867 I/ReactNativeJS( 4523): '[15:24:06.866] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 354 }, 'to=', { x: 177, y: 295 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:24:06.917 I/ReactNativeJS( 4523): '[15:24:06.916] [android:test] [POSEDBG]', 'клип сброшен: source=', 113, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:08.385 I/ReactNativeJS( 4523): '[15:24:08.381] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:24:08.788 I/ReactNativeJS( 4523): '[15:24:08.788] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:24:08.788 I/ReactNativeJS( 4523): '[15:24:08.788] [android:test] [API]', '-> POST /runner_game/move', { firstPosition: null, direction: 'UP' }
+09-25 15:24:10.897 I/ReactNativeJS( 4523): '[15:24:10.896] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:24:10.972 I/ReactNativeJS( 4523): '[15:24:10.972] [android:test] [MERCURE]', 'event v19 (runner_save) — применено'
+09-25 15:24:10.974 I/ReactNativeJS( 4523): '[15:24:10.973] [android:test] [MERCURE]', 'transient: danger'
+09-25 15:24:10.974 I/ReactNativeJS( 4523): '[15:24:10.974] [android:test] [MERCURE]', 'event v20 (game_cell_updated) — применено'
+09-25 15:24:10.975 I/ReactNativeJS( 4523): '[15:24:10.975] [android:test] [MERCURE]', 'transient: anomaly'
+09-25 15:24:11.020 I/ReactNativeJS( 4523): '[15:24:11.020] [android:test] [MERCURE]', 'event v21 (runner_save) — применено'
+09-25 15:24:11.024 I/ReactNativeJS( 4523): '[15:24:11.022] [android:test] [MERCURE]', 'event v22 (player_step) — применено'
+09-25 15:24:11.030 I/ReactNativeJS( 4523): '[15:24:11.029] [android:test] [API]', '<- POST /runner_game/move 200 OK (2241мс)'
+09-25 15:24:11.030 I/ReactNativeJS( 4523): '[15:24:11.030] [android:test] [GAME]', 'действие: успех'
+09-25 15:24:11.132 I/ReactNativeJS( 4523): '[15:24:11.131] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 295 }, 'to=', { x: 177, y: 236 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:24:11.346 I/ReactNativeJS( 4523): '[15:24:11.333] [android:test] [POSEDBG]', 'клип сброшен: source=', 113, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:12.535 I/ReactNativeJS( 4523): '[15:24:12.533] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 236 }, 'to=', { x: 177, y: 295 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:24:12.620 I/ReactNativeJS( 4523): '[15:24:12.619] [android:test] [POSEDBG]', 'клип сброшен: source=', 69, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:12.641 I/ReactNativeJS( 4523): '[15:24:12.640] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:24:13.556 I/ReactNativeJS( 4523): '[15:24:13.555] [android:test] [API]', '<- GET /runner_game 200 OK (915мс)'
+09-25 15:24:13.558 I/ReactNativeJS( 4523): '[15:24:13.556] [android:test] [MERCURE]', 'stale-check: локально v22, на бэке v22', '— норма'
+09-25 15:24:14.036 I/ReactNativeJS( 4523): '[15:24:14.035] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:24:15.055 I/ReactNativeJS( 4523): '[15:24:15.055] [android:test] [GAME]', 'действие: старт (шаг=5)'
+09-25 15:24:15.058 I/ReactNativeJS( 4523): '[15:24:15.056] [android:test] [API]', '-> POST /runner_game/road_bonus', { accept: true }
+09-25 15:24:16.976 I/ReactNativeJS( 4523): '[15:24:16.976] [android:test] [MERCURE]', 'transient: step_road_bonus'
+09-25 15:24:17.080 I/ReactNativeJS( 4523): '[15:24:17.079] [android:test] [MERCURE]', 'event v23 (runner_save) — применено'
+09-25 15:24:17.081 I/ReactNativeJS( 4523): '[15:24:17.081] [android:test] [MERCURE]', 'event v24 (player_step) — применено'
+09-25 15:24:17.120 I/ReactNativeJS( 4523): '[15:24:17.118] [android:test] [API]', '<- POST /runner_game/road_bonus 200 OK (2062мс)'
+09-25 15:24:17.120 I/ReactNativeJS( 4523): '[15:24:17.120] [android:test] [GAME]', 'действие: успех'
+09-25 15:24:17.855 I/ReactNativeJS( 4523): '[15:24:17.855] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:24:17.855 I/ReactNativeJS( 4523): '[15:24:17.855] [android:test] [API]', '-> POST /runner_game/move', { firstPosition: null, direction: 'RIGHT_UP' }
+09-25 15:24:19.907 I/ReactNativeJS( 4523): '[15:24:19.906] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:24:19.972 I/ReactNativeJS( 4523): '[15:24:19.971] [android:test] [MERCURE]', 'event v25 (runner_save) — применено'
+09-25 15:24:19.975 I/ReactNativeJS( 4523): '[15:24:19.975] [android:test] [MERCURE]', 'event v26 (runner_save) — применено'
+09-25 15:24:19.976 I/ReactNativeJS( 4523): '[15:24:19.976] [android:test] [MERCURE]', 'transient: collision'
+09-25 15:24:20.026 I/ReactNativeJS( 4523): '[15:24:20.026] [android:test] [MERCURE]', 'event v27 (game_turn_changed) — применено'
+09-25 15:24:20.032 I/ReactNativeJS( 4523): '[15:24:20.032] [android:test] [API]', '<- POST /runner_game/move 200 OK (2177мс)'
+09-25 15:24:20.033 I/ReactNativeJS( 4523): '[15:24:20.033] [android:test] [GAME]', 'действие: успех'
+09-25 15:24:20.126 I/ReactNativeJS( 4523): '[15:24:20.124] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 295 }, 'to=', { x: 118, y: 265.5 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:24:20.233 I/ReactNativeJS( 4523): '[15:24:20.223] [android:test] [POSEDBG]', 'клип сброшен: source=', 117, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:21.637 I/ReactNativeJS( 4523): '[15:24:21.635] [android:test] [POSEDBG]', 'клип сброшен: source=', 396, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:21.647 I/ReactNativeJS( 4523): '[15:24:21.646] [android:test] [POSEDBG]', 'клип сброшен: source=', 133, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:28.297 I/ReactNativeJS( 4523): '[15:24:28.297] [android:test] [MERCURE]', 'transient: step_collision'
+09-25 15:24:28.360 I/ReactNativeJS( 4523): '[15:24:28.360] [android:test] [MERCURE]', 'event v28 (game_turn_changed) — применено'
+09-25 15:24:28.364 I/ReactNativeJS( 4523): '[15:24:28.364] [android:test] [MERCURE]', 'event v29 (runner_save) — применено'
+09-25 15:24:28.369 I/ReactNativeJS( 4523): '[15:24:28.368] [android:test] [MERCURE]', 'event v30 (player_step) — применено'
+09-25 15:24:28.371 I/ReactNativeJS( 4523): '[15:24:28.369] [android:test] [MERCURE]', 'event v31 (player_step) — применено'
+09-25 15:24:28.373 I/ReactNativeJS( 4523): '[15:24:28.373] [android:test] [MERCURE]', 'event v32 (game_turn_changed) — применено'
+09-25 15:24:29.102 I/ReactNativeJS( 4523): '[15:24:29.101] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 265.5 }, 'to=', { x: 177, y: 295 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:24:29.177 I/ReactNativeJS( 4523): '[15:24:29.176] [android:test] [POSEDBG]', 'клип сброшен: source=', 69, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:24:29.182 I/ReactNativeJS( 4523): '[15:24:29.182] [android:test] [POSEDBG]', 'клип сброшен: source=', 384, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:24:30.581 I/ReactNativeJS( 4523): '[15:24:30.580] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:24:57.636 I/ReactNativeJS( 4523): '[15:24:57.636] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:24:58.569 I/ReactNativeJS( 4523): '[15:24:58.569] [android:test] [API]', '<- GET /runner_game 200 OK (933мс)'
+09-25 15:24:58.569 I/ReactNativeJS( 4523): '[15:24:58.569] [android:test] [MERCURE]', 'stale-check: локально v32, на бэке v32', '— норма'
+09-25 15:25:02.317 I/ReactNativeJS( 4523): '[15:25:02.317] [android:test] [MERCURE]', 'event v33 (step_selection) — применено'
+09-25 15:25:02.392 I/ReactNativeJS( 4523): '[15:25:02.392] [android:test] [MERCURE]', 'event v34 (player_step) — применено'
+09-25 15:25:06.470 I/ReactNativeJS( 4523): '[15:25:06.470] [android:test] [MERCURE]', 'transient: step_ability'
+09-25 15:25:06.544 I/ReactNativeJS( 4523): '[15:25:06.543] [android:test] [MERCURE]', 'event v35 (ability_boost) — применено'
+09-25 15:25:06.546 I/ReactNativeJS( 4523): '[15:25:06.545] [android:test] [MERCURE]', 'event v36 (player_step) — применено'
+09-25 15:25:09.843 I/ReactNativeJS( 4523): '[15:25:09.843] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:09.911 I/ReactNativeJS( 4523): '[15:25:09.911] [android:test] [MERCURE]', 'event v37 (runner_save) — применено'
+09-25 15:25:09.927 I/ReactNativeJS( 4523): '[15:25:09.927] [android:test] [WINDBG]', 'НЕТ prevKnown для', 772, 'anim=', 'start'
+09-25 15:25:09.999 I/ReactNativeJS( 4523): '[15:25:09.997] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 59, 'y=', 354
+09-25 15:25:10.013 I/ReactNativeJS( 4523): '[15:25:10.012] [android:test] [POSEDBG]', 'mount, initial frame.source=', 432, 'loop=', false, 'static=', null
+09-25 15:25:10.014 I/ReactNativeJS( 4523): '[15:25:10.013] [android:test] [POSEDBG]', 'клип сброшен: source=', 432, 'row=', 0, 'frameCount=', 11, 'loop=', false, 'static=', null
+09-25 15:25:11.253 I/ReactNativeJS( 4523): '[15:25:11.253] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 432, 'frameCount=', 11
+09-25 15:25:11.342 I/ReactNativeJS( 4523): '[15:25:11.342] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:13.707 I/ReactNativeJS( 4523): '[15:25:13.707] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:13.771 I/ReactNativeJS( 4523): '[15:25:13.770] [android:test] [MERCURE]', 'event v38 (runner_save) — применено'
+09-25 15:25:13.846 I/ReactNativeJS( 4523): '[15:25:13.845] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 354 }, 'to=', { x: 59, y: 295 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:13.896 I/ReactNativeJS( 4523): '[15:25:13.894] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:15.328 I/ReactNativeJS( 4523): '[15:25:15.324] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:17.326 I/ReactNativeJS( 4523): '[15:25:17.326] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:17.404 I/ReactNativeJS( 4523): '[15:25:17.404] [android:test] [MERCURE]', 'event v39 (runner_save) — применено'
+09-25 15:25:17.475 I/ReactNativeJS( 4523): '[15:25:17.474] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 295 }, 'to=', { x: 59, y: 236 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:17.531 I/ReactNativeJS( 4523): '[15:25:17.530] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:18.960 I/ReactNativeJS( 4523): '[15:25:18.958] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:21.155 I/ReactNativeJS( 4523): '[15:25:21.155] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:21.226 I/ReactNativeJS( 4523): '[15:25:21.225] [android:test] [MERCURE]', 'event v40 (runner_save) — применено'
+09-25 15:25:21.228 I/ReactNativeJS( 4523): '[15:25:21.228] [android:test] [MERCURE]', 'transient: danger'
+09-25 15:25:21.229 I/ReactNativeJS( 4523): '[15:25:21.229] [android:test] [MERCURE]', 'event v41 (game_cell_updated) — применено'
+09-25 15:25:21.351 I/ReactNativeJS( 4523): '[15:25:21.350] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 236 }, 'to=', { x: 59, y: 177 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:21.408 I/ReactNativeJS( 4523): '[15:25:21.406] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:22.801 I/ReactNativeJS( 4523): '[15:25:22.800] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:24.995 I/ReactNativeJS( 4523): '[15:25:24.994] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:25.068 I/ReactNativeJS( 4523): '[15:25:25.068] [android:test] [MERCURE]', 'event v42 (runner_save) — применено'
+09-25 15:25:25.145 I/ReactNativeJS( 4523): '[15:25:25.144] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 177 }, 'to=', { x: 59, y: 118 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:25.208 I/ReactNativeJS( 4523): '[15:25:25.207] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:26.630 I/ReactNativeJS( 4523): '[15:25:26.629] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:29.091 I/ReactNativeJS( 4523): '[15:25:29.091] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:29.156 I/ReactNativeJS( 4523): '[15:25:29.156] [android:test] [MERCURE]', 'event v43 (runner_save) — применено'
+09-25 15:25:29.159 I/ReactNativeJS( 4523): '[15:25:29.157] [android:test] [MERCURE]', 'transient: danger'
+09-25 15:25:29.160 I/ReactNativeJS( 4523): '[15:25:29.160] [android:test] [MERCURE]', 'event v44 (game_cell_updated) — применено'
+09-25 15:25:29.161 I/ReactNativeJS( 4523): '[15:25:29.160] [android:test] [MERCURE]', 'event v45 (runner_ball) — применено'
+09-25 15:25:29.161 I/ReactNativeJS( 4523): '[15:25:29.161] [android:test] [MERCURE]', 'transient: collision'
+09-25 15:25:29.183 I/ReactNativeJS( 4523): '[15:25:29.183] [android:test] [MERCURE]', 'event v46 (game_turn_changed) — применено'
+09-25 15:25:29.291 I/ReactNativeJS( 4523): '[15:25:29.289] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 118 }, 'to=', { x: 59, y: 59 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:29.295 I/ReactNativeJS( 4523): '[15:25:29.293] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 59, 'y=', 59
+09-25 15:25:29.319 I/ReactNativeJS( 4523): '[15:25:29.318] [android:test] [POSEDBG]', 'mount, initial frame.source=', 615, 'loop=', true, 'static=', null
+09-25 15:25:29.320 I/ReactNativeJS( 4523): '[15:25:29.319] [android:test] [POSEDBG]', 'клип сброшен: source=', 615, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:29.424 I/ReactNativeJS( 4523): '[15:25:29.419] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:30.769 I/ReactNativeJS( 4523): '[15:25:30.768] [android:test] [POSEDBG]', 'клип сброшен: source=', 618, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:30.775 I/ReactNativeJS( 4523): '[15:25:30.771] [android:test] [POSEDBG]', 'клип сброшен: source=', 428, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:38.702 I/ReactNativeJS( 4523): '[15:25:38.702] [android:test] [MERCURE]', 'transient: step_collision'
+09-25 15:25:38.795 I/ReactNativeJS( 4523): '[15:25:38.794] [android:test] [MERCURE]', 'event v47 (game_turn_changed) — применено'
+09-25 15:25:38.811 I/ReactNativeJS( 4523): '[15:25:38.803] [android:test] [MERCURE]', 'event v48 (runner_save) — применено'
+09-25 15:25:39.585 I/ReactNativeJS( 4523): '[15:25:39.583] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 59 }, 'to=', { x: 59, y: 0 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:39.640 I/ReactNativeJS( 4523): '[15:25:39.639] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:39.645 I/ReactNativeJS( 4523): '[15:25:39.644] [android:test] [POSEDBG]', 'клип сброшен: source=', 616, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:41.067 I/ReactNativeJS( 4523): '[15:25:41.065] [android:test] [POSEDBG]', 'клип сброшен: source=', 615, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:42.657 I/ReactNativeJS( 4523): '[15:25:42.657] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:25:43.113 I/ReactNativeJS( 4523): '[15:25:43.113] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:43.174 I/ReactNativeJS( 4523): '[15:25:43.174] [android:test] [MERCURE]', 'event v49 (runner_save) — применено'
+09-25 15:25:43.247 I/ReactNativeJS( 4523): '[15:25:43.246] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 59 }, 'to=', { x: 118, y: 29.5 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:43.325 I/ReactNativeJS( 4523): '[15:25:43.323] [android:test] [POSEDBG]', 'клип сброшен: source=', 452, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:43.517 I/ReactNativeJS( 4523): '[15:25:43.517] [android:test] [API]', '<- GET /runner_game 200 OK (860мс)'
+09-25 15:25:43.517 I/ReactNativeJS( 4523): '[15:25:43.517] [android:test] [MERCURE]', 'stale-check: локально v49, на бэке v49', '— норма'
+09-25 15:25:44.762 I/ReactNativeJS( 4523): '[15:25:44.759] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:47.275 I/ReactNativeJS( 4523): '[15:25:47.275] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:47.328 I/ReactNativeJS( 4523): '[15:25:47.327] [android:test] [MERCURE]', 'event v50 (runner_save) — применено'
+09-25 15:25:47.330 I/ReactNativeJS( 4523): '[15:25:47.329] [android:test] [MERCURE]', 'event v51 (player_step) — применено'
+09-25 15:25:47.348 I/ReactNativeJS( 4523): '[15:25:47.348] [android:test] [WINDBG]', 'ВЫПАЛ из окна бегун', 772, 'globalCol=', 7, 'windowStart=', 0, 'windowEnd=', 7, 'anim=', 'move'
+09-25 15:25:47.411 I/ReactNativeJS( 4523): '[15:25:47.410] [android:test] [POSEDBG]', 'unmount, last frame.source=', 432
+09-25 15:25:47.890 I/ReactNativeJS( 4523): '[15:25:47.888] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 295 }, 'to=', { x: 177, y: 354 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:47.896 I/ReactNativeJS( 4523): '[15:25:47.895] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 265.5 }, 'to=', { x: 118, y: 324.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:47.900 I/ReactNativeJS( 4523): '[15:25:47.898] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 0 }, 'to=', { x: 59, y: 59 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:47.911 I/ReactNativeJS( 4523): '[15:25:47.910] [android:test] [POSEDBG]', 'mount, initial frame.source=', 456, 'loop=', true, 'static=', null
+09-25 15:25:47.913 I/ReactNativeJS( 4523): '[15:25:47.911] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:48.376 I/ReactNativeJS( 4523): '[15:25:48.375] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 29.5 }, 'to=', { x: 118, y: 88.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:48.379 I/ReactNativeJS( 4523): '[15:25:48.379] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 324.5 }, 'to=', { x: 118, y: 383.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:48.381 I/ReactNativeJS( 4523): '[15:25:48.380] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 59 }, 'to=', { x: 59, y: 118 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:48.389 I/ReactNativeJS( 4523): '[15:25:48.388] [android:test] [POSEDBG]', 'unmount, last frame.source=', 65
+09-25 15:25:48.595 I/ReactNativeJS( 4523): '[15:25:48.594] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 88.5 }, 'to=', { x: 118, y: 147.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:48.602 I/ReactNativeJS( 4523): '[15:25:48.600] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 118 }, 'to=', { x: 59, y: 177 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:25:48.611 I/ReactNativeJS( 4523): '[15:25:48.610] [android:test] [POSEDBG]', 'unmount, last frame.source=', 248
+09-25 15:25:48.962 I/ReactNativeJS( 4523): '[15:25:48.951] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:25:52.316 I/ReactNativeJS( 4523): '[15:25:52.316] [android:test] [MERCURE]', 'transient: step_road_bonus'
+09-25 15:25:52.375 I/ReactNativeJS( 4523): '[15:25:52.375] [android:test] [MERCURE]', 'event v52 (runner_save) — применено'
+09-25 15:25:52.376 I/ReactNativeJS( 4523): '[15:25:52.376] [android:test] [MERCURE]', 'event v53 (player_step) — применено'
+09-25 15:25:56.884 I/ReactNativeJS( 4523): '[15:25:56.883] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:25:56.952 I/ReactNativeJS( 4523): '[15:25:56.951] [android:test] [MERCURE]', 'event v54 (runner_save) — применено'
+09-25 15:25:56.955 I/ReactNativeJS( 4523): '[15:25:56.954] [android:test] [MERCURE]', 'event v55 (player_step) — применено'
+09-25 15:25:56.956 I/ReactNativeJS( 4523): '[15:25:56.956] [android:test] [MERCURE]', 'event v56 (player_step) — применено'
+09-25 15:25:56.959 I/ReactNativeJS( 4523): '[15:25:56.959] [android:test] [MERCURE]', 'event v57 (game_turn_changed) — применено'
+09-25 15:25:57.052 I/ReactNativeJS( 4523): '[15:25:57.051] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 147.5 }, 'to=', { x: 118, y: 88.5 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:25:57.107 I/ReactNativeJS( 4523): '[15:25:57.105] [android:test] [POSEDBG]', 'клип сброшен: source=', 456, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:25:58.532 I/ReactNativeJS( 4523): '[15:25:58.531] [android:test] [POSEDBG]', 'клип сброшен: source=', 420, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:26:06.582 I/ReactNativeJS( 4523): '[15:26:06.581] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 88.5 }, 'to=', { x: 118, y: 29.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:06.589 I/ReactNativeJS( 4523): '[15:26:06.588] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 177 }, 'to=', { x: 59, y: 118 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:06.601 I/ReactNativeJS( 4523): '[15:26:06.599] [android:test] [POSEDBG]', 'mount, initial frame.source=', 384, 'loop=', true, 'static=', null
+09-25 15:26:06.602 I/ReactNativeJS( 4523): '[15:26:06.601] [android:test] [POSEDBG]', 'клип сброшен: source=', 384, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:26:06.731 I/ReactNativeJS( 4523): '[15:26:06.729] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 383.5 }, 'to=', { x: 118, y: 324.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:06.732 I/ReactNativeJS( 4523): '[15:26:06.732] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 118 }, 'to=', { x: 59, y: 59 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:06.738 I/ReactNativeJS( 4523): '[15:26:06.737] [android:test] [POSEDBG]', 'unmount, last frame.source=', 456
+09-25 15:26:06.749 I/ReactNativeJS( 4523): '[15:26:06.748] [android:test] [POSEDBG]', 'mount, initial frame.source=', 125, 'loop=', true, 'static=', null
+09-25 15:26:06.751 I/ReactNativeJS( 4523): '[15:26:06.749] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:26:06.903 I/ReactNativeJS( 4523): '[15:26:06.902] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 354 }, 'to=', { x: 177, y: 295 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:06.906 I/ReactNativeJS( 4523): '[15:26:06.904] [android:test] [SLIDEDBG]', 'move: from=', { x: 118, y: 324.5 }, 'to=', { x: 118, y: 265.5 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:06.908 I/ReactNativeJS( 4523): '[15:26:06.907] [android:test] [SLIDEDBG]', 'move: from=', { x: 59, y: 59 }, 'to=', { x: 59, y: 0 }, 'isFirstRender=', false, 'scrolled=', true, 'resized=', false
+09-25 15:26:27.673 I/ReactNativeJS( 4523): '[15:26:27.672] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:26:28.749 I/ReactNativeJS( 4523): '[15:26:28.748] [android:test] [API]', '<- GET /runner_game 200 OK (1076мс)'
+09-25 15:26:28.749 I/ReactNativeJS( 4523): '[15:26:28.749] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:27:12.688 I/ReactNativeJS( 4523): '[15:27:12.688] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:27:15.058 I/ReactNativeJS( 4523): '[15:27:15.058] [android:test] [API]', '<- GET /runner_game 200 OK (2370мс)'
+09-25 15:27:15.058 I/ReactNativeJS( 4523): '[15:27:15.058] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:27:57.702 I/ReactNativeJS( 4523): '[15:27:57.702] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:27:58.678 I/ReactNativeJS( 4523): '[15:27:58.678] [android:test] [API]', '<- GET /runner_game 200 OK (976мс)'
+09-25 15:27:58.678 I/ReactNativeJS( 4523): '[15:27:58.678] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:28:42.719 I/ReactNativeJS( 4523): '[15:28:42.719] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:28:43.660 I/ReactNativeJS( 4523): '[15:28:43.659] [android:test] [API]', '<- GET /runner_game 200 OK (940мс)'
+09-25 15:28:43.660 I/ReactNativeJS( 4523): '[15:28:43.660] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:29:27.737 I/ReactNativeJS( 4523): '[15:29:27.736] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:29:28.862 I/ReactNativeJS( 4523): '[15:29:28.862] [android:test] [API]', '<- GET /runner_game 200 OK (1126мс)'
+09-25 15:29:28.862 I/ReactNativeJS( 4523): '[15:29:28.862] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:30:12.755 I/ReactNativeJS( 4523): '[15:30:12.755] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:30:13.721 I/ReactNativeJS( 4523): '[15:30:13.720] [android:test] [API]', '<- GET /runner_game 200 OK (965мс)'
+09-25 15:30:13.721 I/ReactNativeJS( 4523): '[15:30:13.721] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:30:57.770 I/ReactNativeJS( 4523): '[15:30:57.769] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:30:58.870 I/ReactNativeJS( 4523): '[15:30:58.869] [android:test] [API]', '<- GET /runner_game 200 OK (1100мс)'
+09-25 15:30:58.876 I/ReactNativeJS( 4523): '[15:30:58.873] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:31:39.259 I/ReactNativeJS( 4523): '[15:31:39.259] [android:test] [MERCURE]', 'SSE error gen=3 — реконнект через 793мс (попытка №1)'
+09-25 15:31:40.092 I/ReactNativeJS( 4523): '[15:31:40.091] [android:test] [MERCURE]', 'connect() gen=4 topic=runner_game_98'
+09-25 15:31:40.092 I/ReactNativeJS( 4523): '[15:31:40.092] [android:test] [MERCURE]', 'sync() старт gen=4'
+09-25 15:31:40.092 I/ReactNativeJS( 4523): '[15:31:40.092] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:31:42.175 I/ReactNativeJS( 4523): '[15:31:42.174] [android:test] [API]', '<- GET /runner_game 200 OK (2082мс)'
+09-25 15:31:42.176 I/ReactNativeJS( 4523): '[15:31:42.176] [android:test] [MERCURE]', 'sync() OK gen=4 version=57 (из буфера доиграно 0)'
+09-25 15:31:42.258 I/ReactNativeJS( 4523): '[15:31:42.258] [android:test] [MERCURE]', 'SSE open gen=4'
+09-25 15:31:42.787 I/ReactNativeJS( 4523): '[15:31:42.786] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:31:45.193 I/ReactNativeJS( 4523): '[15:31:45.192] [android:test] [API]', '<- GET /runner_game 200 OK (2406мс)'
+09-25 15:31:45.194 I/ReactNativeJS( 4523): '[15:31:45.193] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:32:27.805 I/ReactNativeJS( 4523): '[15:32:27.804] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:32:28.700 I/ReactNativeJS( 4523): '[15:32:28.700] [android:test] [API]', '<- GET /runner_game 200 OK (896мс)'
+09-25 15:32:28.700 I/ReactNativeJS( 4523): '[15:32:28.700] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:33:12.820 I/ReactNativeJS( 4523): '[15:33:12.820] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:33:13.777 I/ReactNativeJS( 4523): '[15:33:13.777] [android:test] [API]', '<- GET /runner_game 200 OK (957мс)'
+09-25 15:33:13.778 I/ReactNativeJS( 4523): '[15:33:13.777] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:33:57.836 I/ReactNativeJS( 4523): '[15:33:57.836] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:33:58.962 I/ReactNativeJS( 4523): '[15:33:58.961] [android:test] [API]', '<- GET /runner_game 200 OK (1125мс)'
+09-25 15:33:58.962 I/ReactNativeJS( 4523): '[15:33:58.962] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:34:42.854 I/ReactNativeJS( 4523): '[15:34:42.853] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:34:43.849 I/ReactNativeJS( 4523): '[15:34:43.849] [android:test] [API]', '<- GET /runner_game 200 OK (996мс)'
+09-25 15:34:43.851 I/ReactNativeJS( 4523): '[15:34:43.850] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:34:45.505 I/ReactNativeJS( 4523): '[15:34:45.504] [android:test] [POSEDBG]', 'unmount, last frame.source=', 615
+09-25 15:34:45.510 I/ReactNativeJS( 4523): '[15:34:45.507] [android:test] [POSEDBG]', 'unmount, last frame.source=', 384
+09-25 15:34:45.513 I/ReactNativeJS( 4523): '[15:34:45.512] [android:test] [POSEDBG]', 'unmount, last frame.source=', 125
+09-25 15:34:49.010 I/ReactNativeJS( 4523): Running "main" with {"rootTag":1,"initialProps":{},"fabric":true}
+09-25 15:34:49.401 I/ReactNativeJS( 4523): '[15:34:49.399] [android:test] [AUTH]', 'restore-session', 'id=1 username=test'
+09-25 15:34:49.530 I/ReactNativeJS( 4523): '[15:34:49.529] [android:test] [API]', '-> GET /me', ''
+09-25 15:34:51.679 I/ReactNativeJS( 4523): '[15:34:51.679] [android:test] [API]', '<- GET /me 200 OK (2150мс)'
+09-25 15:34:51.858 I/ReactNativeJS( 4523): '[15:34:51.856] [android:test] [MERCURE]', 'connect() gen=1 topic=runner_game_98'
+09-25 15:34:51.862 I/ReactNativeJS( 4523): '[15:34:51.861] [android:test] [MERCURE]', 'sync() старт gen=1'
+09-25 15:34:51.863 I/ReactNativeJS( 4523): '[15:34:51.862] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:34:53.847 I/ReactNativeJS( 4523): '[15:34:53.846] [android:test] [API]', '<- GET /runner_game 200 OK (1984мс)'
+09-25 15:34:53.850 I/ReactNativeJS( 4523): '[15:34:53.850] [android:test] [MERCURE]', 'sync() OK gen=1 version=57 (из буфера доиграно 0)'
+09-25 15:34:54.235 I/ReactNativeJS( 4523): '[15:34:54.232] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 59, 'y=', 0
+09-25 15:34:54.239 I/ReactNativeJS( 4523): '[15:34:54.238] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 118, 'y=', 265.5
+09-25 15:34:54.241 I/ReactNativeJS( 4523): '[15:34:54.240] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 177, 'y=', 295
+09-25 15:34:54.275 I/ReactNativeJS( 4523): '[15:34:54.275] [android:test] [MERCURE]', 'SSE open gen=1'
+09-25 15:34:54.286 I/ReactNativeJS( 4523): '[15:34:54.285] [android:test] [POSEDBG]', 'mount, initial frame.source=', 615, 'loop=', true, 'static=', null
+09-25 15:34:54.289 I/ReactNativeJS( 4523): '[15:34:54.287] [android:test] [POSEDBG]', 'клип сброшен: source=', 615, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:34:54.300 I/ReactNativeJS( 4523): '[15:34:54.299] [android:test] [POSEDBG]', 'mount, initial frame.source=', 384, 'loop=', true, 'static=', null
+09-25 15:34:54.301 I/ReactNativeJS( 4523): '[15:34:54.301] [android:test] [POSEDBG]', 'клип сброшен: source=', 384, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:34:54.309 I/ReactNativeJS( 4523): '[15:34:54.308] [android:test] [POSEDBG]', 'mount, initial frame.source=', 125, 'loop=', true, 'static=', null
+09-25 15:34:54.309 I/ReactNativeJS( 4523): '[15:34:54.309] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:35:36.892 I/ReactNativeJS( 4523): '[15:35:36.892] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:35:38.842 I/ReactNativeJS( 4523): '[15:35:38.842] [android:test] [API]', '<- GET /runner_game 200 OK (1950мс)'
+09-25 15:35:38.844 I/ReactNativeJS( 4523): '[15:35:38.842] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:36:21.904 I/ReactNativeJS( 4523): '[15:36:21.904] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:36:24.342 I/ReactNativeJS( 4523): '[15:36:24.342] [android:test] [API]', '<- GET /runner_game 200 OK (2438мс)'
+09-25 15:36:24.343 I/ReactNativeJS( 4523): '[15:36:24.342] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:37:06.920 I/ReactNativeJS( 4523): '[15:37:06.919] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:37:09.422 I/ReactNativeJS( 4523): '[15:37:09.422] [android:test] [API]', '<- GET /runner_game 200 OK (2503мс)'
+09-25 15:37:09.423 I/ReactNativeJS( 4523): '[15:37:09.423] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:37:51.936 I/ReactNativeJS( 4523): '[15:37:51.936] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:37:53.955 I/ReactNativeJS( 4523): '[15:37:53.954] [android:test] [API]', '<- GET /runner_game 200 OK (2018мс)'
+09-25 15:37:53.956 I/ReactNativeJS( 4523): '[15:37:53.955] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:38:36.954 I/ReactNativeJS( 4523): '[15:38:36.954] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:38:39.695 I/ReactNativeJS( 4523): '[15:38:39.695] [android:test] [API]', '<- GET /runner_game 200 OK (2741мс)'
+09-25 15:38:39.696 I/ReactNativeJS( 4523): '[15:38:39.695] [android:test] [MERCURE]', 'stale-check: локально v57, на бэке v57', '— норма'
+09-25 15:38:39.879 I/ReactNativeJS( 4523): '[15:38:39.879] [android:test] [GAME]', 'действие: старт (шаг=1)'
+09-25 15:38:39.885 I/ReactNativeJS( 4523): '[15:38:39.880] [android:test] [API]', '-> POST /runner_game/select', { runnerId: 776, dice: 1, type: 'DICE' }
+09-25 15:38:42.153 I/ReactNativeJS( 4523): '[15:38:42.153] [android:test] [MERCURE]', 'event v58 (step_selection) — применено'
+09-25 15:38:42.247 I/ReactNativeJS( 4523): '[15:38:42.246] [android:test] [MERCURE]', 'event v59 (player_step) — применено'
+09-25 15:38:42.249 I/ReactNativeJS( 4523): '[15:38:42.249] [android:test] [API]', '<- POST /runner_game/select 200 OK (2370мс)'
+09-25 15:38:42.250 I/ReactNativeJS( 4523): '[15:38:42.249] [android:test] [GAME]', 'действие: успех'
+09-25 15:38:46.548 I/ReactNativeJS( 4523): '[15:38:46.548] [android:test] [SLIDEDBG]', 'move: from=', { x: 354, y: 354 }, 'to=', { x: 177, y: 354 }, 'isFirstRender=', true, 'scrolled=', false, 'resized=', false
+09-25 15:38:46.566 I/ReactNativeJS( 4523): '[15:38:46.565] [android:test] [POSEDBG]', 'mount, initial frame.source=', 585, 'loop=', false, 'static=', null
+09-25 15:38:46.567 I/ReactNativeJS( 4523): '[15:38:46.566] [android:test] [POSEDBG]', 'клип сброшен: source=', 585, 'row=', 0, 'frameCount=', 9, 'loop=', false, 'static=', null
+09-25 15:38:47.553 I/ReactNativeJS( 4523): '[15:38:47.552] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 585, 'frameCount=', 9
+09-25 15:38:51.081 I/ReactNativeJS( 4523): '[15:38:51.080] [android:test] [GAME]', 'действие: старт (шаг=2)'
+09-25 15:38:51.082 I/ReactNativeJS( 4523): '[15:38:51.081] [android:test] [API]', '-> POST /runner_game/ability', { accept: true,
+09-25 15:38:51.082 I/ReactNativeJS( 4523):   details: 
+09-25 15:38:51.082 I/ReactNativeJS( 4523):    { ability: 'reaper',
+09-25 15:38:51.082 I/ReactNativeJS( 4523):      dice: 3,
+09-25 15:38:51.082 I/ReactNativeJS( 4523):      positionX: 0,
+09-25 15:38:51.082 I/ReactNativeJS( 4523):      positionY: 3,
+09-25 15:38:51.082 I/ReactNativeJS( 4523):      segment: 0,
+09-25 15:38:51.082 I/ReactNativeJS( 4523):      direction: undefined } }
+09-25 15:38:51.159 I/ReactNativeJS( 4523): '[15:38:51.158] [android:test] [POSEDBG]', 'клип сброшен: source=', 609, 'row=', 0, 'frameCount=', 9, 'loop=', true, 'static=', null
+09-25 15:38:53.434 I/ReactNativeJS( 4523): '[15:38:53.433] [android:test] [MERCURE]', 'transient: step_ability'
+09-25 15:38:53.515 I/ReactNativeJS( 4523): '[15:38:53.515] [android:test] [MERCURE]', 'event v60 (ability_reaper) — применено'
+09-25 15:38:53.522 I/ReactNativeJS( 4523): '[15:38:53.522] [android:test] [MERCURE]', 'event v61 (player_step) — применено'
+09-25 15:38:53.534 I/ReactNativeJS( 4523): '[15:38:53.534] [android:test] [API]', '<- POST /runner_game/ability 200 OK (2453мс)'
+09-25 15:38:53.534 I/ReactNativeJS( 4523): '[15:38:53.534] [android:test] [GAME]', 'действие: успех'
+09-25 15:38:53.656 I/ReactNativeJS( 4523): '[15:38:53.655] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 177, 'y=', 354
+09-25 15:38:53.671 I/ReactNativeJS( 4523): '[15:38:53.666] [android:test] [POSEDBG]', 'unmount, last frame.source=', 585
+09-25 15:38:53.682 I/ReactNativeJS( 4523): '[15:38:53.681] [android:test] [POSEDBG]', 'mount, initial frame.source=', 609, 'loop=', true, 'static=', null
+09-25 15:38:53.682 I/ReactNativeJS( 4523): '[15:38:53.682] [android:test] [POSEDBG]', 'клип сброшен: source=', 609, 'row=', 0, 'frameCount=', 9, 'loop=', true, 'static=', null
+09-25 15:38:54.853 I/ReactNativeJS( 4523): '[15:38:54.853] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:38:54.854 I/ReactNativeJS( 4523): '[15:38:54.854] [android:test] [API]', '-> POST /runner_game/move', { firstPosition: 3, direction: null }
+09-25 15:38:57.088 I/ReactNativeJS( 4523): '[15:38:57.088] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:38:57.170 I/ReactNativeJS( 4523): '[15:38:57.169] [android:test] [MERCURE]', 'event v62 (runner_save) — применено'
+09-25 15:38:57.201 I/ReactNativeJS( 4523): '[15:38:57.200] [android:test] [API]', '<- POST /runner_game/move 200 OK (2346мс)'
+09-25 15:38:57.202 I/ReactNativeJS( 4523): '[15:38:57.201] [android:test] [GAME]', 'действие: успех'
+09-25 15:38:57.214 I/ReactNativeJS( 4523): '[15:38:57.213] [android:test] [WINDBG]', 'НЕТ prevKnown для', 776, 'anim=', 'start'
+09-25 15:38:57.291 I/ReactNativeJS( 4523): '[15:38:57.290] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 177, 'y=', 354
+09-25 15:38:57.310 I/ReactNativeJS( 4523): '[15:38:57.309] [android:test] [POSEDBG]', 'mount, initial frame.source=', 433, 'loop=', false, 'static=', null
+09-25 15:38:57.310 I/ReactNativeJS( 4523): '[15:38:57.310] [android:test] [POSEDBG]', 'клип сброшен: source=', 433, 'row=', 0, 'frameCount=', 11, 'loop=', false, 'static=', null
+09-25 15:38:58.552 I/ReactNativeJS( 4523): '[15:38:58.551] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 433, 'frameCount=', 11
+09-25 15:38:58.688 I/ReactNativeJS( 4523): '[15:38:58.685] [android:test] [POSEDBG]', 'клип сброшен: source=', 421, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:39:05.139 I/ReactNativeJS( 4523): '[15:39:05.139] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:39:05.139 I/ReactNativeJS( 4523): '[15:39:05.139] [android:test] [API]', '-> POST /runner_game/move', { firstPosition: null, direction: 'UP' }
+09-25 15:39:07.975 I/ReactNativeJS( 4523): '[15:39:07.975] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:39:08.047 I/ReactNativeJS( 4523): '[15:39:08.046] [android:test] [MERCURE]', 'event v63 (runner_save) — применено'
+09-25 15:39:08.057 I/ReactNativeJS( 4523): '[15:39:08.057] [android:test] [MERCURE]', 'event v64 (runner_save) — применено'
+09-25 15:39:08.066 I/ReactNativeJS( 4523): '[15:39:08.066] [android:test] [MERCURE]', 'transient: collision'
+09-25 15:39:08.084 I/ReactNativeJS( 4523): '[15:39:08.083] [android:test] [MERCURE]', 'event v65 (game_turn_changed) — применено'
+09-25 15:39:08.098 I/ReactNativeJS( 4523): '[15:39:08.098] [android:test] [API]', '<- POST /runner_game/move 200 OK (2959мс)'
+09-25 15:39:08.099 I/ReactNativeJS( 4523): '[15:39:08.098] [android:test] [GAME]', 'действие: успех'
+09-25 15:39:08.179 I/ReactNativeJS( 4523): '[15:39:08.178] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 354 }, 'to=', { x: 177, y: 295 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:39:08.211 I/ReactNativeJS( 4523): '[15:39:08.210] [android:test] [POSEDBG]', 'клип сброшен: source=', 481, 'row=', 0, 'frameCount=', 9, 'loop=', true, 'static=', null
+09-25 15:39:09.767 I/ReactNativeJS( 4523): '[15:39:09.765] [android:test] [POSEDBG]', 'клип сброшен: source=', 129, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:39:09.771 I/ReactNativeJS( 4523): '[15:39:09.769] [android:test] [POSEDBG]', 'клип сброшен: source=', 429, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:39:11.338 I/ReactNativeJS( 4523): '[15:39:11.338] [android:test] [GAME]', 'действие: старт (шаг=3)'
+09-25 15:39:11.339 I/ReactNativeJS( 4523): '[15:39:11.338] [android:test] [API]', '-> POST /runner_game/collision', { accept: true }
+09-25 15:39:13.494 I/ReactNativeJS( 4523): '[15:39:13.494] [android:test] [MERCURE]', 'transient: step_collision'
+09-25 15:39:13.573 I/ReactNativeJS( 4523): '[15:39:13.573] [android:test] [MERCURE]', 'event v66 (game_turn_changed) — применено'
+09-25 15:39:13.576 I/ReactNativeJS( 4523): '[15:39:13.575] [android:test] [MERCURE]', 'event v67 (runner_save) — применено'
+09-25 15:39:13.580 I/ReactNativeJS( 4523): '[15:39:13.580] [android:test] [MERCURE]', 'event v68 (player_step) — применено'
+09-25 15:39:13.583 I/ReactNativeJS( 4523): '[15:39:13.583] [android:test] [MERCURE]', 'event v69 (player_step) — применено'
+09-25 15:39:13.584 I/ReactNativeJS( 4523): '[15:39:13.584] [android:test] [MERCURE]', 'event v70 (game_turn_changed) — применено'
+09-25 15:39:13.587 I/ReactNativeJS( 4523): '[15:39:13.586] [android:test] [API]', '<- POST /runner_game/collision 200 OK (2248мс)'
+09-25 15:39:13.587 I/ReactNativeJS( 4523): '[15:39:13.587] [android:test] [GAME]', 'действие: успех'
+09-25 15:39:14.324 I/ReactNativeJS( 4523): '[15:39:14.323] [android:test] [SLIDEDBG]', 'move: from=', { x: 177, y: 295 }, 'to=', { x: 118, y: 324.5 }, 'isFirstRender=', false, 'scrolled=', false, 'resized=', false
+09-25 15:39:14.373 I/ReactNativeJS( 4523): '[15:39:14.372] [android:test] [POSEDBG]', 'клип сброшен: source=', 421, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:39:14.376 I/ReactNativeJS( 4523): '[15:39:14.375] [android:test] [POSEDBG]', 'клип сброшен: source=', 69, 'row=', 0, 'frameCount=', 11, 'loop=', true, 'static=', null
+09-25 15:39:15.825 I/ReactNativeJS( 4523): '[15:39:15.824] [android:test] [POSEDBG]', 'клип сброшен: source=', 125, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:39:21.972 I/ReactNativeJS( 4523): '[15:39:21.971] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:39:24.009 I/ReactNativeJS( 4523): '[15:39:24.009] [android:test] [API]', '<- GET /runner_game 200 OK (2038мс)'
+09-25 15:39:24.009 I/ReactNativeJS( 4523): '[15:39:24.009] [android:test] [MERCURE]', 'stale-check: локально v70, на бэке v70', '— норма'
+09-25 15:39:27.610 I/ReactNativeJS( 4523): '[15:39:27.610] [android:test] [MERCURE]', 'event v71 (step_selection) — применено'
+09-25 15:39:27.695 I/ReactNativeJS( 4523): '[15:39:27.695] [android:test] [MERCURE]', 'event v72 (player_step) — применено'
+09-25 15:39:48.511 I/ReactNativeJS( 4523): '[15:39:48.510] [android:test] [MERCURE]', 'transient: step_move'
+09-25 15:39:48.576 I/ReactNativeJS( 4523): '[15:39:48.575] [android:test] [MERCURE]', 'event v73 (runner_save) — применено'
+09-25 15:39:48.591 I/ReactNativeJS( 4523): '[15:39:48.591] [android:test] [WINDBG]', 'НЕТ prevKnown для', 771, 'anim=', 'start'
+09-25 15:39:48.659 I/ReactNativeJS( 4523): '[15:39:48.658] [android:test] [SLIDEDBG]', 'first render (no enterFrom), x=', 59, 'y=', 354
+09-25 15:39:48.672 I/ReactNativeJS( 4523): '[15:39:48.672] [android:test] [POSEDBG]', 'mount, initial frame.source=', 64, 'loop=', false, 'static=', null
+09-25 15:39:48.673 I/ReactNativeJS( 4523): '[15:39:48.672] [android:test] [POSEDBG]', 'клип сброшен: source=', 64, 'row=', 0, 'frameCount=', 11, 'loop=', false, 'static=', null
+09-25 15:39:49.918 I/ReactNativeJS( 4523): '[15:39:49.918] [android:test] [POSEDBG]', 'клип доиграл (onComplete): source=', 64, 'frameCount=', 11
+09-25 15:39:50.010 I/ReactNativeJS( 4523): '[15:39:50.009] [android:test] [POSEDBG]', 'клип сброшен: source=', 124, 'row=', 0, 'frameCount=', 8, 'loop=', true, 'static=', null
+09-25 15:40:06.987 I/ReactNativeJS( 4523): '[15:40:06.986] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:40:09.030 I/ReactNativeJS( 4523): '[15:40:09.030] [android:test] [API]', '<- GET /runner_game 200 OK (2044мс)'
+09-25 15:40:09.030 I/ReactNativeJS( 4523): '[15:40:09.030] [android:test] [MERCURE]', 'stale-check: локально v73, на бэке v73', '— норма'
+09-25 15:40:52.004 I/ReactNativeJS( 4523): '[15:40:52.003] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:40:53.883 I/ReactNativeJS( 4523): '[15:40:53.882] [android:test] [API]', '<- GET /runner_game 200 OK (1879мс)'
+09-25 15:40:53.883 I/ReactNativeJS( 4523): '[15:40:53.883] [android:test] [MERCURE]', 'stale-check: локально v73, на бэке v73', '— норма'
+09-25 15:41:37.020 I/ReactNativeJS( 4523): '[15:41:37.020] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:41:39.399 I/ReactNativeJS( 4523): '[15:41:39.399] [android:test] [API]', '<- GET /runner_game 200 OK (2379мс)'
+09-25 15:41:39.400 I/ReactNativeJS( 4523): '[15:41:39.399] [android:test] [MERCURE]', 'stale-check: локально v73, на бэке v73', '— норма'
+09-25 15:42:22.038 I/ReactNativeJS( 4523): '[15:42:22.038] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:42:24.657 I/ReactNativeJS( 4523): '[15:42:24.654] [android:test] [API]', '<- GET /runner_game 200 OK (2616мс)'
+09-25 15:42:24.659 I/ReactNativeJS( 4523): '[15:42:24.658] [android:test] [MERCURE]', 'stale-check: локально v73, на бэке v73', '— норма'
+09-25 15:43:07.053 I/ReactNativeJS( 4523): '[15:43:07.053] [android:test] [API]', '-> GET /runner_game', ''
+09-25 15:43:10.214 I/ReactNativeJS( 4523): '[15:43:10.213] [android:test] [API]', '<- GET /runner_game 200 OK (3160мс)'
+09-25 15:43:10.215 I/ReactNativeJS( 4523): '[15:43:10.214] [android:test] [MERCURE]', 'stale-check: локально v73, на бэке v73', '— норма'
+09-25 15:43:52.072 I/ReactNativeJS( 4523): '[15:43:52.071] [android:test] [API]', '-> GET /runner_game', ''
