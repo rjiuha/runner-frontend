@@ -1,6 +1,14 @@
 // src/components/ui/SpritePackAnimation.js
-import React, { useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Image, PixelRatio, Platform, StyleSheet, View } from 'react-native';
+import Animated, { useAnimatedStyle, useFrameCallback, useSharedValue, runOnJS } from 'react-native-reanimated';
+import { createLogger } from '../../lib/logger';
+
+// ВРЕМЕННО — диагностика "поза обрывается раньше срока" (acid/destroyed/
+// attack пропадают через пару кадров), 2026-09-25, см. CLAUDE.md — не
+// убирать, пока не закрыто. Тот же приём, что SLIDEDBG/WINDBG в
+// RunnerTokenSlide.js/BoardGrid.js.
+const poseLog = createLogger('POSEDBG');
 
 // Пак не несёт per-frame тайминги (в отличие от старых gif, у которых была
 // своя, авторская задержка на кадр) — единая, приблизительная скорость на
@@ -29,21 +37,58 @@ const DEFAULT_FRAME_MS = 120;
  * `loop` (default true) — 2026-09-24, по прямому запросу пользователя
  * ("начинались с первого кадра и заканчивались последним в одном цикле для
  * start... и для остальных тоже, чтобы без сюрпризов"). `RunnerToken.js`
- * передаёт `loop={!anim}` — по факту это значит: loop=true ТОЛЬКО для
- * настоящего idle (anim==null, бегун просто стоит — эту позу действительно
- * нужно крутить бесконечно), loop=false для ЛЮБОГО транзиентного шага
- * очереди (`useRunnerAnimations.js` — move/attack/gotShot/fly/start/bomb/
- * heal/destroyed/burn/acid) — каждый из них по архитектуре хука играется
- * РОВНО один раз за шаг очереди (advanceQueue), внешний таймер
- * (ANIM_DURATION_MS[kind]/TERMINAL_HIDE_DELAY_MS[kind]) сам решает, когда
- * переключить kind/спрятать токен — крутить полоску по кругу ВНУТРИ этого
- * окна означало ровно тот класс "сюрприза", который и словил пользователь на
- * 'start' (полоска дошла до конца раньше внешнего таймера, зациклилась и на
- * долю секунды снова показала кадр 0/поздний кадр). При loop=false полоска,
- * дойдя до последнего кадра, там и ОСТАНАВЛИВАЕТСЯ (не гаснет, не мигает) —
- * держит его статично до смены `frame` снаружи. Если конкретный клип короче
- * своего внешнего окна — просто короткая статичная пауза на последнем кадре,
- * не глитч (в отличие от неожиданного рестарта).
+ * передаёт `loop=true` для idle/move/fly/collision (крутятся, пока их не
+ * прервёт настоящий сигнал завершения снаружи — см. useRunnerAnimations.js),
+ * `false` для остальных транзиентных поз (играются РОВНО один раз, конец
+ * сигналит `onComplete`).
+ *
+ * **2026-09-25, ВТОРОЙ архитектурный заход — переход с `setInterval`+React-
+ * state на `react-native-reanimated` (`useFrameCallback`)**. По прямому
+ * запросу пользователя: вся сессия этого дня упиралась в один и тот же
+ * класс багов — "JS-таймер (setInterval/setTimeout) не совпадает с тем, что
+ * реально нарисовано на экране" (см. историю в useRunnerAnimations.js).
+ * Кадровый шаг через `setInterval` — ЭТА ЖЕ болезнь: тикает на JS-потоке,
+ * который может подтормозить относительно реального кадра экрана (GC,
+ * обработка Mercure-события, что угодно ещё). `useFrameCallback` вызывается
+ * Reanimated'ом НА КАЖДЫЙ реальный кадр отрисовки (UI-поток), кадр считается
+ * от `frameInfo.timestamp` (реальные часы рендера), а не от накопленных
+ * `setTimeout`-тиков.
+ *
+ * **Известный смежный риск, учтённый заранее** — в этом же проекте
+ * (`ParallaxBackground.js`) уже был живьём подтверждённый Android-баг:
+ * `Animated.Image` (Reanimated) под НЕПРЕРЫВНО анимируемым transform-ом
+ * полностью пропадал на Android (анимация честно крутилась по логам,
+ * картинка просто не рисовалась) — причина там была в способе рестарта
+ * цикла (рекурсивный ворклет-колбэк), не обязательно применимо 1-в-1 к
+ * `useFrameCallback` (тот тикает сам, без цепочки перезапусков), но раз
+ * прецедент "Android + Animated.Image + непрерывная анимация" в этом же
+ * кодовом стиле уже был — сама картинка (`<Image>` ниже) остаётся ОБЫЧНОЙ,
+ * НЕ анимированной. Анимируется (через `useAnimatedStyle`) только
+ * ОБЁРТЫВАЮЩИЙ `Animated.View` (`left`) — тот же паттерн, что уже
+ * проверенно работает в `RunnerTokenSlide.js` (двигается View, содержимое
+ * внутри статично). НЕ подтверждено живьём в этой сессии.
+ *
+ * `frameIdxSV`/`clipStartTsRef`/`completedRef` — shared values (UI-поток),
+ * не React state — переключение кадра больше НЕ вызывает React-рендер
+ * вообще (раньше `setFrameIdx` на каждый тик перерисовывал компонент).
+ * Сброс на новый клип — обычный `useEffect` (не `useLayoutEffect`, как было
+ * у старого `setFrameIdx(0)` — тем эффект был нужен ИМЕННО для React-рендера
+ * до покраски; shared value не участвует в покраске React напрямую, гонка
+ * того класса тут невозможна в принципе).
+ *
+ * **Живая регрессия, найденная и исправленная ДО перехода на Reanimated,
+ * актуальна и здесь — `completedRef`-гейт**: если non-loop клип уже
+ * доиграл (`completedRef.value === true`) и ЗАСТЫЛ на последнем кадре, а
+ * `loop` внешне флипнется в `true` ПОКА `displayedFrame` всё ещё держит
+ * этот же (уже доигравший) клип (см. "прогрузка перед показом" ниже —
+ * держим старый клип, пока следующий не задекодируется) — БЕЗ этого гейта
+ * ворклет начал бы заново мотать `raw % frameCount` от уже огромного
+ * `elapsed`, то есть клип "ожил" бы и снова начал бы крутиться по кругу
+ * вместо статичного удержания последнего кадра (тот же симптом, что и баг
+ * с `loop` в deps старого `setInterval`-эффекта, см. историю ниже в
+ * CLAUDE.md). Гейт останавливает ворклет полностью, как только клип
+ * доиграл, — трогает `frameIdxSV`/тикает дальше только следующий, ДЕЙСТВИТЕЛЬНО
+ * новый клип (сброс — см. reset-эффект).
  *
  * **НАСТОЯЩАЯ причина размытия на Android, найдена 2026-09-24 живым
  * бок-о-бок сравнением на реальном устройстве (не масштаб/DP/transform,
@@ -73,18 +118,16 @@ const DEFAULT_FRAME_MS = 120;
  *
  * **Фикс** — пак пере-нарезан (`spritePackStrips.js`, автосгенерирован)
  * так, что каждая строка (анимация+направление) исходного листа — СВОЙ
- * маленький PNG-файл, а не часть одного огромного. `SpritePackAnimation`
- * от этого стал ПРОЩЕ, не сложнее: `row` в `frame` всегда 0, `sheet` = сама
- * полоска (`cell.w*frameCount × cell.h`), смена кадра — просто `left`
- * (`-frameIdx*cellW`) на уже маленьком, декодированном 1:1 изображении.
+ * маленький PNG-файл, а не часть одного огромного. `row` в `frame` теперь
+ * ВСЕГДА 0, `sheet` = сама полоска (`cell.w*frameCount × cell.h`).
  * `PixelRatio`-деление (см. история выше) осталось — оно само по себе
  * корректно и нужно (иначе Fresco снова decode-и-stretch'ит под неверные
  * физические пиксели), просто оно одно не могло решить всю проблему целиком.
  *
  * **ВАЖНО (известный в этом проекте класс краша, см. CLAUDE.md 2026-09-12)**:
  * ключ `transform` со значением `undefined` в стиле на native валит
- * `_validateTransforms`. Сейчас это не грозит — `transform` в этом файле не
- * используется вообще (ни объектом, ни ключом в массиве стилей).
+ * `_validateTransforms`. `useAnimatedStyle` ниже возвращает ТОЛЬКО `left` —
+ * ключа `transform` не касается вообще.
  *
  * **Прогрузка ПЕРЕД показом, без мигания** (2026-09-24, по прямому запросу
  * пользователя — "пусть прогружается... а уже после этого начинается
@@ -114,14 +157,8 @@ const DEFAULT_FRAME_MS = 120;
  * уже загруженного файла) — переключение МГНОВЕННОЕ, прогружать нечего.
  */
 export default function SpritePackAnimation({
-    frame, boxSize, frameDurationMs = DEFAULT_FRAME_MS, staticFrameIndex = null, loop = true,
+    frame, boxSize, frameDurationMs = DEFAULT_FRAME_MS, staticFrameIndex = null, loop = true, onComplete,
 }) {
-    // Обычный React state, НЕ Animated.Value — переключение кадра теперь
-    // чистое layout-позиционирование (left/top), не GPU-transform (см.
-    // докстринг выше), а сама смена кадра — мгновенный "прыжок" (та же
-    // STEP_EASING-семантика, что и раньше), для которого не нужна
-    // интерполяция между значениями вообще, значит и Animated не нужен.
-    const [frameIdx, setFrameIdx] = useState(staticFrameIndex ?? 0);
     // displayedFrame — см. докстринг "Прогрузка ПЕРЕД показом" выше.
     const [displayedFrame, setDisplayedFrame] = useState(frame ?? null);
     // Отсекает устаревшие prefetch-промисы, если source сменился ЕЩЁ РАЗ,
@@ -129,6 +166,19 @@ export default function SpritePackAnimation({
     // в useMercure.js) — иначе устаревший prefetch мог бы откатить
     // displayedFrame НАЗАД на уже неактуальный клип.
     const preloadTokenRef = useRef(0);
+    const onCompleteRef = useRef(onComplete);
+    useEffect(() => { onCompleteRef.current = onComplete; }, [onComplete]);
+
+    // ВРЕМЕННО — см. poseLog выше. Монтирование/размонтирование — если
+    // компонент вдруг пересоздаётся (ремаунт где-то выше по дереву, не
+    // просто смена frame-пропа), это будет видно здесь по двум логам подряд
+    // без правдоподобной причины (например без соответствующего изменения
+    // frame?.source в "клип сброшен" чуть ниже).
+    useEffect(() => {
+        poseLog('mount, initial frame.source=', frame?.source, 'loop=', loop, 'static=', staticFrameIndex);
+        return () => poseLog('unmount, last frame.source=', frame?.source);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     useLayoutEffect(() => {
         if (!frame) { setDisplayedFrame(null); return undefined; }
@@ -156,50 +206,94 @@ export default function SpritePackAnimation({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [frame?.source]);
 
-    // useLayoutEffect (было useEffect, 2026-09-24, живая жалоба пользователя
-    // "в начале анимации start виден последний кадр") — useEffect срабатывает
-    // ПОСЛЕ покраски: при смене displayedFrame (новый клип/kind) один рендер
-    // успевал уйти на экран со СТАРЫМ frameIdx (оставшимся от предыдущего
-    // клипа, например от idle), но уже по НОВОМУ source/cellW — индекс из
-    // чужого диапазона кадров мог указать на позднюю/последнюю позицию
-    // нового клипа. useLayoutEffect сбрасывает frameIdx на 0 СИНХРОННО до
-    // покраски — этот "чужой кадр" физически никогда не попадает на экран.
-    useLayoutEffect(() => {
-        if (staticFrameIndex != null || !displayedFrame) return undefined;
-        setFrameIdx(0);
-        if (displayedFrame.frameCount <= 1) return undefined;
-        let i = 0;
-        const id = setInterval(() => {
-            if (loop) {
-                i = (i + 1) % displayedFrame.frameCount;
-            } else if (i < displayedFrame.frameCount - 1) {
-                i += 1;
-            } else {
-                clearInterval(id); // на последнем кадре — держим его, дальше не тикаем
-                return;
-            }
-            setFrameIdx(i);
-        }, frameDurationMs);
-        return () => clearInterval(id);
-    }, [displayedFrame?.source, displayedFrame?.row, displayedFrame?.frameCount, staticFrameIndex, frameDurationMs, loop]);
+    // === Кадровый шаг — Reanimated (useFrameCallback), не setInterval ===
+    // (см. докстринг выше). Инициализация — тот же начальный кадр, что и
+    // раньше у React state.
+    const frameIdxSV = useSharedValue(staticFrameIndex ?? 0);
+    // -1 = "ещё не стартовали текущий клип" (первый тик после сброса ставит
+    // реальный timestamp) — так же, как раньше `i = 0` перед первым тиком
+    // setInterval, просто явным сентинелом, а не подразумеваемым нулём.
+    const clipStartTsRef = useSharedValue(-1);
+    // См. докстринг "completedRef-гейт" выше — без него доигравший non-loop
+    // клип мог бы "ожить" и снова закрутиться, если loop флипнется на true
+    // ПОКА displayedFrame ещё держит его же (прогрузка следующего клипа).
+    const completedRef = useSharedValue(false);
+    // 2026-09-25 (живой баг, POSEDBG-лог с реального устройства: "attack/acid
+    // на пару кадров и пропадает") — `loop`, ПРИКОЛОЧЕННЫЙ к моменту сброса
+    // клипа, а НЕ живой проп, читаемый воркетом каждый кадр. Проп `loop`
+    // меняется на КАЖДЫЙ рендер (синхронно с `anim.kind` снаружи), а
+    // `displayedFrame`/сброс — АСИНХРОННО, через Image.prefetch (см.
+    // useLayoutEffect выше). Из-за этого была секунда, где `loop` уже стал
+    // `false` (новая поза), а `clipStartTsRef` ещё тикал с МОМЕНТА СТАРТА
+    // СТАРОГО (loop=true) клипа — `elapsed` мгновенно оказывался огромным,
+    // `raw >= frameCount-1` сразу true, `onComplete` стрелял для ЕЩЁ
+    // СТАРОГО (idle) кадра ровно в тот момент, когда снаружи уже считалось,
+    // что это конец НОВОЙ (attack/acid/...) позы — очередь анимаций
+    // продвигалась дальше ДО того, как новая поза вообще успевала
+    // показаться. Читаем `loopSV.value` внутри воркета, а не `loop` из
+    // замыкания — значение обновляется ТОЛЬКО вместе с настоящим сбросом
+    // клипа (см. useEffect ниже), не раньше.
+    const loopSV = useSharedValue(loop);
 
-    if (!displayedFrame) return null;
+    const displayedSource = displayedFrame?.source;
+    const displayedRow = displayedFrame?.row ?? 0;
+    const frameCount = displayedFrame?.frameCount ?? 1;
+
+    // Сброс на новый клип — обычный useEffect (не useLayoutEffect, как было
+    // у старого setFrameIdx(0): тот был нужен именно для React-покраски,
+    // shared value её не касается, ждать следующий кадр UI-потока не
+    // проблема).
+    useEffect(() => {
+        poseLog('клип сброшен: source=', displayedSource, 'row=', displayedRow, 'frameCount=', frameCount, 'loop=', loop, 'static=', staticFrameIndex);
+        frameIdxSV.value = staticFrameIndex ?? 0;
+        clipStartTsRef.value = -1;
+        completedRef.value = false;
+        loopSV.value = loop;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [displayedSource, displayedRow, staticFrameIndex, frameIdxSV, clipStartTsRef, completedRef, loopSV]);
+
+    const notifyComplete = () => {
+        poseLog('клип доиграл (onComplete): source=', displayedSource, 'frameCount=', frameCount);
+        onCompleteRef.current?.();
+    };
+
+    useFrameCallback((frameInfo) => {
+        'worklet';
+        if (staticFrameIndex != null || frameCount <= 1 || completedRef.value) return;
+        if (clipStartTsRef.value < 0) clipStartTsRef.value = frameInfo.timestamp;
+        const elapsed = frameInfo.timestamp - clipStartTsRef.value;
+        const raw = Math.floor(elapsed / frameDurationMs);
+        if (loopSV.value) {
+            frameIdxSV.value = raw % frameCount;
+        } else if (raw >= frameCount - 1) {
+            frameIdxSV.value = frameCount - 1; // на последнем кадре — держим его, дальше не тикаем (см. completedRef выше)
+            completedRef.value = true;
+            // onComplete — РЕАЛЬНЫЙ сигнал "полоска дорисовала последний
+            // кадр", той же системой отсчёта, что и сам рендер (frameInfo.
+            // timestamp), не отдельным JS-таймером снаружи — см.
+            // useRunnerAnimations.js#completeStep.
+            runOnJS(notifyComplete)();
+        } else {
+            frameIdxSV.value = raw;
+        }
+    }, true);
 
     // displayedFrame.cell/sheet — ФИЗИЧЕСКИЕ пиксели PNG-файла (из JSON
     // пака), а React Native трактует width/height/transform как DP — делим
     // на pixelRatio, чтобы Fresco декодировал файл в его РОДНОМ физическом
     // размере, а не растягивал его при decode под DP*pixelRatio (см.
-    // докстринг выше).
+    // докстринг выше). Считается безопасно (с фолбэками), даже когда
+    // displayedFrame ещё null — useAnimatedStyle ниже обязан вызываться на
+    // КАЖДЫЙ рендер (правило хуков), а не только когда есть что показать.
     const pixelRatio = PixelRatio.get();
-    const cellW = displayedFrame.cell.w / pixelRatio;
-    const cellH = displayedFrame.cell.h / pixelRatio;
-    const sheetW = displayedFrame.sheet.w / pixelRatio;
-    const sheetH = displayedFrame.sheet.h / pixelRatio;
+    const cellW = (displayedFrame?.cell.w ?? 0) / pixelRatio;
+    const cellH = (displayedFrame?.cell.h ?? 0) / pixelRatio;
+    const sheetW = (displayedFrame?.sheet.w ?? 0) / pixelRatio;
+    const sheetH = (displayedFrame?.sheet.h ?? 0) / pixelRatio;
     const box = Math.round(boxSize);
     // "Contain" по большей стороне ячейки (см. докстринг) — letterbox-поля
     // остаются по меньшей оси, тот же принцип, что и Math.min(box/w, box/h).
-    const scale = box / Math.max(cellW, cellH);
-    const idx = staticFrameIndex != null ? staticFrameIndex : frameIdx;
+    const scale = box / Math.max(cellW, cellH, 1);
     // Масштаб встроен ПРЯМО в размеры/смещения (никакого transform вообще,
     // даже scale) — 2026-09-24, см. докстринг: даже "безобидный" scale на
     // маленьком clip-контейнере — последний оставшийся transform в цепочке,
@@ -208,10 +302,26 @@ export default function SpritePackAnimation({
     const cellHScaled = cellH * scale;
     const sheetWScaled = sheetW * scale;
     const sheetHScaled = sheetH * scale;
-    const rowYScaled = displayedFrame.row * cellHScaled;
-    const colXScaled = idx * cellWScaled;
-    const offsetTop = (box - cellHScaled) / 2;
+    const rowYScaled = displayedRow * cellHScaled;
+    // offsetY (2026-09-25, см. constants/spritePacks.js#CLIP_OFFSET_Y) —
+    // ручная поправка на известную несостыковку обрезки МЕЖДУ клипами одного
+    // бакета (персонаж нарисован в разных местах внутри одинаковой по
+    // размеру ячейки) — те же единицы и та же система координат, что и
+    // cell.w/h (исходные пиксели файла), поэтому проходит через то же деление
+    // на pixelRatio и тот же scale, что и сама ячейка, прежде чем сложиться с
+    // обычным центрирующим offsetTop.
+    const offsetYScaled = ((displayedFrame?.offsetY ?? 0) / pixelRatio) * scale;
+    const offsetTop = (box - cellHScaled) / 2 + offsetYScaled;
     const offsetLeft = (box - cellWScaled) / 2;
+
+    // Анимируется ТОЛЬКО обёртывающий Animated.View (left) — см. докстринг
+    // выше про известный Android-баг "Animated.Image + непрерывная анимация
+    // пропадает". Сама картинка ниже — обычный, не анимированный <Image>.
+    const sheetOffsetStyle = useAnimatedStyle(() => ({
+        left: -frameIdxSV.value * cellWScaled,
+    }));
+
+    if (!displayedFrame) return null;
 
     return (
         <View style={[styles.outer, { width: box, height: box }]}>
@@ -226,21 +336,24 @@ export default function SpritePackAnimation({
                     },
                 ]}
             >
-                <Image
-                    source={displayedFrame.source}
-                    resizeMode="stretch"
-                    fadeDuration={0}
+                <Animated.View
                     style={[
-                        styles.sheet,
-                        Platform.OS === 'web' && styles.sheetWebCrisp,
-                        {
-                            width: sheetWScaled,
-                            height: sheetHScaled,
-                            left: -colXScaled,
-                            top: -rowYScaled,
-                        },
+                        styles.sheetWrap,
+                        { width: sheetWScaled, height: sheetHScaled, top: -rowYScaled },
+                        sheetOffsetStyle,
                     ]}
-                />
+                >
+                    <Image
+                        source={displayedFrame.source}
+                        resizeMode="stretch"
+                        fadeDuration={0}
+                        style={[
+                            styles.sheet,
+                            Platform.OS === 'web' && styles.sheetWebCrisp,
+                            { width: sheetWScaled, height: sheetHScaled },
+                        ]}
+                    />
+                </Animated.View>
             </View>
         </View>
     );
@@ -249,6 +362,7 @@ export default function SpritePackAnimation({
 const styles = StyleSheet.create({
     outer: { overflow: 'hidden' },
     innerClip: { position: 'absolute', overflow: 'hidden' },
+    sheetWrap: { position: 'absolute', top: 0, left: 0 },
     sheet: { position: 'absolute', top: 0, left: 0 },
     // Web-only: настоящий пиксель-арт — 'pixelated' заставляет браузер
     // сэмплировать nearest-neighbor вместо стандартного bilinear/bicubic при

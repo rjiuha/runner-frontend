@@ -143,11 +143,33 @@ function frameRef(b, name, direction) {
     return { cell: b.cell, row: hit.row, frameCount: hit.frameCount, _strips: b.strips };
 }
 
+// Известные art-несостыковки МЕЖДУ КЛИПАМИ одного бакета (2026-09-25, живая
+// жалоба пользователя + числовое подтверждение) — `cell` у всех клипов
+// бакета ОДИН (см. bucket()/withSource ниже), но персонаж может быть
+// нарисован в РАЗНЫХ местах внутри своей ячейки в разных клипах (разная
+// обрезка исходников AI-пака под каждый клип) — НЕ баг кода, зафиксированный
+// пробел ("scaleCorrection... не реализовано в этой миграции", см. докстринг
+// модуля выше). Измерено bbox непрозрачных пикселей (pngjs, одноразовый
+// scratch-скрипт сессии, не в репозитории): scout-healthy 'start' (последний
+// кадр) — персонаж на 13px НИЖЕ, чем в 'idle'/'move' (те двое между собой
+// практически совпадают, 2px — обычное "дыхание" самого idle между кадрами,
+// не расхождение) — на переходе start→idle это читалось как "бегун
+// подскакивает вверх". offsetY (px в исходных координатах файла,
+// масштабируется вместе с cell в SpritePackAnimation) — сдвигает ОТОБРАЖЕНИЕ
+// клипа, не сам кроп: отрицательное значение поднимает картинку, чтобы
+// скомпенсировать то, что персонаж на этом клипе нарисован ниже, чем на
+// соседних. Пофиксил ТОЛЬКО эту пару (по прямому решению пользователя —
+// остальные типы/клипы не промерены, если всплывёт похожее в другом месте,
+// разбираться тем же методом).
+const CLIP_OFFSET_Y = {
+    [RUNNER_TYPES.SPRINTER]: { healthy: { start: -13 } },
+};
+
 // Полоска — ОДНА строка (высота = cell.h), кадры уложены подряд по ширине
 // (sheet.w = cell.w * frameCount) — `row` в возвращаемом `frame` для
 // SpritePackAnimation теперь ВСЕГДА 0 (полоска физически не содержит других
 // строк, вырезать по вертикали больше нечего).
-function withSource(ref, colorKey) {
+function withSource(ref, colorKey, offsetY = 0) {
     if (!ref) return null;
     const rowStrips = ref._strips[ref.row];
     const source = rowStrips[colorKey] ?? Object.values(rowStrips)[0];
@@ -157,6 +179,7 @@ function withSource(ref, colorKey) {
         sheet: { w: ref.cell.w * ref.frameCount, h: ref.cell.h },
         row: 0,
         frameCount: ref.frameCount,
+        offsetY,
     };
 }
 
@@ -224,10 +247,57 @@ export function resolveSpriteRef(type, status, anim, colorKey) {
     if (anim.kind === 'collision') { const ref = frameRef(b, 'collision', anim.side); return ref ? withSource(ref, colorKey) : idleRef(); }
     if (anim.kind === 'start') {
         const ref = frameRef(b, 'start') ?? (anim.side ? frameRef(b, 'move', anim.side) : null);
-        return ref ? withSource(ref, colorKey) : idleRef();
+        // offsetY — ТОЛЬКО когда реально нашёлся собственный 'start'-клип
+        // (см. CLAUDE_OFFSET_Y выше) — фолбэк на 'move' (когда у типа вообще
+        // нет 'start', см. Жнец) уже использует move-геометрию, поправку
+        // применять не к чему.
+        const offsetY = frameRef(b, 'start') ? (CLIP_OFFSET_Y[type]?.[folder]?.start ?? 0) : 0;
+        return ref ? withSource(ref, colorKey, offsetY) : idleRef();
     }
     if (anim.kind === 'bomb') { const ref = frameRef(b, 'bomb'); return ref ? withSource(ref, colorKey) : idleRef(); }
     return idleRef();
+}
+
+/**
+ * Список ВСЕХ .source-ассетов, которые resolveSpriteRef МОЖЕТ вернуть для
+ * этого type+status+colorKey (move во всех направлениях, attack, fly,
+ * gotShot, start, bomb, collision east/west, idle/broken/destroyed из
+ * ТЕКУЩЕГО бакета) — только для прогрева (см. RunnerToken.js#prewarmedCombos,
+ * 2026-09-25, по прямому запросу пользователя: "мигание при смене idle на
+ * move" — гипотеза: конкретное направление move/attack на native декодируется
+ * ВПЕРВЫЕ ровно в момент первого реального использования, и SpritePackAnimation
+ * держит старый (idle, почти всегда уже тёплый) кадр, пока идёт декод — токен
+ * успевает физически сдвинуться (слайд не ждёт декод позы), а поза потом
+ * резко "прыгает" на move уже на середине пути. Прогрев ВСЕХ вариантов заранее
+ * убирает именно этот первый-раз-холодный декод).
+ *
+ * heal/burn/acid добавлены ОТДЕЛЬНО, не через общий проход по текущему
+ * бакету — resolveSpriteRef резолвит их из ФИКСИРОВАННОГО бакета независимо
+ * от статуса ЭТОГО бегуна (heal — всегда damaged, burn/acid — всегда healthy,
+ * см. ветки выше) — просто добавить `pack.damaged`/`pack.healthy` целиком
+ * означало бы прогревать и ЧУЖИЕ (текущему статусу не нужные) move/attack/...
+ * клипы того бакета, впустую тратя decode-время на то, что этот конкретный
+ * бегун может вообще никогда не показать.
+ */
+export function listAllSpriteSources(type, status, colorKey) {
+    const pack = SPRITE_PACKS[type];
+    if (!pack) return [];
+    const sources = new Set();
+    const addRef = (ref) => {
+        const withSrc = ref ? withSource(ref, colorKey) : null;
+        if (withSrc?.source) sources.add(withSrc.source);
+    };
+    const b = pack[statusFolder(status)];
+    addRef(frameRef(b, 'idle'));
+    for (const name of Object.keys(b.index.byName)) {
+        for (const dir of Object.keys(b.index.byName[name])) {
+            addRef(frameRef(b, name, dir));
+        }
+    }
+    addRef(frameRef(pack.damaged, 'heal'));
+    addRef(frameRef(pack.healthy, 'burn'));
+    addRef(frameRef(pack.healthy, 'acid'));
+    return Array.from(sources);
 }
 
 /**

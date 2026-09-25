@@ -27,7 +27,9 @@ import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
-import { handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent, DEATH_KIND_BY_REASON } from '../lib/runnerAnimTriggers';
+import {
+    handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent, DEATH_KIND_BY_REASON, identifyStatusWorsening,
+} from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
 import { identifyGhostPass } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
@@ -276,6 +278,72 @@ export default function GameBoardScreen({ route, navigation }) {
     // жетонов повреждений в этом файле).
     const mineBlasts = useMineBlasts();
     const minePendingRef = useRef(false);
+    // **2026-09-25, по прямому запросу пользователя** — раньше вскрытие
+    // клетки (game_cell_updated) сразу же дёргало mineBlasts.trigger(cellId),
+    // СОВЕРШЕННО не в курсе очереди анимаций бегуна, который эту мину
+    // реально вызвал — совпадение по времени с его 'fly'-приземлением было
+    // случайным побочным эффектом старых, искусственно растянутых таймеров
+    // (см. useRunnerAnimations.js, "2026-09-25" в начале файла). Теперь мина
+    // стартует ЧЕРЕЗ ТОТ ЖЕ `onStart`-механизм, что уже используется ниже
+    // для heldCells (releaseHeldCellOnStart/triggerWithSound) — единственный
+    // в проекте сигнал "этот toPosition РЕАЛЬНО начал играть", а не гадание
+    // по параллельному таймеру. `pendingMineCellIdsRef` — Set cellId,
+    // ожидающих СВОЕГО onStart (обычно один элемент, Set — на случай двух
+    // мин почти подряд); `activatedCellKeysRef` (см. ниже, уже существует
+    // для heldCells) переиспользуется как есть — если onStart для этой
+    // позиции уже отработал РАНЬШЕ, чем мы узнали про мину (однохоповый
+    // случай без каскада — см. докстринг у activatedCellKeysRef), ждать
+    // больше нечего, взрываем сразу в game_cell_updated-ветке.
+    const pendingMineCellIdsRef = useRef(new Set());
+    // Страховочный потолок — тот же принцип, что HELD_CELL_TIMEOUT_MS ниже:
+    // если ни один toPosition этого бегуна никогда не совпадёт с этой
+    // клеткой (например бегуна уничтожило раньше, чем он "долетел"), не
+    // держать взрыв невидимым вечно.
+    const MINE_TRIGGER_SAFETY_TIMEOUT_MS = 8000;
+
+    // **2026-09-25, живая жалоба пользователя** — "healthy меняется на
+    // damaged ДО того, как проигралась анимация move, до взрыва мины, до
+    // анимации получения урона". Та же природа, что и у мины/heldCells чуть
+    // выше: `runner.status` (решает, healthy или damaged bucket спрайт-пака
+    // рисует RunnerToken — см. resolveSpriteRef) обновляется МГНОВЕННО вместе
+    // с игровым стейтом (архитектурное правило проекта — состояние не ждёт
+    // анимацию), а бегун в этот момент может ещё доигрывать move/fly К месту
+    // удара. Тот же честный `onStart`-приём, не отдельный таймер: держим
+    // СТАРЫЙ статус, пока не начнёт реально играть та поза (gotShot/
+    // destroyed/acid/burn), которая и ЕСТЬ визуальный момент удара — см.
+    // identifyStatusWorsening (lib/runnerAnimTriggers.js) и
+    // statusReleaseOnStart в triggerWithSound ниже.
+    //
+    // `heldRunnerStatusesRef` (не только React state) — по ТОЙ ЖЕ причине,
+    // что и activatedCellKeysRef/pendingMineCellIdsRef выше: заморозка
+    // ставится в reduceAndLog ДО handleVersionedRunnerAnimEvent (см. там,
+    // тот же порядок, что уже у pendingDeathRunnerIds — если очередь этого
+    // бегуна сейчас пуста, onStart может сработать СИНХРОННО прямо внутри
+    // этого вызова), а снимается ИЗ triggerWithSound — оба места должны
+    // видеть АКТУАЛЬНОЕ значение в рамках одного синхронного прохода, не
+    // ждать следующего рендера (React batching). State — чисто для того,
+    // чтобы BoardGrid реально перерисовался с переопределённым статусом.
+    //
+    // Пишем ТОЛЬКО если для этого runnerId ЕЩЁ НИЧЕГО не заморожено (не
+    // перезаписываем) — при каскаде из НЕСКОЛЬКИХ ударов подряд (redко, но
+    // возможно) это сохраняет САМЫЙ РАННИЙ статус (тот, что был ДО всего
+    // каскада), а не статус "перед последним конкретным ударом" — иначе
+    // промежуточные позы каскада увидели бы уже "наполовину" ухудшённый
+    // статус вместо честного исходного.
+    const [heldRunnerStatuses, setHeldRunnerStatuses] = useState({});
+    const heldRunnerStatusesRef = useRef({});
+    const HELD_RUNNER_STATUS_TIMEOUT_MS = 8000; // тот же принцип, что и у HELD_CELL_TIMEOUT_MS/MINE_TRIGGER_SAFETY_TIMEOUT_MS
+    const releaseHeldRunnerStatus = useCallback((runnerId) => {
+        if (!(runnerId in heldRunnerStatusesRef.current)) return;
+        delete heldRunnerStatusesRef.current[runnerId];
+        setHeldRunnerStatuses((prev) => {
+            if (!(runnerId in prev)) return prev;
+            const next = { ...prev };
+            delete next[runnerId];
+            return next;
+        });
+    }, []);
+
     // Гейт для GameFinishModal (см. hasDeathAnimPlaying ниже) — живая жалоба,
     // 2026-09-12: "диалог победы на мгновение появился и исчез, потом
     // проигралась анимация, потом диалог снова появился (уже валидно)".
@@ -484,8 +552,19 @@ export default function GameBoardScreen({ route, navigation }) {
             // Снятие заморозки клетки (см. heldCells/releaseHeldCellOnStart
             // выше) — для ЛЮБОГО kind с toPosition, не только acid/burn.
             const cellReleaseOnStart = extra?.toPosition ? releaseHeldCellOnStart(extra.toPosition) : undefined;
-            const combinedOnStart = (deathOnStart || cellReleaseOnStart)
-                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); }
+            // Взрыв мины (2026-09-25, см. pendingMineCellIdsRef выше) — тот
+            // же приём: если этот toPosition сейчас числится "ждём взрыва",
+            // запускаем его РОВНО когда шаг РЕАЛЬНО начинает играть, не
+            // раньше. cellKeyFromPosition — тот же формат id, что и у
+            // game_cell_updated-ветки reduceAndLog (см. там).
+            const mineCellKey = extra?.toPosition ? cellKeyFromPosition(extra.toPosition) : null;
+            const mineOnStart = mineCellKey && pendingMineCellIdsRef.current.has(mineCellKey)
+                ? () => {
+                    if (pendingMineCellIdsRef.current.delete(mineCellKey)) mineBlasts.trigger(mineCellKey);
+                }
+                : undefined;
+            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart)
+                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); }
                 : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
             else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra);
@@ -517,7 +596,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed));
             }
         },
-        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, releaseHeldCellOnStart],
+        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, releaseHeldCellOnStart, mineBlasts.trigger],
     );
 
     // Логируем И версионные события (через reduce — вызывается ровно по разу
@@ -544,7 +623,10 @@ export default function GameBoardScreen({ route, navigation }) {
             if (e.event === 'runner_destroy' && DEATH_KIND_BY_REASON[e.reason]) {
                 setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
             }
-            handleVersionedRunnerAnimEvent(state, e, triggerWithSound);
+            handleVersionedRunnerAnimEvent(state, e, triggerWithSound, {
+                onceStepDone: runnerAnim.onceStepDone,
+                completeWaitStep: runnerAnim.completeWaitStep,
+            });
             // "Игра стартовала, кубики розданы" — см. gameStartSoundPlayedRef
             // выше за тем, почему именно player_roll_move_dice (а не
             // game_active/step_begin) — это событие приходит N раз (по разу
@@ -592,7 +674,21 @@ export default function GameBoardScreen({ route, navigation }) {
                 // вскрытие (не мина) не должно случайно унаследовать его.
                 if (minePendingRef.current) {
                     minePendingRef.current = false;
-                    mineBlasts.trigger(cellId);
+                    // Как и у heldCells чуть ниже (см. activatedCellKeysRef) —
+                    // если onStart для ЭТОЙ позиции уже отработал ДО того, как
+                    // мы узнали про мину (однохоповый случай, без каскада —
+                    // мгновенный мердж пришёл раньше вскрытия), ждать больше
+                    // нечего, взрываем сейчас же. Иначе — откладываем до
+                    // onStart (см. triggerWithSound#mineOnStart), с
+                    // страховочным потолком на случай, если он не придёт.
+                    if (activatedCellKeysRef.current.has(cellId)) {
+                        mineBlasts.trigger(cellId);
+                    } else {
+                        pendingMineCellIdsRef.current.add(cellId);
+                        setTimeout(() => {
+                            if (pendingMineCellIdsRef.current.delete(cellId)) mineBlasts.trigger(cellId);
+                        }, MINE_TRIGGER_SAFETY_TIMEOUT_MS);
+                    }
                 }
                 // Если позиция УЖЕ активирована (см. activatedCellKeysRef выше)
                 // — типовой случай "один хоп, не каскад" (например мина-Мяч):
@@ -656,7 +752,11 @@ export default function GameBoardScreen({ route, navigation }) {
         // (новый литерал {tokensByRunner,...}), это пересоздавало бы
         // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
         // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
-        [pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType, runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound, mineBlasts.trigger],
+        [
+            pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType,
+            runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound, mineBlasts.trigger,
+            runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
+        ],
     );
 
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
@@ -1331,28 +1431,48 @@ export default function GameBoardScreen({ route, navigation }) {
         return { highlightedCells: new Set(), tapMode: null };
     }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, trackShiftPhase]);
 
-    // Первый выход бегуна из резерва на трассу (tapMode==='start' выше) —
+    // Первый выход бегуна из резерва на трассу (tapMode==='start') —
     // подсвеченные клетки ВСЕГДА на segment=0/positionX=0 (globalCol=0), но
     // камера могла быть проскроллена куда угодно с прошлого хода — по
     // прямому запросу пользователя, 2026-09-13, автоматически подводим окно
     // прокрутки к началу трассы, как только это состояние наступает, чтобы
-    // подсветку было видно сразу, без ручного скролла. `startTapJumpedRef` —
-    // прыгаем ОДИН раз на активацию (не на каждый рендер, пока tapMode
-    // остаётся 'start') — иначе это спорило бы с любой попыткой игрока
-    // прокрутить дальше вручную, пока он ещё не тапнул. Сбрасывается, как
-    // только tapMode уходит от 'start' (бегун разместился/сменился шаг) —
-    // готово сработать заново для следующего такого бегуна.
-    const startTapJumpedRef = useRef(false);
+    // подсветку было видно сразу, без ручного скролла.
+    //
+    // **tapMode==='move' (2026-09-25, живая жалоба пользователя)** — "выбрал
+    // танка на участке дороги, где он не в фокусе — телепорта к нему не
+    // случилось". Та же логика: как только у активного игрока появляется
+    // выбранный, уже стоящий НА трассе бегун (обычный, не первый ход) —
+    // подводим камеру К НЕМУ, не к началу дороги. Раньше такого перехода не
+    // было вообще — только 'start' (первый выход из резерва).
+    //
+    // **Живая регрессия (2026-09-25): "фокус бегуна в центре после КАЖДОГО
+    // хода"** — прежний `selectionJumpedRef` сбрасывался в `else`-ветке
+    // КАЖДЫЙ раз, когда `tapMode` временно уходил от 'move' (например на
+    // время API-вызова между хопами многошагового наката — `busy`/другой шаг
+    // на мгновение) — при возврате в 'move' для ТОГО ЖЕ бегуна это ошибочно
+    // читалось как "новый выбор", и камера прыгала заново на каждый хоп.
+    // Фикс — привязка не к самому tapMode, а к ЛИЧНОСТИ активного бегуна:
+    // прыгаем ОДИН раз на конкретный `activeRunner.id`, а не на каждое
+    // попадание в 'start'/'move'. Сбрасывается ТОЛЬКО когда `activeRunner`
+    // реально меняется (другой бегун ИЛИ null — обычный SELECT-шаг между
+    // ходами) — готово сработать заново при следующем, отдельном выборе.
+    const lastActiveRunnerIdRef = useRef(undefined);
+    const jumpedForSelectionRef = useRef(false);
     useEffect(() => {
-        if (tapMode === 'start') {
-            if (!startTapJumpedRef.current) {
-                startTapJumpedRef.current = true;
-                jumpToStart(0);
-            }
-        } else {
-            startTapJumpedRef.current = false;
+        const currentId = activeRunner?.id ?? null;
+        if (currentId !== lastActiveRunnerIdRef.current) {
+            lastActiveRunnerIdRef.current = currentId;
+            jumpedForSelectionRef.current = false;
         }
-    }, [tapMode, jumpToStart]);
+        if (jumpedForSelectionRef.current) return;
+        if (tapMode === 'start') {
+            jumpedForSelectionRef.current = true;
+            jumpToStart(0);
+        } else if (tapMode === 'move' && activeRunner?.segment != null) {
+            jumpedForSelectionRef.current = true;
+            jumpTo(activeRunner.segment * BOARD_LAYOUT.COLS + activeRunner.positionX);
+        }
+    }, [tapMode, activeRunner?.id, activeRunner?.segment, activeRunner?.positionX, jumpToStart, jumpTo]);
 
     // Есть ли у Жнеца реальный выстрел ПРЯМО СЕЙЧАС (раунд>0 И подсвеченная
     // клетка реально нашлась, см. reaperShoot-ветку useMemo выше) — общий
@@ -2104,6 +2224,7 @@ export default function GameBoardScreen({ route, navigation }) {
             mineBlasts={mineBlasts.blasts}
             onCollisionPoseStart={handleCollisionPoseStart}
             onCollisionPoseEnd={handleCollisionPoseEnd}
+            onAnimStepEnd={runnerAnim.completeStep}
             reaperPreview={
                 pendingReaperPlacement
                     ? {

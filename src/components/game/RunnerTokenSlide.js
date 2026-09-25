@@ -1,6 +1,6 @@
 // src/components/game/RunnerTokenSlide.js
 import React, { useLayoutEffect, useRef, useEffect } from 'react';
-import { Animated } from 'react-native';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming, runOnJS } from 'react-native-reanimated';
 import { createLogger } from '../../lib/logger';
 
 const log = createLogger('SLIDEDBG'); // ВРЕМЕННО — диагностика "телепорт/исчезновение", убрать после
@@ -29,7 +29,7 @@ export const SLIDE_DURATION_MS = 1360;
  *
  * КРИТИЧНО: React key в BoardGrid для этого компонента должен быть id
  * БЕГУНА, а не ключ клетки — иначе при каждом перемещении (клетка меняется)
- * компонент бы пересоздавался и Animated.ValueXY (см. ref ниже) терял бы
+ * компонент бы пересоздавался и shared values (см. ниже) теряли бы
  * состояние, скольжение никогда бы не проигрывалось.
  *
  * useLayoutEffect, НЕ useEffect — обычный useEffect выполняется ПОСЛЕ отрисовки
@@ -54,9 +54,8 @@ export const SLIDE_DURATION_MS = 1360;
  * (третья жалоба пользователя, 2026-08-31, тот же день). Фикс — общий:
  * следим за изменением windowStart И width/height ОТДЕЛЬНО от x/y — если
  * что-то из них изменилось с прошлого рендера, применяем новую x/y
- * МГНОВЕННО (сброс translate в 0 без Animated.timing), не дожидаясь
- * следующего реального перемещения бегуна, которое уже будет анимировано
- * как обычно.
+ * МГНОВЕННО (сброс translate в 0 без анимации), не дожидаясь следующего
+ * реального перемещения бегуна, которое уже будет анимировано как обычно.
  *
  * `enterFrom` (2026-09-07, Жнец — см. GameBoardScreen#reaperPreview) —
  * необязательные {x,y}, ОТКУДА должен приехать элемент на своём первом же
@@ -72,60 +71,111 @@ export const SLIDE_DURATION_MS = 1360;
  * замедлили вдвое относительно обычного шага, не касаясь скорости шагов
  * остальных бегунов.
  *
+ * **2026-09-25, ТРЕТИЙ архитектурный заход — переход со старого `Animated`
+ * (голый `react-native`, JS-поток) на `react-native-reanimated`.** По
+ * прямому запросу пользователя, прямое продолжение того же захода, что уже
+ * был сделан для SpritePackAnimation.js (см. её докстринг) — та же болезнь
+ * ("JS-таймер/листенер не совпадает с тем, что реально нарисовано"), тут в
+ * своей версии.
+ *
+ * **Что это устраняет структурно, не заплаткой** — вся история "дёрганья"
+ * этого файла (см. ниже) и МОЯ ЖЕ сегодняшняя регрессия ("опять вернулись
+ * телепорты") имели ОДИН корень: старый `Animated.ValueXY` не даёт синхронно
+ * прочитать своё текущее значение из JS — единственный способ узнать его
+ * (`currentTranslateRef`, `translate.addListener(...)`) синкается
+ * ПЕРИОДИЧЕСКИ, не мгновенно, и может отдать устаревшее число ровно в
+ * момент, когда нужно решение "откуда начинать следующий слайд". Reanimated
+ * shared values (`useSharedValue`) читаются и пишутся ЧЕРЕЗ `.value`
+ * СИНХРОННО и ВСЕГДА актуальны (JSI, без моста) — весь класс "устаревшего
+ * снимка" перестаёт быть возможным в принципе, не только замаскированным.
+ * Поэтому `currentTranslateRef`/`translateSettledRef` (два предыдущих,
+ * неудачных захода на эту же проблему) ПОЛНОСТЬЮ убраны — читаем
+ * `translateX.value`/`translateY.value` напрямую в момент старта нового
+ * слайда, они физически не могут быть "не тем самым" значением.
+ *
  * **"Дёрганье": едет → на мгновение откатывается назад → резко продолжает с
- * середины** (2026-09-13, живая жалоба, идентичный паттерн уже не раз
+ * середины"** (2026-09-13, живая жалоба, идентичный паттерн уже не раз
  * встречался в этом проекте под разными масками — см. CLAUDE.md). Настоящая
  * причина именно ЭТОГО симптома — `fromPos = prevPos.current` брал
  * ЛОГИЧЕСКУЮ предыдущую цель (куда токен ДОЛЖЕН был доехать), а не ту точку,
  * где он ВИЗУАЛЬНО находится ПРЯМО СЕЙЧАС. Если новая x/y (см.
  * `visualPositions`/очередь в useRunnerAnimations) приходит РАНЬШЕ, чем
- * предыдущий `Animated.timing` успел доехать до 0 (два шага очереди почти
- * подряд — обычное дело для составного хода), `translate.setValue({x:dx,...})`
- * БЕЗУСЛОВНО ПЕРЕЗАПИСЫВАЛ текущее (ещё ненулевое, "в полёте") значение —
- * визуально это и есть "откат назад" (токен скачком уезжает в точку,
- * рассчитанную от СТАРОЙ цели, а не от того места, где он летел долю секунды
- * назад), после чего новая анимация везёт его дальше — "резкое продолжение".
- * Фикс — следим за РЕАЛЬНЫМ (а не только логическим) значением translate через
- * `addListener` (общепринятый способ прочитать текущее число из Animated.Value
- * — даже под `useNativeDriver`, RN периодически синхронизирует JS-значение
- * обратно) и, начиная новый слайд, ДОБАВЛЯЕМ его к вычисленной дельте, а не
- * заменяем целиком — если предыдущая анимация уже осела в 0 (обычный случай),
- * это ничего не меняет (0+dx=dx, как и было), а если ещё в полёте — сохраняет
- * визуальную непрерывность вместо скачка.
+ * предыдущий слайд успел доехать до 0 (два шага очереди почти подряд —
+ * обычное дело для составного хода), простая ЗАМЕНА текущего (ещё ненулевого,
+ * "в полёте") значения читалась бы как скачок. Фикс (переживший все три
+ * захода) — ДОБАВЛЯЕМ текущее значение к вычисленной дельте, а не заменяем:
+ * если предыдущий слайд уже осел в 0 (обычный случай), это ничего не меняет
+ * (0+dx=dx, как и было), а если ещё в полёте — сохраняет визуальную
+ * непрерывность вместо скачка. Раньше это требовало периодического
+ * listener-синка (ненадёжного, см. выше) — теперь просто читаем
+ * `translateX.value` напрямую, он и так всегда актуален.
+ *
+ * **"Прогрев" нативного графа (2026-09-24) — убран целиком.** Та гипотеза
+ * была специфична для СТАРОГО `Animated` (`connectAnimatedNodes`,
+ * подключение JS-графа к нативному аниматору) — у Reanimated принципиально
+ * другая архитектура (shared values живут в общем C++-рантайме, никакого
+ * отдельного "подключения графа" при первом использовании нет) — гипотеза
+ * технически неприменима к этой реализации, оставлять её здесь было бы
+ * мёртвым, вводящим в заблуждение кодом.
+ *
+ * **2026-09-25, ЧЕТВЁРТЫЙ заход — настоящая причина живучего "телепорт →
+ * откат назад → доигрывает", пережившая переход на reanimated.** Живая
+ * жалоба пользователя ПОСЛЕ миграции на reanimated: паттерн тот же самый,
+ * 1-в-1 повторяет докстринг "Дёрганье" выше (который считался решённым
+ * useLayoutEffect ещё для старого Animated). Настоящая причина оказалась НЕ
+ * в порядке JS-присвоений (тот как раз синхронный и корректный), а в том,
+ * что `left`/`top` и `transform` этого View обновлялись через ДВА РАЗНЫХ
+ * конвейера: `left`/`top` — обычный React-style-проп (коммитится через
+ * Fabric на обычном рендер-цикле), `transform` — reanimated shared value
+ * (применяется на UI-потоке через собственный choreographer-маппер
+ * `useAnimatedStyle`, вне обычного React-коммита). `useLayoutEffect` пишет
+ * `translateX.value` синхронно ДО пейнта — но это гарантирует только
+ * порядок JS-присвоений, а НЕ то, что оба конвейера долетят до нативной
+ * вьюхи В ОДНОМ И ТОМ ЖЕ кадре: на Android коммит Fabric (двигающий left/top
+ * на новую клетку) и цикл reanimated (применяющий компенсирующий transform)
+ * не гарантированно синхронизированы между собой. Итог ровно той же формы,
+ * что жалоба пользователя: (1) Fabric уже отрисовал новый left/top (целевая
+ * клетка), reanimated ещё не успел применить компенсацию — токен на кадр
+ * виден В ТОЧКЕ НАЗНАЧЕНИЯ ("телепорт"); (2) reanimated догоняет, резко
+ * применяет компенсирующий transform — "прыжок назад"; (3) дальше штатно
+ * доигрывает `withTiming(0)` — "нормальный слайд". Тот же класс бага, что
+ * уже был у старого `Animated.ValueXY` (см. докстринг "Дёрганье" выше), но
+ * теперь на стыке ДВУХ РАЗНЫХ style-пропов одного View, а не внутри одного
+ * API — поэтому миграция на reanimated (убравшая устаревание СНАЧАЛА, между
+ * двумя присваиваниями) сама по себе эту гонку не затрагивала.
+ *
+ * **Фикс** — `left`/`top` теперь ТОЖЕ shared values (`targetX`/`targetY`),
+ * читаются ВНУТРИ ТОГО ЖЕ `useAnimatedStyle`, что и `translateX`/`translateY`
+ * — один маппер Reanimated, одно атомарное обновление нативной вьюхи за
+ * кадр, ни один из двух аспектов позиции больше не идёт через отдельный
+ * React-style-коммит.
  */
-export default function RunnerTokenSlide({ x, y, width, height, style, children, windowStart, enterFrom, duration = SLIDE_DURATION_MS }) {
-    const translate = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+export default function RunnerTokenSlide({
+    x, y, width, height, style, children, windowStart, enterFrom, duration = SLIDE_DURATION_MS, onSlideEnd,
+}) {
+    const translateX = useSharedValue(0);
+    const translateY = useSharedValue(0);
+    // Целевая позиция (левый верхний угол клетки) — ТЕПЕРЬ shared value,
+    // не React-style-проп (см. докстринг "ЧЕТВЁРТЫЙ заход" выше). Читается
+    // тем же useAnimatedStyle, что и translateX/Y — оба аспекта позиции
+    // применяются к нативной вьюхе ОДНИМ маппером Reanimated за кадр.
+    const targetX = useSharedValue(x);
+    const targetY = useSharedValue(y);
     const prevPos = useRef(null);
     const prevWindowStart = useRef(windowStart);
     const prevSize = useRef({ width, height });
-    const currentTranslateRef = useRef({ x: 0, y: 0 });
-
-    // "Прогрев" нативного графа анимации (2026-09-24, по прямому запросу
-    // пользователя — продолжение незакрытого расследования "телепорт в
-    // начале движения" из CLAUDE.md, 2026-09-20/21) — САМЫЙ ПЕРВЫЙ реальный
-    // слайд токена (см. ниже, useLayoutEffect) — это и первый раз, когда
-    // `Animated.timing(translate,...,{useNativeDriver:true}).start()`
-    // вызывается на ЭТОМ `translate` — именно в этот момент RN подключает
-    // нативный узел (`connectAnimatedNodes`) к нативному модулю аниматора.
-    // Этот же класс узла уже был источником подтверждённого краша в этом
-    // проекте (2026-09-15, RunnerToken#halo) — гипотеза: на первом слайде
-    // возможно окно, где Fabric красит уже НОВЫЕ left/top (обычный style-
-    // проп, обычный коммит), а компенсирующий transform (отдельный нативный
-    // модуль, НЕ тот же коммит) ещё не успел долететь/подключиться — токен
-    // на кадр виден в конечной точке БЕЗ компенсации, что и читается как
-    // "телепортировал, потом заиграла анимация". Прогоняем no-op анимацию
-    // (0→0, длительность 0) сразу при монтировании — граф подключается в
-    // спокойный момент, а не во время первого настоящего перемещения.
-    // НЕ подтверждено живьём в этой сессии (нет доступа к устройству) —
-    // обоснованная, но не стопроцентно доказанная гипотеза, см. CLAUDE.md.
-    useEffect(() => {
-        Animated.timing(translate, { toValue: { x: 0, y: 0 }, duration: 0, useNativeDriver: true }).start();
-    }, [translate]);
-
-    useEffect(() => {
-        const id = translate.addListener((value) => { currentTranslateRef.current = value; });
-        return () => translate.removeListener(id);
-    }, [translate]);
+    // Ref, не прямая зависимость useLayoutEffect ниже — 2026-09-25, см.
+    // useRunnerAnimations.js#completeStep. `onSlideEnd` обычно приходит
+    // НОВЫМ инлайн-замыканием на каждый рендер BoardGrid (замыкает свежий
+    // item.anim.nonce) — если бы он был в deps эффекта, КАЖДЫЙ такой рендер
+    // (а BoardGrid перерисовывается на каждое applied Mercure-событие)
+    // заново запускал бы весь эффект целиком, включая ветку "мгновенный
+    // снап без анимации" при scrolled/resized и, хуже, ложно считал бы
+    // "первым рендером" при размонтировании/монтировании — держим только
+    // САМУЮ СВЕЖУЮ ссылку, не пересоздавая сам эффект.
+    const onSlideEndRef = useRef(onSlideEnd);
+    useEffect(() => { onSlideEndRef.current = onSlideEnd; }, [onSlideEnd]);
+    const notifySlideEnd = () => { onSlideEndRef.current?.(); };
 
     useLayoutEffect(() => {
         const scrolled = prevWindowStart.current !== windowStart;
@@ -155,6 +205,13 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
         const fromPos = isFirstRender ? (enterFrom ?? { x, y }) : prevPos.current;
         prevPos.current = { x, y };
 
+        // Пишем ЦЕЛЕВУЮ позицию СРАЗУ и БЕЗУСЛОВНО (до всех ранних return
+        // ниже) — та же СИНХРОННАЯ JS-запись, что и у translateX/Y дальше,
+        // и в том же тике, что гарантирует их совместный флаш одним
+        // маппером Reanimated (см. докстринг выше).
+        targetX.value = x;
+        targetY.value = y;
+
         if (isFirstRender && !enterFrom) {
             log('first render (no enterFrom), x=', x, 'y=', y);
             return; // обычный первый рендер — ехать неоткуда
@@ -166,29 +223,66 @@ export default function RunnerTokenSlide({ x, y, width, height, style, children,
         log('move: from=', fromPos, 'to=', { x, y }, 'isFirstRender=', isFirstRender, 'scrolled=', scrolled, 'resized=', resized);
 
         if (!isFirstRender && (scrolled || resized)) {
-            translate.setValue({ x: 0, y: 0 }); // мгновенно, как и сами сегменты сетки
-            return;
+            translateX.value = 0;
+            translateY.value = 0;
+            return; // мгновенно, как и сами сегменты сетки
         }
 
         // ДОБАВЛЯЕМ к текущему (возможно ещё "в полёте") значению, а не
-        // заменяем — см. докстринг компонента про "дёрганье".
-        translate.setValue({
-            x: dx + currentTranslateRef.current.x,
-            y: dy + currentTranslateRef.current.y,
-        });
-        Animated.timing(translate, {
-            toValue: { x: 0, y: 0 },
-            duration,
-            useNativeDriver: true,
-        }).start();
-    }, [x, y, width, height, windowStart, translate, enterFrom, duration]);
+        // заменяем — см. докстринг компонента про "дёрганье". `.value` тут —
+        // СИНХРОННОЕ чтение (reanimated shared value, не старый
+        // Animated.Value+listener) — гарантированно актуальное число, не
+        // "почти актуальное раз в сколько-то мс".
+        translateX.value = dx + translateX.value;
+        translateY.value = dy + translateY.value;
+        // onSlideEnd — сигнал "этот слайд РЕАЛЬНО доехал", см.
+        // useRunnerAnimations.js#completeStep: для move/fly это и есть
+        // единственный настоящий источник "движение закончилось", вместо
+        // угадывания длительности отдельным таймером. Колбэк-параметр
+        // withTiming — ворклет (`'worklet'`), `finished` — false, если
+        // анимацию прервали НЕ она сама доиграв (обычно новое присваивание
+        // `.value` откуда-то ещё раньше срока) — в этом случае сигнал не
+        // шлём, дальше решает страховочный таймер/следующий реальный слайд.
+        //
+        // **2026-09-25, живой баг (найден через мок-дорогу) — "move_north
+        // проигрывает ровно 1 кадр и откатывается в idle"**: раньше колбэк
+        // висел ТОЛЬКО на translateX ("обе оси стартуют и длятся одинаково,
+        // второй был бы дублирующим") — верно для ДИАГОНАЛЬНЫХ шагов (обе оси
+        // реально едут), но НЕ для чистого "вперёд"/"назад" по прямой дорожке
+        // (см. BoardGrid — x зависит от positionY/дорожки, y — от positionX/
+        // глубины; шаг БЕЗ смены дорожки даёт dx===0). Reanimated `withTiming`
+        // из уже-целевого значения (0→0, раз dx===0) завершается практически
+        // на следующий кадр, НЕЗАВИСИМО от duration — колбэк на X стрелял
+        // почти мгновенно, обрывая позу 'move' до того, как реально едущая
+        // ось Y успевала показать хоть один кадр слайда. Фикс — вешаем колбэк
+        // на ТУ ось, у которой на старте этого конкретного слайда ЕСТЬ
+        // реальная дельта (dx или dy, гарантированно хотя бы одна ненулевая —
+        // иначе уже вышли бы выше), а не всегда на X.
+        const onFinish = (finished) => {
+            'worklet';
+            if (finished) runOnJS(notifySlideEnd)();
+        };
+        if (dx !== 0) {
+            translateX.value = withTiming(0, { duration }, onFinish);
+            translateY.value = withTiming(0, { duration });
+        } else {
+            translateX.value = withTiming(0, { duration });
+            translateY.value = withTiming(0, { duration }, onFinish);
+        }
+    }, [x, y, width, height, windowStart, enterFrom, duration]);
+
+    const animatedStyle = useAnimatedStyle(() => ({
+        left: targetX.value,
+        top: targetY.value,
+        transform: [{ translateX: translateX.value }, { translateY: translateY.value }],
+    }));
 
     return (
         <Animated.View
             style={[
                 style,
-                { position: 'absolute', left: x, top: y, width, height },
-                { transform: translate.getTranslateTransform() },
+                { position: 'absolute', width, height },
+                animatedStyle,
             ]}
         >
             {children}

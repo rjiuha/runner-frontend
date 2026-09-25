@@ -145,6 +145,13 @@ export default function MainMenuScreen({ navigation }) {
               onPress={() => navigation.navigate(ROUTES.LOBBY_SEARCH)}
           />
 
+          <MenuCard
+              title="🧪 Тест-дорога"
+              description="Песочница анимаций — без бэка"
+              color={colors.info}
+              onPress={() => navigation.navigate(ROUTES.MOCK_ROAD)}
+          />
+
           {/* Заготовки под MVP-2 — оставлены намеренно, чтобы был виден план */}
           <View style={styles.soonBlock}>
             <Text style={styles.soonLabel} noGlobalTint>Скоро</Text>

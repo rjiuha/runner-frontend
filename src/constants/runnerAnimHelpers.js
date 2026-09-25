@@ -42,9 +42,21 @@ export function colorKeyForHex(hex) {
  *  2) LEFT_UP/RIGHT_UP не всегда "вверх по экрану" — при чётной старой
  *     глубине это чисто боковой шаг/прицел на смещённую "кирпичом" дорожку
  *     без продвижения (south-*), при нечётной — диагональ вперёд (north-*).
+ *
+ * `direction` в бою — ВСЕГДА одно из 3 "вперёд" (UP/LEFT_UP/RIGHT_UP,
+ * MoveDto/ShootDto на бэке других не разрешают) — ветки DOWN/LEFT_DOWN/
+ * RIGHT_DOWN ниже физически недостижимы из боевого кода, добавлены ТОЛЬКО
+ * ради screens/MockRoadScreen.js ("Шаг" в любую из 6 смежных клеток, не
+ * только вперёд) — существующее поведение для 3 боевых направлений не
+ * тронуто ни на бит. В паке (spritePackStrips.js) реально ЕСТЬ south/east/
+ * west move-клипы (проверено, 2026-09-25) — используем их напрямую, а не
+ * приближение через south-east/south-west, как было в первой версии мока.
  */
 export function resolveMoveAssetDirection(direction, depthChanged, targetLaneShifted) {
     if (direction === 'UP') return 'north';
+    if (direction === 'DOWN') return 'south';
+    if (direction === 'LEFT_DOWN') return 'west';
+    if (direction === 'RIGHT_DOWN') return 'east';
     const isEast = direction === 'LEFT_UP';
     if (depthChanged) return isEast ? 'northEast' : 'northWest';
     if (targetLaneShifted) return isEast ? 'southEast' : 'southWest';

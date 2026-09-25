@@ -101,6 +101,14 @@ export default function BoardGrid({
     mineBlasts = null,
     onCollisionPoseStart = null,
     onCollisionPoseEnd = null,
+    // Настоящий сигнал "действие для этого бегуна реально закончилось на
+    // экране" (2026-09-25, см. hooks/useRunnerAnimations.js#completeStep) —
+    // прокидывается ДАЛЬШЕ в RunnerTokenSlide (слайд реально доехал —
+    // move/fly) и в RunnerToken (полоска реально дорисовала последний кадр —
+    // остальные транзиентные позы, только native). BoardGrid сам ничего не
+    // решает, просто передаёт runnerId/nonce КОНКРЕТНОГО шага очереди —
+    // см. tokenOverlay ниже.
+    onAnimStepEnd = null,
     reaperPreview = null,
     columnOpacities = null,
     // Клетки, временно замороженные в ДОвскрытом виде (см. GameBoardScreen
@@ -978,8 +986,20 @@ export default function BoardGrid({
                             ]}
                             windowStart={windowStart}
                             enterFrom={item.enterFrom}
+                            // onSlideEnd — см. onAnimStepEnd выше. `item.anim`
+                            // у синтетических коллизионных пар/призраков —
+                            // {kind:'collision',...} БЕЗ nonce (производное
+                            // состояние, не шаг очереди useRunnerAnimations) —
+                            // onAnimStepEnd сам игнорирует вызов с nonce==null
+                            // (см. completeStep), здесь достаточно передать
+                            // что есть, без дополнительных проверок.
+                            // RunnerTokenSlide НЕ мемоизирован (в отличие от
+                            // RunnerToken ниже) — инлайн-замыкание тут ничего
+                            // не портит.
+                            onSlideEnd={() => onAnimStepEnd?.(item.runnerId, item.anim?.nonce)}
                         >
                             <RunnerToken
+                                runnerId={item.runnerId}
                                 type={item.runner.type}
                                 status={item.runner.status}
                                 color={playerColorById[item.runner.playerId]}
@@ -990,6 +1010,19 @@ export default function BoardGrid({
                                 selected={item.runnerId === selectedRunnerId}
                                 anim={item.anim}
                                 style={item.innerOffsetX ? { transform: [{ translateX: item.innerOffsetX }] } : null}
+                                // ПРОСТО onAnimStepEnd (стабильная ссылка из
+                                // props, см. GameBoardScreen#runnerAnim.completeStep),
+                                // НЕ инлайн-замыкание — RunnerToken, в отличие
+                                // от RunnerTokenSlide выше, обёрнут в
+                                // React.memo (см. докстринг у экспорта, живой
+                                // 2026-09-24 перф-фикс: для idle-бегунов пропсы
+                                // должны оставаться СТАБИЛЬНЫМИ между рендерами,
+                                // иначе memo перестаёт отсекать лишнюю работу
+                                // ИМЕННО для самого частого случая — "все
+                                // стоят"). Сам финальный колбэк с
+                                // runnerId/anim.nonce строится УЖЕ ВНУТРИ
+                                // RunnerToken.
+                                onAnimStepEnd={onAnimStepEnd}
                             />
                             {item.badgeCount > 1 && (
                                 <View style={styles.stackBadge}>

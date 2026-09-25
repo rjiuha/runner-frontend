@@ -14,6 +14,24 @@ import { RUNNER_TYPES } from '../constants/GameConstants';
  */
 export const DEATH_KIND_BY_REASON = { fire: 'burn', acid: 'acid' };
 
+/**
+ * Версионное событие (runner_damage/runner_destroy) → `{runnerId, prevStatus}`
+ * при РЕАЛЬНОМ ухудшении статуса (та же проверка `statusWorsened`, что
+ * handleVersionedRunnerAnimEvent уже делает внутри себя ниже, чтобы решить
+ * gotShot/destroyed/acid/burn) — вынесена отдельно, т.к. вызывающему коду
+ * (GameBoardScreen.js#reduceAndLog, см. heldRunnerStatuses) нужен САМ ФАКТ
+ * и СТАРЫЙ статус ДО применения патча реducer'ом, а не только побочный
+ * эффект trigger() изнутри handleVersionedRunnerAnimEvent. `null`, если
+ * событие не про ухудшение (другой тип события, лечение, дубль).
+ */
+export function identifyStatusWorsening(prevGame, e) {
+    if (e.event !== 'runner_damage' && e.event !== 'runner_destroy') return null;
+    const patch = e.runnerId;
+    const prev = prevGame?.runners?.find((r) => r.id === patch.id);
+    if (!prev || !statusWorsened(prev.status, patch.status)) return null;
+    return { runnerId: patch.id, prevStatus: prev.status };
+}
+
 // Сколько мс держим "недавно получил выстрел" по runnerId (2026-09-07, живой
 // прогон — "вместо fly отработала move при отбросе выстрелом"). Эвристика
 // move/fly для runner_save (см. ниже) считает knockback по расстоянию —
@@ -95,7 +113,7 @@ function consumeRecentlyShot(runnerId) {
  * столкновения → аномалия → отлёт из неё) схлопывался бы в одну финальную
  * анимацию, минуя промежуточные шаги (см. подробности в useRunnerAnimations).
  */
-export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
+export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers) {
     if (e.event === 'runner_save') {
         const patch = e.runnerId;
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
@@ -210,20 +228,47 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger) {
             // BoardGrid#pushPair (коллизионная поза) не успевала сработать.
             // Фикс — НЕ телепортируем сразу: сперва проигрываем синтетический
             // шаг 'wait' (тихо стоим на СТАРОЙ, уже общей клетке —
-            // getRunnerAnimationImage откатывается на idle для незнакомого
-            // kind) длительностью с запасом больше ANIM_DURATION_MS.move
-            // победителя — за это время он успевает доиграть СВОЮ 'move'-позу
-            // и "осесть" (перестать быть isArriving в BoardGrid), и тогда
-            // оба settled на одной клетке хотя бы один рендер — ровно момент,
-            // когда пара покажется. Только ПОТОМ реальный 'fly' уводит
-            // проигравшего в его новую клетку. Не 100%-надёжная синхронизация
-            // (если у победителя была ДЛИННАЯ очередь предыдущих шагов
-            // multi-hop — см. известные оговорки в CLAUDE.md про очередь по
-            // runnerId), но покрывает типовой случай одного хопа.
+            // resolveSpriteRef откатывается на idle для незнакомого kind),
+            // ждём, пока ПОБЕДИТЕЛЬ реально доиграет СВОЙ текущий шаг
+            // (обычно move/fly-заезд на эту клетку) — оба settled на одной
+            // клетке хотя бы один рендер, ровно момент, когда пара покажется.
+            // Только ПОТОМ реальный 'fly' уводит проигравшего.
+            //
+            // **2026-09-25, по прямому и повторному запросу пользователя —
+            // "перестань привязываться к угадыванию тайминга"**: раньше
+            // "подождать, пока победитель осядет" решалось угаданной
+            // длительностью (KNOCKBACK_WAIT_MS, с запасом больше
+            // ANIM_DURATION_MS.move) — тот же класс костыля, каким были и
+            // ANIM_DURATION_MS-таймеры для собственных поз ДО переделки
+            // useRunnerAnimations в этом же заходе. Теперь — честный сигнал:
+            // `animHelpers.onceStepDone(pushedFrom.id, callback)` подписывается
+            // РОВНО на момент, когда ТЕКУЩИЙ активный шаг победителя реально
+            // закончится (тот же completeStep/таймаут-страховка, что и у
+            // любого другого шага очереди) — если победитель уже settled
+            // прямо сейчас, колбэк зовётся синхронно, без всякой задержки.
+            // `completeWaitStep` в колбэке принудительно завершает 'wait'
+            // (у него самого нет позы, которая могла бы честно сигналить о
+            // своём конце — см. completeStep в useRunnerAnimations.js) РОВНО
+            // в этот момент, и только тогда стартует 'fly'. KNOCKBACK_WAIT_MS
+            // остался в useRunnerAnimations как страховка на случай, если
+            // победитель почему-то никогда не долетит — не единственный
+            // механизм, как раньше.
+            //
+            // `animHelpers` необязателен (защитный фолбэк для вызывающего
+            // кода, который почему-то не прокинул onceStepDone/completeWaitStep)
+            // — тогда используется старый путь ('wait' держится только
+            // KNOCKBACK_WAIT_MS-таймером, как было ДО этого захода).
             if (pushedFrom) {
                 trigger(patch.id, 'wait', {
                     toPosition: { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY },
                 });
+                if (animHelpers?.onceStepDone && animHelpers?.completeWaitStep) {
+                    animHelpers.onceStepDone(pushedFrom.id, () => {
+                        animHelpers.completeWaitStep(patch.id);
+                        trigger(patch.id, 'fly', { toPosition });
+                    });
+                    return;
+                }
             }
             trigger(patch.id, 'fly', { toPosition });
         }

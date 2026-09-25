@@ -3,7 +3,7 @@ import React, { useEffect, useRef } from 'react';
 import { Animated, Image, Platform, StyleSheet, View } from 'react-native';
 import { RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { colorKeyForHex } from '../../constants/runnerAnimHelpers';
-import { resolveSpriteAvatarFrame, resolveSpriteRef } from '../../constants/spritePacks';
+import { listAllSpriteSources, resolveSpriteAvatarFrame, resolveSpriteRef } from '../../constants/spritePacks';
 import { getAvatarGif, hasAvatarGif } from '../../constants/avatarGifs';
 // SpritePackAnimation — рендерер нового AI-спрайт-пака (assets/sprites/,
 // 2026-09-23, см. CLAUDE.md) — заменяет старый комбинированный gif-спрайт-
@@ -40,6 +40,12 @@ import { colors } from '../../theme';
 
 const IS_WEB = Platform.OS === 'web';
 
+// Прогретые комбинации type|status|colorKey (2026-09-25, см. useEffect ниже) —
+// модульный, не per-компонент кэш: несколько бегунов одного типа/статуса/
+// цвета на доске одновременно (обычное дело — 2 спринтера одной команды) не
+// должны прогревать один и тот же набор файлов по нескольку раз.
+const prewarmedCombos = new Set();
+
 // Вращающийся пунктирный ореол вокруг активного бегуна (см. selected проп) —
 // по прямому запросу пользователя, 2026-09-09, ВМЕСТО прежней белой рамки-
 // кружка/квадрата ("как иногда делают в играх") — выбран из 5 живых
@@ -67,6 +73,16 @@ const HALO_SPIN_MS = 3000;
  * отдельный статичный кадр (см. resolveSpriteAvatarFrame) вместо игровых
  * анимаций — не связан с `anim` вообще.
  *
+ * `runnerId`/`onAnimStepEnd` (2026-09-25) — только для доски (BoardGrid),
+ * RunnerCard их не передаёт (avatar-режим не проигрывает транзиентные позы,
+ * см. SpritePackAnimation#staticFrameIndex). Вызывается РОВНО когда
+ * SpritePackAnimation реально дорисовала последний кадр невращающейся позы
+ * (attack/gotShot/start/bomb/heal/destroyed/burn/acid) — настоящий сигнал
+ * "действие закончилось", см. useRunnerAnimations.js#completeStep. Для
+ * move/fly этот колбэк тут ни при чём — там сигналит слайд
+ * (RunnerTokenSlide#onSlideEnd в BoardGrid), не поза (см. loop ниже).
+ *
+
  * Для типа без записи в SPRITE_PACKS (constants/spritePacks.js) `display`
  * будет `null`, компонент рендерит пустоту (см. `if (!display) return null`
  * ниже) — новый тип бегуна получает анимации добавлением записи в
@@ -114,7 +130,7 @@ const HALO_SPIN_MS = 3000;
  */
 function RunnerToken({
     type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
-    showRing = false, imageAlign = 'center', style,
+    showRing = false, imageAlign = 'center', style, runnerId = null, onAnimStepEnd,
 }) {
     const display = RUNNER_DISPLAY[type];
     const colorKey = colorKeyForHex(color);
@@ -180,6 +196,32 @@ function RunnerToken({
         anim.start();
         return () => anim.stop();
     }, [selected, haloSpin]);
+
+    // Прогрев (2026-09-25, по прямому запросу пользователя — живая жалоба
+    // "еле заметное мигание при смене idle на move", подтверждённая живьём
+    // ТОЛЬКО на Android). Гипотеза: SpritePackAnimation (см. компонент) держит
+    // СТАРЫЙ кадр, пока новый source не задекодируется через Image.prefetch —
+    // idle почти всегда уже "тёплый" (показывается по умолчанию), а
+    // конкретное направление move/attack может декодироваться ВПЕРВЫЕ ровно
+    // в момент первого реального использования — слайд (RunnerTokenSlide) уже
+    // начинает ехать, пока decode идёт, и поза потом резко "прыгает" на move
+    // уже на середине пути. Прогреваем ВСЕ возможные кадры этой комбинации
+    // type+status+colorKey заранее (см. spritePacks.js#listAllSpriteSources),
+    // один раз за комбинацию на весь сеанс (prewarmedCombos выше) — сама
+    // проверка `!avatar` не нужна: у аватарки те же type/status/colorKey,
+    // тот же набор файлов и так нужен доске рано или поздно. Только native —
+    // веб рисует старыми gif (см. webGifSource выше), этот пак там вообще не
+    // используется, прогревать нечего.
+    useEffect(() => {
+        if (IS_WEB || !display) return;
+        const comboKey = `${type}|${status}|${colorKey}`;
+        if (prewarmedCombos.has(comboKey)) return;
+        prewarmedCombos.add(comboKey);
+        for (const source of listAllSpriteSources(type, status, colorKey)) {
+            const uri = Image.resolveAssetSource?.(source)?.uri;
+            if (uri) Image.prefetch(uri).catch(() => {});
+        }
+    }, [type, status, colorKey]);
     const haloRotate = haloSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
     const haloSize = size * HALO_SCALE;
 
@@ -271,12 +313,35 @@ function RunnerToken({
                         frame={frame}
                         boxSize={imgBoxStyle.width}
                         staticFrameIndex={avatar ? frame?.frameIndex : null}
-                        // loop=false для ЛЮБОГО транзиентного шага очереди
-                        // (move/attack/gotShot/fly/start/bomb/heal/destroyed/
-                        // burn/acid) — играется один раз и держит последний
-                        // кадр, см. докстринг SpritePackAnimation.js. loop=true
-                        // ТОЛЬКО для настоящего idle (anim==null).
-                        loop={!anim}
+                        // loop=true для idle (anim==null), move/fly И collision
+                        // (2026-09-25, по прямому запросу пользователя — "пока
+                        // бегун бежит, анимация не должна прекращаться", и
+                        // отдельно уточнено про collision тем же днём). Общее
+                        // у этих трёх — НЕТ единого "шага очереди" с
+                        // собственным nonce/сигналом окончания: move/fly решает
+                        // слайд (RunnerTokenSlide#onSlideEnd), idle — вообще
+                        // не заканчивается сам по себе, а collision — derived-
+                        // состояние (см. BoardGrid#tokenOverlay — пересчитывается
+                        // из "два бегуна физически ещё на одной клетке", не из
+                        // события), крутим цикл, пока BoardGrid сам не перестанет
+                        // передавать kind:'collision' (пара реально разъехалась
+                        // и отстояла COLLISION_MIN_HOLD_MS). Для ОСТАЛЬНЫХ
+                        // транзиентных поз (attack/gotShot/start/bomb/heal/
+                        // destroyed/burn/acid) — по-прежнему false: играются
+                        // один раз, последний кадр сам сигналит completeStep
+                        // через onComplete ниже (держать кадр статично после
+                        // этого не вредно — advanceQueue уже переключит anim).
+                        loop={!anim || anim.kind === 'move' || anim.kind === 'fly' || anim.kind === 'collision'}
+                        // Замыкание строится ЗДЕСЬ, не в BoardGrid/RunnerCard —
+                        // проп RunnerToken снаружи остаётся СТАБИЛЬНЫМ
+                        // (runnerId — примитив, onAnimStepEnd — ссылка из
+                        // useRunnerAnimations, не пересоздаётся), поэтому
+                        // React.memo (см. экспорт компонента ниже) по-прежнему
+                        // отсекает лишние рендеры idle-токенов — то, ради чего
+                        // memo вообще добавляли 2026-09-24. SpritePackAnimation
+                        // само не страдает от нового замыкания на каждый рендер
+                        // (см. её onCompleteRef).
+                        onComplete={() => onAnimStepEnd?.(runnerId, anim?.nonce)}
                     />
                 )}
             </View>

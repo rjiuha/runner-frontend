@@ -11,6 +11,7 @@ import MainMenuScreen from '../screens/MainMenuScreen';
 import LobbySearchScreen from '../screens/LobbySearchScreen';
 import LobbyScreen from '../screens/LobbyScreen';
 import GameBoardScreen from '../screens/GameBoardScreen';
+import MockRoadScreen from '../screens/MockRoadScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -110,6 +111,12 @@ export default function RootNavigator() {
                             gestureEnabled: false,
                             presentation: 'fullScreenModal',
                         }}
+                    />
+
+                    <Stack.Screen
+                        name={ROUTES.MOCK_ROAD}
+                        component={MockRoadScreen}
+                        options={{ headerShown: false, presentation: 'fullScreenModal' }}
                     />
                 </>
             )}

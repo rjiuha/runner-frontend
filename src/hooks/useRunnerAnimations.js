@@ -1,9 +1,49 @@
 // src/hooks/useRunnerAnimations.js
 import { useCallback, useRef, useState } from 'react';
+import { createLogger } from '../lib/logger';
+
+// ВРЕМЕННО — диагностика "поза обрывается раньше срока" (см. POSEDBG в
+// SpritePackAnimation.js, тот же заход) — не убирать, пока не закрыто.
+const poseLog = createLogger('POSEDBG');
+
+// **2026-09-25, по прямому запросу пользователя** — раньше КАЖДЫЙ шаг
+// очереди завершался ИСКЛЮЧИТЕЛЬНО по таймеру (значения ниже), полностью
+// не в курсе, доиграло ли что-то РЕАЛЬНОЕ на экране — отсюда весь класс
+// багов, описанных в комментариях этого файла и RunnerTokenSlide.js
+// (телепорт в начале хода, "мигание последнего кадра", "исчезновение перед
+// idle" и т.п.): JS `setTimeout` и фактическое состояние gif/слайда — ДВЕ
+// НЕЗАВИСИМЫЕ системы отсчёта, специально подобранные константы ниже — это
+// попытка угадать длительность чужого процесса, а не узнать её.
+//
+// Теперь у ДВУХ классов шагов очереди появился РЕАЛЬНЫЙ сигнал завершения
+// вместо угадывания (см. completeStep() ниже):
+//   - move/fly — сигнал шлёт RunnerTokenSlide (onSlideEnd), когда РЕАЛЬНО
+//     доигрывает Animated.timing слайда между клетками. Поза при этом
+//     (RunnerToken#loop) крутится в цикле, ПОКА не придёт этот сигнал —
+//     "бегун бежит, пока реально не доехал", а не "бежит N миллисекунд".
+//     Работает на ОБЕИХ платформах (Animated.timing — одна и та же
+//     кросс-платформенная реализация).
+//   - остальные транзиентные позы (attack/gotShot/heal/bomb/start/
+//     destroyed/burn/acid) — сигнал шлёт SpritePackAnimation (onComplete),
+//     когда ЕЁ СОБСТВЕННЫЙ JS-таймер дорисовал последний кадр полоски (см.
+//     компонент — та же система отсчёта, что и у самого рендера, не
+//     гадание). Работает ТОЛЬКО на native (Android/iOS) — там токены рисует
+//     SpritePackAnimation; на вебе (старые gif, см. RunnerToken.js) такого
+//     колбэка физически не существует.
+//
+// Константы ниже (ANIM_DURATION_MS и т.п.) НЕ удалены — они остаются
+// СТРАХОВОЧНЫМ таймером (см. advanceQueue/completeStep): реальный сигнал
+// отменяет его, если успевает раньше; если сигнал почему-то не пришёл
+// (веб — он не приходит НИКОГДА для non-move поз, unmounted/оффскрин токен,
+// сетевой джиттер) — таймер всё равно доводит шаг до конца, как и раньше.
+// Поведение веба ЭТИМ заходом не меняется вообще — там completeStep для
+// non-move поз просто никогда не вызывается, значит используется старый
+// путь, 1-в-1.
 
 // У React Native Image(gif) нет колбэка "анимация доиграла" — длительность
 // одноразовых анимаций (move/attack/gotShot/fly) захардкожена оценкой, не
-// точной длиной самого gif. 'destroyed' сюда не входит — терминальное
+// точной длиной самого gif (см. блок выше — теперь это СТРАХОВОЧНЫЙ таймер,
+// не единственный механизм). 'destroyed' сюда не входит — терминальное
 // состояние, откатывать в idle не нужно (см. advanceQueue() ниже).
 // Вдвое медленнее исходных (900/900/700/1100) — по прямому запросу
 // пользователя, 2026-08-31, после первого живого теста. См. также
@@ -147,9 +187,53 @@ export function useRunnerAnimations() {
     // в позе уничтожения. Персистентно до reset() (полный ресинк стейта).
     const [hiddenIds, setHiddenIds] = useState(() => new Set());
     const queues = useRef({}); // { [runnerId]: Array<{ kind, extra }> }
-    const active = useRef({}); // { [runnerId]: {kind, extra} | null } — текущий играемый шаг
+    // { [runnerId]: {kind, extra, nonce} | null } — текущий играемый шаг.
+    // `nonce` (проставляется ниже, в момент когда шаг РЕАЛЬНО начинает
+    // играть) — это то, что completeStep() сверяет с сигналом снаружи
+    // (RunnerTokenSlide/SpritePackAnimation), чтобы отличить "этот сигнал
+    // про ТЕКУЩИЙ играемый шаг" от "этот сигнал опоздал, очередь уже
+    // ушла дальше" — тот же нюанс, что уже решался в других местах проекта
+    // через genRef/preloadTokenRef (см. useMercure.js/SpritePackAnimation.js).
+    const active = useRef({});
     const timers = useRef({});
     const nonceRef = useRef(0);
+    // { [runnerId]: Array<{nonce, callback}> } — см. onceStepDone ниже.
+    // Объявлено здесь (а не рядом с onceStepDone/completeStep, которые
+    // читаются легче в конце файла), потому что и advanceQueue, и
+    // finishTerminal (оба выше onceStepDone текстуально) должны опрашивать
+    // его в момент, когда ШАГ РЕАЛЬНО заканчивается — единственный
+    // корректный момент оповестить ожидающих, кем бы он ни был вызван
+    // (сигнал или страховочный таймер).
+    const stepWaitersRef = useRef({});
+    const fireStepWaiters = useCallback((runnerId, finishedStep) => {
+        const waiters = stepWaitersRef.current[runnerId];
+        if (!waiters?.length) return;
+        delete stepWaitersRef.current[runnerId];
+        for (const w of waiters) {
+            // nonce не совпал — теоретически невозможно (ждущий подписывался
+            // на ТЕКУЩИЙ на тот момент активный шаг, а шаги одного runnerId
+            // строго последовательны), но на всякий случай не роняем чужой
+            // колбэк молча — просто не зовём его для не своего шага.
+            if (!finishedStep || w.nonce === finishedStep.nonce) w.callback();
+        }
+    }, []);
+
+    // Терминальный "хвост" (destroyed/burn/acid) — общий и для обычного
+    // таймера (advanceQueue), и для настоящего сигнала завершения
+    // (completeStep, см. ниже) — вынесено, чтобы оба пути гарантированно
+    // делали РОВНО одно и то же, а не рисковали разъехаться при будущих
+    // правках одного из них.
+    const finishTerminal = useCallback((runnerId) => {
+        poseLog('finishTerminal — прячем бегуна', runnerId, 'kind=', active.current[runnerId]?.kind);
+        fireStepWaiters(runnerId, active.current[runnerId]);
+        setAnims((prev) => {
+            if (!(runnerId in prev)) return prev;
+            const next = { ...prev };
+            delete next[runnerId];
+            return next;
+        });
+        setHiddenIds((prev) => (prev.has(runnerId) ? prev : new Set(prev).add(runnerId)));
+    }, [fireStepWaiters]);
 
     // Одна самозацикленная функция вместо пары play()/advance(), вызывающих
     // друг друга — избегает циклической зависимости между двумя useCallback.
@@ -157,6 +241,7 @@ export function useRunnerAnimations() {
     // к моменту, когда таймер реально сработает, `advanceQueue` уже давно
     // присвоена (это асинхронный колбэк, а не немедленный вызов при определении).
     const advanceQueue = useCallback((runnerId) => {
+        fireStepWaiters(runnerId, active.current[runnerId]);
         active.current[runnerId] = null;
         const step = queues.current[runnerId]?.shift();
         if (!step) {
@@ -193,6 +278,7 @@ export function useRunnerAnimations() {
         // (старой) позе до этого момента, а не мигает лишней промежуточной.
         if (!pending) {
             const nonce = ++nonceRef.current;
+            step.nonce = nonce; // completeStep() сверяет это значение с сигналом снаружи
             setAnims((prev) => ({ ...prev, [runnerId]: { kind, nonce, ...animExtra } }));
             // onStart (2026-09-12, см. GameBoardScreen#triggerWithSound —
             // используется для acid/burn, снимает runnerId из
@@ -214,18 +300,16 @@ export function useRunnerAnimations() {
             queues.current[runnerId] = []; // терминально — остальная очередь неважна
             // Не оставляем бегуна вечно висеть в терминальной позе — после
             // того, как анимация успела показаться, прячем токен с доски
-            // насовсем (см. hiddenIds выше). 'anims' запись тоже стираем —
-            // не то чтобы это было важно (бегун скрыт), но иначе она бы
-            // висела в стейте бесполезным мусором до конца партии.
-            timers.current[runnerId] = setTimeout(() => {
-                setAnims((prev) => {
-                    if (!(runnerId in prev)) return prev;
-                    const next = { ...prev };
-                    delete next[runnerId];
-                    return next;
-                });
-                setHiddenIds((prev) => (prev.has(runnerId) ? prev : new Set(prev).add(runnerId)));
-            }, TERMINAL_HIDE_DELAY_MS[kind]);
+            // насовсем (см. hiddenIds выше). TERMINAL_HIDE_DELAY_MS теперь —
+            // СТРАХОВОЧНЫЙ таймер (см. блок комментариев в начале файла):
+            // на native обычно опережается настоящим сигналом "последний
+            // кадр реально дорисован" (completeStep ← SpritePackAnimation
+            // onComplete) — именно то, чего годами не хватало этому месту
+            // (весь разбор TERMINAL_HIDE_DELAY_MS/2 кадра запаса выше — это
+            // была борьба с рассинхроном ДВУХ часов, реальный сигнал её
+            // снимает полностью). На вебе (там onComplete не бывает) таймер
+            // остаётся единственным механизмом, как и раньше.
+            timers.current[runnerId] = setTimeout(() => finishTerminal(runnerId), TERMINAL_HIDE_DELAY_MS[kind]);
             return;
         }
 
@@ -253,7 +337,7 @@ export function useRunnerAnimations() {
             () => advanceQueue(runnerId),
             pending ? PENDING_SAFETY_TIMEOUT_MS : kind === 'wait' ? KNOCKBACK_WAIT_MS : (ANIM_DURATION_MS[kind] ?? 900),
         );
-    }, []);
+    }, [finishTerminal, fireStepWaiters]);
 
     const trigger = useCallback(
         (runnerId, kind, extra) => {
@@ -277,7 +361,19 @@ export function useRunnerAnimations() {
                 mergeTarget.extra = { ...mergeTarget.extra, ...extra, pending: false };
                 if (mergeTarget === active.current[runnerId]) {
                     const { pending, onStart, ...animExtra } = mergeTarget.extra;
-                    setAnims((prev) => ({ ...prev, [runnerId]: { ...prev[runnerId], ...animExtra, kind: finalKind } }));
+                    // Свежий nonce — заготовка (pending) его ещё не получала
+                    // (см. advanceQueue — там nonce ставится только в ветке
+                    // `!pending`), а completeStep() (см. ниже) сверяет именно
+                    // это значение с сигналом от RunnerTokenSlide/
+                    // SpritePackAnimation, чтобы понять, что сигнал — про
+                    // ЭТОТ, только что домердженный шаг, а не про что-то
+                    // более старое. Раньше тут было `...prev[runnerId]`
+                    // (могло притащить nonce/поля СТАРОГО, уже отыгранного
+                    // шага — заготовка своей anims-записи не имела) — не
+                    // требовалось, пока nonce нигде не сравнивался.
+                    const nonce = ++nonceRef.current;
+                    mergeTarget.nonce = nonce;
+                    setAnims((prev) => ({ ...prev, [runnerId]: { ...animExtra, kind: finalKind, nonce } }));
                     setVisualPositions((prev) => ({ ...prev, [runnerId]: extra.toPosition }));
                     // onStart (2026-09-15) — этот мердж-путь раньше НИКОГДА его
                     // не звал (только advanceQueue's не-мердж-ветка) — добавлено
@@ -308,15 +404,100 @@ export function useRunnerAnimations() {
         [advanceQueue],
     );
 
+    // Настоящий сигнал "это действие реально закончилось на экране" — см.
+    // блок комментариев в начале файла. Источники: RunnerTokenSlide#onSlideEnd
+    // (слайд между клетками реально доехал — для move/fly, обе платформы) и
+    // SpritePackAnimation#onComplete (полоска реально дорисовала последний
+    // кадр — для остальных транзиентных поз, только native). `nonce` —
+    // обязательная сверка: если к моменту, когда сигнал долетел, очередь
+    // этого бегуна уже ушла дальше (например сработал страховочный таймер
+    // чуть раньше, или пришёл ещё один каскадный шаг) — `active.current`
+    // либо `null`, либо уже ДРУГОЙ (свежий) шаг с другим nonce, и сигнал
+    // просто игнорируется, не откатывая уже ушедшую вперёд очередь назад.
+    const completeStep = useCallback(
+        (runnerId, nonce) => {
+            if (runnerId == null || nonce == null) return;
+            const current = active.current[runnerId];
+            if (!current || current.nonce !== nonce) return; // чужой/устаревший сигнал
+            // 'wait' — синтетический шаг без собственной позы (см. KNOCKBACK_WAIT_MS
+            // выше и onceStepDone ниже) — рисуется контентом idle (resolveSpriteRef
+            // не узнаёт этот kind), а idle-контент — это НАСТОЯЩАЯ анимация с
+            // несколькими кадрами. 2026-09-25, живая регрессия: после того как
+            // SpritePackAnimation обзавёлся честным onComplete (для loop=false
+            // клипов), ОНО начало стрелять, как только idle-контент 'wait' доиграет
+            // СВОЙ цикл (обычно меньше секунды) — то есть значительно РАНЬШЕ, чем
+            // должен закончиться сам 'wait'. Итог — проигравший улетал (fly) ДО
+            // того, как коллизионная поза вообще успевала отрисоваться ("анимация
+            // collision вообще не отобразилась"). У 'wait' нет "реальной позы",
+            // которая могла бы честно сигналить о своём конце — игнорируем сигнал
+            // целиком, решает ТОЛЬКО onceStepDone/страховочный таймер ниже.
+            if (current.kind === 'wait') return;
+            if (timers.current[runnerId]) {
+                clearTimeout(timers.current[runnerId]);
+                delete timers.current[runnerId];
+            }
+            if (current.kind === 'destroyed' || current.kind === 'burn' || current.kind === 'acid') {
+                finishTerminal(runnerId);
+                return;
+            }
+            advanceQueue(runnerId);
+        },
+        [advanceQueue, finishTerminal],
+    );
+
+    // **2026-09-25, по прямому и повторному запросу пользователя — "перестань
+    // привязываться к угадыванию тайминга, сделай честный событийный
+    // механизм"**. KNOCKBACK_WAIT_MS (см. константу выше) — угаданная
+    // длительность "сколько подождать, пока победитель долетит и осядет,
+    // прежде чем увести проигравшего" — ТОЧНО такой же костыль, каким были
+    // ANIM_DURATION_MS до сегодняшней переделки advanceQueue/completeStep,
+    // просто для МЕЖДУ-бегунской, а не собственной задержки. Настоящий
+    // сигнал уже существует — это как раз то самое "шаг ДРУГОГО бегуна
+    // реально закончился" (completeStep/таймаут для НЕГО). onceStepDone
+    // подписывается на этот момент СНАРУЖИ (см. lib/runnerAnimTriggers.js —
+    // pushedFrom-ветка) вместо угадывания длительности.
+    //
+    // Если у runnerId прямо сейчас НЕТ активного шага — он уже settled,
+    // ждать нечего, колбэк зовётся СИНХРОННО (не в следующем тике — вызывающая
+    // сторона тут же продолжает свою последовательность, честно "мгновенно",
+    // а не искусственно отложенно).
+    const onceStepDone = useCallback((runnerId, callback) => {
+        const current = active.current[runnerId];
+        if (!current) { callback(); return; }
+        (stepWaitersRef.current[runnerId] ??= []).push({ nonce: current.nonce, callback });
+    }, []);
+
+    // Досрочно завершает 'wait' СНАРУЖИ (см. onceStepDone выше и
+    // lib/runnerAnimTriggers.js — pushedFrom-ветка вызывает это из колбэка
+    // onceStepDone(победитель, ...)). Гейт по kind (не по nonce, как
+    // completeStep) — 'wait' не имеет собственной позы/nonce-сигнала (см.
+    // докстринг в completeStep выше), так что проверка "это всё ещё ТОТ
+    // самый 'wait', который ждали" сводится к "у этого runnerId прямо
+    // сейчас активен именно 'wait'" — вложенных/повторных 'wait' подряд для
+    // одного runnerId в рамках одного каскада не бывает (см.
+    // runnerAnimTriggers.js). KNOCKBACK_WAIT_MS (обычный таймер в
+    // advanceQueue) остаётся страховкой на случай, если победитель почему-то
+    // никогда не долетит.
+    const completeWaitStep = useCallback((runnerId) => {
+        const current = active.current[runnerId];
+        if (!current || current.kind !== 'wait') return;
+        if (timers.current[runnerId]) {
+            clearTimeout(timers.current[runnerId]);
+            delete timers.current[runnerId];
+        }
+        advanceQueue(runnerId);
+    }, [advanceQueue]);
+
     const reset = useCallback(() => {
         Object.values(timers.current).forEach(clearTimeout);
         timers.current = {};
         queues.current = {};
         active.current = {};
+        stepWaitersRef.current = {};
         setAnims({});
         setVisualPositions({});
         setHiddenIds(new Set());
     }, []);
 
-    return { anims, visualPositions, hiddenIds, trigger, reset };
+    return { anims, visualPositions, hiddenIds, trigger, completeStep, onceStepDone, completeWaitStep, reset };
 }

@@ -10,4 +10,8 @@ export const ROUTES = {
     LOBBY_SEARCH: 'LobbySearch', // GET /api/lobbies
     LOBBY: 'Lobby',              // GET /api/lobby/{id} + SSE lobby_{id}
     RUNNER_GAME: 'RunnerGame',   // GET /api/runner_game + SSE runner_game_{id}
+    // Песочница для проверки анимаций бегунов (2026-09-25, по прямому запросу
+    // пользователя) — чисто фронтовая, без единого обращения к бэку/Mercure,
+    // см. screens/MockRoadScreen.js.
+    MOCK_ROAD: 'MockRoad',
 };
