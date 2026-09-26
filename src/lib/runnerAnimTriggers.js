@@ -2,6 +2,7 @@
 import { statusWorsened } from '../constants/runnerAnimHelpers';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
 import { RUNNER_TYPES } from '../constants/GameConstants';
+import { ghostPairKey } from './ghostPairs';
 
 /**
  * 2026-09-18: бэк добавил явное поле `reason` к `runner_destroy`
@@ -197,10 +198,41 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers
         // столкновение всегда резолвится синхронно на бэке ДО следующего
         // добровольного хода) — значит это отброс, вне зависимости от того,
         // куда именно СЛУЧАЙНО улетел бегун.
-        const pushedFrom = prevGame?.runners?.find(
+        const pushedFromCandidate = prevGame?.runners?.find(
             (r) => r.id !== patch.id
                 && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
         );
+        // 2026-09-26, живая жалоба: "переход С клетки, где стояли двое (у
+        // активного бегуна выбран Призрак), был fly, хотя должен быть
+        // обычный move". Причина — pushedFrom (см. выше) считает ЛЮБОЕ
+        // совпадение "старая клетка уже занята кем-то другим" отбросом, но
+        // Призрак специально позволяет двум бегунам мирно стоять на одной
+        // клетке БЕЗ какого-либо столкновения (см. lib/ghostPairs.js) — уход
+        // с такой клетки обычным вперёд-шагом должен остаться 'move', а не
+        // ложно триггерить весь wait/onceStepDone-каскад, придуманный для
+        // РЕАЛЬНЫХ столкновений. `animHelpers.ghostPairs` — тот же Set,
+        // что уже передаётся в BoardGrid (см. GameBoardScreen.js) — если
+        // текущая пара УЖЕ записана как ghost-сосуществование на ЭТОЙ
+        // клетке, pushedFrom для целей классификации не считается вообще.
+        //
+        // 2026-09-26 (та же сессия, найдено на Android живьём) — ТА ЖЕ дыра,
+        // другой источник совпадения: Жнец (RUNNER_TYPES.REAPER) на бэке
+        // (Collision::reaperCollision(), read-only) НИКОГДА не толкает
+        // бегуна, который делит с ним клетку мимоходом — либо вообще ничего
+        // не происходит (если у бегуна ещё остались очки хода, читан код —
+        // пустой Result), либо бегун уничтожается на месте (если это была
+        // последняя клетка хода, см. 'bomb'-ловушка выше), но НИКОГДА не
+        // отбрасывается в сторону. Значит "старая клетка была занята Жнецом"
+        // тоже не может быть причиной knockback — исключаем её из pushedFrom
+        // ТАК ЖЕ, как ghost-пары, без привязки к ghostPairs (тут не нужен
+        // отдельный Set — тип "Жнец" сам по себе уже достаточный признак,
+        // не завязан на конкретную клетку/событие, в отличие от Ghost).
+        const pushedFrom = pushedFromCandidate && (
+            pushedFromCandidate.type === RUNNER_TYPES.REAPER
+            || animHelpers?.ghostPairs?.has(
+                ghostPairKey(patch.id, pushedFromCandidate.id, prev.segment, prev.positionX, prev.positionY),
+            )
+        ) ? null : pushedFromCandidate;
         if (neighbor && !wasJustShot && !pushedFrom) {
             // depthChanged/targetLaneShifted — для resolveMoveAssetDirection
             // (constants/runnerAnimations): чисто боковой шаг (глубина не

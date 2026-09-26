@@ -2,7 +2,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import PulseHighlight from '../ui/PulseHighlight';
-import FramePanel from '../ui/FramePanel';
+import FramePanel, { frameNotchRadius } from '../ui/FramePanel';
 import {
     FRAME_PANEL_BACKGROUND,
     FRAME_PANEL_BACKGROUND_CORNER,
@@ -108,6 +108,9 @@ function AbilityZone({
     // на каждый рендер), см. докстринг RunnerCard.js#React.memo за полным
     // разбором того же паттерна и живой жалобы, которая его вызвала.
     const handlePress = useCallback(() => onPress?.(abilityKey), [onPress, abilityKey]);
+    // Тот же targetCornerSize=8, что передан в FramePanel ниже — см.
+    // frameNotchRadius() в FramePanel.js за разбором.
+    const notchRadius = frameNotchRadius(zoneSize, 8);
 
     return (
         <TouchableOpacity
@@ -137,20 +140,17 @@ function AbilityZone({
                 backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
                 backgroundTileSize={60}
             />
-            {/* borderRadius — та же величина, что у FramePanel.js#styles.wrap
-                (радиус, по которому та обрезает свою заливку под скруглённой
-                декоративной дугой) — без него заливка рисовалась острым
+            {/* borderRadius — frameNotchRadius(zoneSize, 8), та же величина,
+                что FramePanel сам использует для своего wrap (см. её
+                докстринг, 2026-09-26) — без него заливка рисовалась острым
                 углом ПОВЕРХ скруглённой рамки, живая жалоба пользователя
                 "у контейнера и у рамки не совпадают углы по скруглённости". */}
             {overlayColor && (
-                <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor, borderRadius: 4 }]} />
+                <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: overlayColor, borderRadius: notchRadius }]} />
             )}
-            {/* borderRadius=4 — та же величина, что у FramePanel.js#styles.wrap
-                (было radius.md=8, тот же рассинхрон, что и у overlayColor
-                выше). */}
             <PulseHighlight
                 active={pulseHighlight && !filled && hoverState == null}
-                borderRadius={4}
+                borderRadius={notchRadius}
                 borderWidth={2}
             />
             {/* Иконка — фиксированный бокс + resizeMode="contain": исходные

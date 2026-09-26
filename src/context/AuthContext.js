@@ -4,7 +4,7 @@ import React, {
 } from 'react';
 
 import { authApi } from '../api/auth';
-import { clearTokens, loadTokens, setOnAuthLost, getAccessToken } from '../api/client';
+import { loadTokens, setOnAuthLost, getAccessToken } from '../api/client';
 import { userFromToken } from '../lib/jwt';
 import { createLogger, setLoggerUser } from '../lib/logger';
 
@@ -57,8 +57,13 @@ export function AuthProvider({ children }) {
         applyUser(setUser, userFromToken(getAccessToken()), 'sign-up');
     }, []);
 
+    // 2026-09-26: было clearTokens() напрямую (чисто локально) — теперь
+    // authApi.logout() (см. её докстринг) сначала best-effort уведомляет
+    // сервер (POST /api/logout, отзывает refresh-токен), потом чистит
+    // локальное хранилище тем же clearTokens() — снаружи это тот же самый
+    // await, поведение для вызывающего кода не изменилось.
     const signOut = useCallback(async () => {
-        await clearTokens();
+        await authApi.logout();
         applyUser(setUser, null, 'sign-out');
     }, []);
 

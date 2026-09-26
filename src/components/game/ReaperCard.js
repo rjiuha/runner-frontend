@@ -2,7 +2,7 @@
 import React, { useCallback, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import RunnerToken from './RunnerToken';
-import PersonPanel from '../ui/PersonPanel';
+import PersonPanel, { NOTCH_RADIUS } from '../ui/PersonPanel';
 import FramePanel from '../ui/FramePanel';
 import { FRAME_PANEL_BACKGROUND, FRAME_PANEL_BACKGROUND_CORNER, RUNNER_TYPES } from '../../constants/GameConstants';
 import { colors, font, spacing } from '../../theme';
@@ -118,9 +118,9 @@ const styles = StyleSheet.create({
     // spacing.xs (было spacing.sm, как у RunnerCard) — половина, даёт ровно
     // вдвое меньшую итоговую высоту плитки.
     card: { width: '100%', padding: spacing.xs, marginBottom: spacing.xs },
-    // borderRadius=6 — та же величина, что у PersonPanel.js#styles.wrap
-    // (тот же рассинхрон/фикс, что и в RunnerCard.js#activeRing).
-    activeRing: { borderWidth: 3, borderRadius: 6 },
+    // borderRadius — та же величина, что у PersonPanel.js#styles.wrap
+    // (NOTCH_RADIUS, тот же фикс, что и в RunnerCard.js#activeRing, 2026-09-26).
+    activeRing: { borderWidth: 3, borderRadius: NOTCH_RADIUS },
     row: { flexDirection: 'row', alignItems: 'center' },
     avatarBox: { width: AVATAR_SIZE, height: AVATAR_SIZE, alignItems: 'center', justifyContent: 'flex-end' },
     text: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small, marginLeft: spacing.sm, flex: 1 },

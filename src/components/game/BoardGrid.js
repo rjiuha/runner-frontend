@@ -314,7 +314,7 @@ export default function BoardGrid({
             };
         };
 
-        const pushSolo = (runner, sx, sy, sCol, onTop = false, enterFrom = undefined) => {
+        const pushSolo = (runner, sx, sy, sCol, onTop = false, enterFrom = undefined, slideDurationMs = undefined) => {
             const anim = runnerAnims?.[runner.id] ?? null;
             items.push({
                 runnerId: runner.id, runner, x: sx, y: sy, col: sCol,
@@ -323,6 +323,7 @@ export default function BoardGrid({
                 anchorBottom: true,
                 onTop,
                 enterFrom,
+                slideDurationMs,
             });
         };
         // Бокс пары — ТОТ ЖЕ segmentW×segmentH, что у соло-токена, НИКОГДА
@@ -338,7 +339,12 @@ export default function BoardGrid({
         // Теперь бокс константен при любом переходе — разъезд между двумя
         // персонажами даёт ЧИСТО transform:translateX на самом RunnerToken
         // (innerOffsetX ниже), размер бокса это не трогает вообще.
-        const pushPair = (leftRunner, rightRunner, cellX, cellY, cellCol, enterFromLeft = undefined, enterFromRight = undefined) => {
+        // `pairKind` — 'collision' (по умолчанию, поза "лицом друг к другу")
+        // или 'idle' (2026-09-26, для Призрака — мирное сосуществование,
+        // см. вызов ниже: та же геометрия разъезда, что у коллизии, но БЕЗ
+        // позы столкновения — `anim: null` рендерится как обычный idle, тем
+        // же соглашением, что и везде в проекте — см. pushSolo/RunnerToken).
+        const pushPair = (leftRunner, rightRunner, cellX, cellY, cellCol, enterFromLeft = undefined, enterFromRight = undefined, pairKind = 'collision') => {
             // Расстояние от центра клетки до центра КАЖДОГО токена — уменьшено
             // на 7% (жалоба пользователя, 2026-09-01, третий заход: "чуть
             // сблизь анимации коллизии"). Трогаем именно offset, не pairGap
@@ -348,7 +354,7 @@ export default function BoardGrid({
             items.push({
                 runnerId: leftRunner.id, runner: leftRunner,
                 x: cellX, y: cellY, col: cellCol, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
-                anim: { kind: 'collision', side: 'east' },
+                anim: pairKind === 'collision' ? { kind: 'collision', side: 'east' } : null,
                 // Пара крепится к низу клетки ТАК ЖЕ, как одиночный токен (см.
                 // anchorBottom выше) — раньше была единственным состоянием,
                 // которое центрировалось по вертикали, пользователь прямо
@@ -362,7 +368,7 @@ export default function BoardGrid({
             items.push({
                 runnerId: rightRunner.id, runner: rightRunner,
                 x: cellX, y: cellY, col: cellCol, boxW: segmentW, boxH: segmentH, tokenSize: pairSize,
-                anim: { kind: 'collision', side: 'west' },
+                anim: pairKind === 'collision' ? { kind: 'collision', side: 'west' } : null,
                 anchorBottom: true,
                 innerOffsetX: offset,
                 enterFrom: enterFromRight,
@@ -457,6 +463,7 @@ export default function BoardGrid({
             // enterFrom совпадёт с текущим x/y — RunnerTokenSlide его просто
             // проигнорирует (используется только на ПЕРВОМ рендере компонента).
             const enterFromByRunnerId = {};
+            const slideDurationByRunnerId = {};
             for (const r of visible) {
                 const prevKnown = lastKnownCellRef.current[r.id];
                 if (prevKnown) enterFromByRunnerId[r.id] = cellPixelPos(prevKnown.segment, prevKnown.positionX, prevKnown.positionY);
@@ -490,24 +497,33 @@ export default function BoardGrid({
                 ? (cols - 1 - localCol) * segmentH + (row % 2 === 0 ? segmentH / 2 : 0)
                 : row * segmentH;
 
+            // Реальный токен Жнеца при ПЕРВОМ появлении на доске (прилёт
+            // из-за края карты) — 2026-09-26, живая жалоба пользователя: у
+            // того, кто ставит Жнеца, есть локальная иллюзия прилёта
+            // (см. reaperPreviewItem выше — фейковый токен, никогда не
+            // долетающий до оппонента), а у ОСТАЛЬНЫХ клиентов НАСТОЯЩИЙ
+            // токен Жнеца просто монтируется на месте без единого кадра
+            // анимации — `enterFromByRunnerId` для него пуст (только что
+            // появился, `lastKnownCellRef` ещё не видел его раньше — см.
+            // цикл выше), слайду ехать неоткуда. Даём ему ТУ ЖЕ формулу
+            // "точка за пределами доски", что и у фейкового превью
+            // (`enterOffset`/`side`), и ту же увеличенную длительность
+            // (`REAPER_PREVIEW_SLIDE_MS`) — так у оппонента прилёт выглядит
+            // одинаково с тем, что уже видел разместивший игрок. `side` —
+            // часть `extra` у trigger(...,'start',{side,...}) в
+            // lib/runnerAnimTriggers.js, значит уже лежит в runnerAnims[id].
+            for (const r of visible) {
+                if (enterFromByRunnerId[r.id] !== undefined) continue;
+                const anim = runnerAnims?.[r.id];
+                if (r.type === RUNNER_TYPES.REAPER && anim?.kind === 'start' && anim?.side) {
+                    const enterOffset = segmentW * 3;
+                    enterFromByRunnerId[r.id] = { x: anim.side === 'east' ? x - enterOffset : x + enterOffset, y };
+                    slideDurationByRunnerId[r.id] = REAPER_PREVIEW_SLIDE_MS;
+                }
+            }
+
             if (visible.length === 2) {
                 const [a, b] = visible;
-                // "Призрак" — мирное сосуществование на одной клетке, НЕ
-                // коллизия (см. lib/ghostPairs.js, по прямому запросу
-                // пользователя, 2026-09-09: "стоят рядом в idle, пока это не
-                // последний ход призрачного бегуна"). Реальная (не ghost)
-                // коллизия НИКОГДА не оставляет двух бегунов НАДОЛГО на одной
-                // клетке — проигравший либо мгновенно уводится
-                // (авторазрешение того же размера), либо ждёт
-                // game.extraTurnPlayer (отдельная, уже обработанная ветка на
-                // GameBoardScreen) — так что если конкретно ЭТА пара помечена
-                // как ghost, рисуем solo/solo безусловно, минуя даже
-                // isArriving-проверку ниже (тот же приём, что у Жнеца).
-                if (ghostPairs?.has(ghostPairKey(a.id, b.id, segment, positionX, row))) {
-                    pushSolo(a, x, y, globalCol, false, enterFromByRunnerId[a.id]);
-                    pushSolo(b, x, y, globalCol, false, enterFromByRunnerId[b.id]);
-                    continue;
-                }
                 // Жнец на клетке — это НЕ столкновение, а ловушка (бегун,
                 // закончивший ход на этой клетке, уничтожается — см.
                 // lib/runnerAnimTriggers.js#'bomb'), по прямому запросу
@@ -540,6 +556,32 @@ export default function BoardGrid({
                 if (isArriving(a) || isArriving(b)) {
                     pushSolo(a, x, y, globalCol, false, enterFromByRunnerId[a.id]);
                     pushSolo(b, x, y, globalCol, false, enterFromByRunnerId[b.id]);
+                    continue;
+                }
+
+                // "Призрак" — мирное сосуществование на одной клетке, НЕ
+                // коллизия (см. lib/ghostPairs.js). До 2026-09-26 рисовалось
+                // solo/solo (оба токена наложены друг на друга, минуя даже
+                // isArriving-проверку) — по прямому запросу пользователя
+                // теперь пара разъезжается В СТОРОНЫ, как при коллизии, но
+                // позой idle, не 'collision' (см. pushPair — третий аргумент
+                // 'idle'). Проверка ПОСЛЕ isArriving (не до, как раньше) —
+                // иначе токен визуально "прыгал" бы на офсет ДО того, как
+                // реально доедет слайд захода на клетку, тот же класс
+                // проблемы, что уже решён для настоящей коллизии. Никакого
+                // MIN_HOLD_MS-холда тут не нужно — в отличие от коллизии,
+                // призрачное сосуществование не "мелькает" один тик, оно
+                // стабильно держится, пока мувер реально не уйдёт с клетки.
+                if (ghostPairs?.has(ghostPairKey(a.id, b.id, segment, positionX, row))) {
+                    const aIsMover = String(a.playerId) === String(currentTurnPlayerId);
+                    const bIsMover = String(b.playerId) === String(currentTurnPlayerId);
+                    let leftRunner;
+                    let rightRunner;
+                    if (aIsMover && !bIsMover) [leftRunner, rightRunner] = [b, a];
+                    else if (bIsMover && !aIsMover) [leftRunner, rightRunner] = [a, b];
+                    else [leftRunner, rightRunner] = a.id < b.id ? [a, b] : [b, a];
+                    pushPair(leftRunner, rightRunner, x, y, globalCol,
+                        enterFromByRunnerId[leftRunner.id], enterFromByRunnerId[rightRunner.id], 'idle');
                     continue;
                 }
 
@@ -598,6 +640,7 @@ export default function BoardGrid({
                 // 2026-09-09).
                 anchorBottom: true,
                 enterFrom: enterFromByRunnerId[topRunner.id],
+                slideDurationMs: slideDurationByRunnerId[topRunner.id],
             });
         }
 
@@ -996,6 +1039,7 @@ export default function BoardGrid({
                             ]}
                             windowStart={windowStart}
                             enterFrom={item.enterFrom}
+                            duration={item.slideDurationMs}
                             // onSlideEnd — см. onAnimStepEnd выше. `item.anim`
                             // у синтетических коллизионных пар/призраков —
                             // {kind:'collision',...} БЕЗ nonce (производное

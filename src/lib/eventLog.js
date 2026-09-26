@@ -96,8 +96,10 @@ export function describeEvent(e) {
             return `Аномалия → ${dir(e.direction)}`;
         case 'attack':
             return `Выстрел (${e.attack}) по бегуну ${e.target}: ${e.hit ? 'попал' : 'промах'}`;
-        case 'ghost_pass':
-            return `Призрак: бегун ${e.runnerId} проходит сквозь бегуна ${e.otherRunnerId}`;
+        // 'ghost_pass' убран 2026-09-26 — такого события на бэке нет и не было
+        // (см. lib/ghostPairs.js за полным разбором), реальное имя — ниже.
+        case 'ghost_consumed':
+            return `Призрак израсходован (игрок ${e.player})`;
         default:
             return null; // неизвестное событие — вызывающий код сам решает fallback
     }

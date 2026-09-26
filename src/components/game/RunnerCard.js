@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import PulseHighlight from '../ui/PulseHighlight';
-import PersonPanel from '../ui/PersonPanel';
+import PersonPanel, { NOTCH_RADIUS } from '../ui/PersonPanel';
 import FramePanel from '../ui/FramePanel';
 import {
     DAMAGE_SLOT_ICONS,
@@ -283,9 +283,9 @@ function RunnerCard({
                 декоративной дугой) — та же причина/фикс, что и в
                 AbilityZone.js: без него заливка/рамка рисовались острым
                 углом поверх скруглённой рамки. */}
-            {tintColor && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: `${tintColor}40`, borderRadius: 6 }]} />}
+            {tintColor && <View pointerEvents="none" style={[StyleSheet.absoluteFill, { backgroundColor: `${tintColor}40`, borderRadius: NOTCH_RADIUS }]} />}
             {active && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.activeRing, { borderColor: color }]} />}
-            <PulseHighlight active={pulseHighlight && hoverState == null} borderRadius={6} borderWidth={2} />
+            <PulseHighlight active={pulseHighlight && hoverState == null} borderRadius={NOTCH_RADIUS} borderWidth={2} />
 
             {compact ? (
                 // ВЕРТИКАЛЬНАЯ раскладка — см. докстринг файла. Аватар сверху
@@ -459,9 +459,10 @@ const styles = StyleSheet.create({
         paddingHorizontal: spacing.xs,
     },
     cardDestroyed: { opacity: 0.45 },
-    // borderRadius=6 — та же величина, что у PersonPanel.js#styles.wrap
-    // (было 8, минорный, но заметный при близком сравнении рассинхрон).
-    activeRing: { borderWidth: 3, borderRadius: 6 },
+    // borderRadius — та же величина, что у PersonPanel.js#styles.wrap
+    // (NOTCH_RADIUS, см. её докстринг 2026-09-26 — глубина диагональной
+    // фаски декоративного уголка, не весь размер его бокса).
+    activeRing: { borderWidth: 3, borderRadius: NOTCH_RADIUS },
     row: { flexDirection: 'row', alignItems: 'center' },
     avatarBox: { width: AVATAR_SIZE, height: AVATAR_SIZE, alignItems: 'center', justifyContent: 'flex-end' },
     // minWidth:0 — критично: БЕЗ него flex:1-элемент в RN (как и в обычном

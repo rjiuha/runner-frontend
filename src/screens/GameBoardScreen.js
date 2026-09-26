@@ -31,7 +31,7 @@ import {
     handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent, DEATH_KIND_BY_REASON, identifyStatusWorsening,
 } from '../lib/runnerAnimTriggers';
 import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
-import { identifyGhostPass } from '../lib/ghostPairs';
+import { identifyGhostConsumption } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
 import { COMMENT_SOUNDS } from '../constants/commentSounds';
@@ -79,6 +79,19 @@ const COLLISION_ANIM_DELAY_MS = 1400;
 // pendingCollisionRoll в теле компонента.
 const COLLISION_LOWER = 1;
 const COLLISION_TOP = 2;
+
+// Высота баннера "Твой ход"/столкновение/сдвиг трассы — ЗАФИКСИРОВАНА под 3
+// строки (заголовок + подсказка + опциональная вторая строка вроде "Бросок:
+// ...") вместо auto-height, чтобы плитка не "прыгала" по высоте между
+// разными состояниями (раньше три РАЗНЫХ баннера — turnBanner/panelTurnBanner
+// + отдельный collisionBanner — были схлопнуты в один общий контейнер, см.
+// turnBannerInner ниже, по прямому запросу пользователя, 2026-09-26). Меньше
+// на native (2026-09-26, живая жалоба с Android) — там баннер встроен в
+// PlayerInfoPanel с ФИКСИРОВАННЫМ общим бюджетом высоты (panelH, см.
+// useBoardLayout), а не растягивается вместе с экраном, как на вебе
+// (панель веба высотой во весь столбец) — полные 78 сдвигали плитку
+// кубиков/усилений за пределы видимой области.
+const TURN_BANNER_MIN_HEIGHT = Platform.OS === 'web' ? 78 : 64;
 
 // Хореография сдвига фрагментов трассы (game_track_updated) — по прямому
 // запросу пользователя, 2026-09-08: заход на "пик" 4-го фрагмента (см.
@@ -224,9 +237,10 @@ const gameLog = createLogger('GAME');
 
 export default function GameBoardScreen({ route, navigation }) {
     useAdaptiveOrientation();
-    // GameBoardScreen сознательно без SafeAreaView (см. шапку файла) — без
-    // этого top:spacing.md у collisionBanner рисовал плашку под статус-баром
-    // на телефонах, та же болячка, что была у EventLogPanel (см. его комментарий).
+    // GameBoardScreen сознательно без SafeAreaView (см. шапку файла) — сам
+    // экран считает отступы вручную (insets.top у roadZonePortrait/
+    // MobileFrameOverlay ниже), та же болячка, что была у EventLogPanel
+    // (см. его комментарий).
     const insets = useSafeAreaInsets();
     const { user } = useAuth();
     const gameId = route?.params?.gameId ?? null;
@@ -274,8 +288,8 @@ export default function GameBoardScreen({ route, navigation }) {
     // Одноразовые взрывы мины на клетках (danger==='mine') — см.
     // hooks/useMineBlasts.js. Триггер — двухшаговая корреляция транзиент→
     // версионное событие, см. minePendingRef и game_cell_updated-ветку в
-    // reduceAndLog ниже (тот же паттерн, что уже используется для ghost_pass/
-    // жетонов повреждений в этом файле).
+    // reduceAndLog ниже (тот же паттерн, что уже используется для
+    // ghost_consumed/жетонов повреждений в этом файле).
     const mineBlasts = useMineBlasts();
     const minePendingRef = useRef(false);
     // **2026-09-25, по прямому запросу пользователя** — раньше вскрытие
@@ -636,6 +650,10 @@ export default function GameBoardScreen({ route, navigation }) {
             handleVersionedRunnerAnimEvent(state, e, triggerWithSound, {
                 onceStepDone: runnerAnim.onceStepDone,
                 completeWaitStep: runnerAnim.completeWaitStep,
+                // 2026-09-26 — см. докстринг у pushedFrom в runnerAnimTriggers.js:
+                // без этого уход с клетки, где Призрак допустил мирное
+                // сосуществование, ложно классифицировался как отброс (fly).
+                ghostPairs: ghostPairs.pairs,
             });
             // "Игра стартовала, кубики розданы" — см. gameStartSoundPlayedRef
             // выше за тем, почему именно player_roll_move_dice (а не
@@ -656,6 +674,20 @@ export default function GameBoardScreen({ route, navigation }) {
                 runnerDamageTokens.clearRunner(e.runner.id);
                 triggerWithSound(e.runner.id, 'heal', {});
             }
+            // 2026-09-26: раньше это жило в onTransient и слушало 'ghost_pass' —
+            // события с таким именем на бэке НЕТ И НИКОГДА НЕ БЫЛО (проверено
+            // grep'ом по всему бэку), так что "мирное сосуществование" при
+            // Призраке ни разу не срабатывало в реальной игре. Реальный сигнал —
+            // ЭТО событие ('ghost_consumed'), и оно ВЕРСИОННОЕ (есть `version`),
+            // а не транзиентное — в onTransient оно вообще не должно было
+            // попадать, см. useMercure. Само событие не называет ни бегуна, ни
+            // клетку (только id игрока) — реконструируем через prevGame (`state`):
+            // активный бегун этого игрока, и кто ещё стоит на его клетке прямо
+            // сейчас (тот, кого он "проехал насквозь"). Та же эвристика по духу,
+            // что и у anomaly/damage-токенов (единственный кандидат — движущийся
+            // бегун), см. lib/ghostPairs.js#identifyGhostConsumption.
+            const ghostPass = identifyGhostConsumption(state, e);
+            if (ghostPass) ghostPairs.record(ghostPass.key);
             // Жетон повреждения записываем ТОЛЬКО здесь, на реальном
             // ухудшении статуса — не на самом транзиентном событии с типом
             // (см. lib/runnerDamageTokens.js: 'anomaly' в частности может
@@ -765,7 +797,7 @@ export default function GameBoardScreen({ route, navigation }) {
         [
             pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType,
             runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound, mineBlasts.trigger,
-            runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
+            ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
         ],
     );
 
@@ -815,8 +847,9 @@ export default function GameBoardScreen({ route, navigation }) {
             handleTransientRunnerAnimEvent(e, gameRef, triggerWithSound);
             const pending = identifyPendingDamageType(e, gameRef);
             if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
-            const ghostPass = identifyGhostPass(e, gameRef);
-            if (ghostPass) ghostPairs.record(ghostPass.key);
+            // 'ghost_pass' убран отсюда 2026-09-26 — такого события на бэке нет,
+            // реальный сигнал ('ghost_consumed') версионный и обрабатывается в
+            // reduceAndLog, см. там.
             // Взрыв мины (см. mineBlasts выше) — только ЗАПОМИНАЕМ факт "ждём
             // клетку", саму клетку узнаём из следующего game_cell_updated
             // (транзиент 'danger' координат не несёт вообще, см.
@@ -850,7 +883,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
             }
         },
-        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, ghostPairs.record, playOneShot, commentSound],
+        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, playOneShot, commentSound],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -2059,7 +2092,54 @@ export default function GameBoardScreen({ route, navigation }) {
     // отдельная строка под ними тратила высоту зря). Остальные состояния
     // (ABILITY/MOVE/SHOOT/Жнец/бонус дороги) — без изменений, текст и кнопки
     // по-прежнему на разных строках (там текст длиннее, в строку не влезет).
-    const turnBannerInner = myTurn ? (
+    //
+    // Коллизия/сдвиг трассы — раньше отдельный плавающий баннер
+    // (styles.collisionBanner, свой top-right угол), теперь ветки ЭТОГО ЖЕ
+    // turnBannerInner, с приоритетом НАД обычной подсказкой хода (по прямому
+    // запросу пользователя, 2026-09-26— "все сообщения в одной менюшке, где
+    // Твой ход"). Оба состояния блокируют игру целиком для всех игроков
+    // (см. game.extraTurnPlayer/trackShiftPhase в комментариях выше по
+    // файлу) — именно поэтому они перекрывают turnBannerInner, а не просто
+    // дополняют его.
+    const turnBannerInner = trackShiftPhase ? (
+        <Text style={[styles.turnHint, styles.turnHintCenter]} noGlobalTint>
+            Трасса смещается…
+        </Text>
+    ) : game.extraTurnPlayer != null ? (
+        <View style={styles.collisionRow}>
+            <View style={styles.collisionTextColumn}>
+                <Text style={styles.turnHint} noGlobalTint>
+                    {myCollision
+                        ? `Столкновение — ${collisionWinnerPlayer?.name ?? 'вы'} крупнее`
+                        : `Столкновение — ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`}
+                </Text>
+                {pendingCollisionRoll && collisionDecisionReady && (
+                    <Text style={styles.collisionRollText} noGlobalTint>
+                        Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} → {directionLabel(pendingCollisionRoll.direction)}
+                    </Text>
+                )}
+            </View>
+            {myCollision && !busy && collisionDecisionReady && (
+                <View style={styles.turnBtnRow}>
+                    <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.turnSkipBtnCompact} textStyle={styles.collisionBtnText} />
+                    <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.turnSkipBtnCompact} textStyle={styles.collisionBtnText} />
+                </View>
+            )}
+            {!myCollision && showStuckRefresh && (
+                <Button
+                    title="Обновить состояние"
+                    variant="info"
+                    onPress={() => {
+                        runnerAnim.reset();
+                        setPendingDeathRunnerIds(new Set());
+                        resync();
+                    }}
+                    style={styles.turnSkipBtnCompact}
+                    textStyle={styles.collisionBtnText}
+                />
+            )}
+        </View>
+    ) : myTurn ? (
         <>
             {/* Пульсирует бело↔зелёным всё время, пока myTurn (весь этот блок
                 рендерится только тогда) — по прямому запросу пользователя,
@@ -2277,86 +2357,24 @@ export default function GameBoardScreen({ route, navigation }) {
                 onExit={goToMainMenu}
             />
 
-            {/* Кат-сцена сдвига фрагментов (см. эффект у trackShiftPhase выше) —
-                видна ВСЕМ игрокам одновременно, не только тому, кто вызвал сдвиг:
-                камера прыгает без спроса, доска на это время неинтерактивна
-                (см. highlightedCells), banner объясняет почему. */}
-            {trackShiftPhase && (
-                <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]} pointerEvents="none">
-                    <Text style={styles.collisionText} noGlobalTint>Трасса смещается…</Text>
-                </View>
-            )}
+            {/* Кат-сцена сдвига фрагментов/столкновение — раньше отдельный
+                плавающий styles.collisionBanner (свой top-right угол,
+                независимый от turnBanner/panelTurnBanner), теперь содержимое
+                целиком переехало В turnBannerInner (см. его вычисление выше) —
+                единая плитка "Твой ход"/"Ход игрока"/коллизия/сдвиг трассы,
+                по прямому запросу пользователя, 2026-09-26. */}
 
-            {/* width = leftPanelW (2026-09-14, по прямому запросу пользователя) —
-                раньше был отдельный, НЕ связанный с шириной панели maxWidth:280
-                (turnBanner — position:'absolute', плавает НАД доской, это не
-                часть PlayerInfoPanel и не подхватывает её ширину сама по себе;
-                правка ширины RunnerCard этим же днём тут ни при чём — другой
-                компонент). Теперь плитка "Твой ход"/"Ход игрока" всегда РОВНО
-                той же ширины, что и левая панель под ней. */}
-            {!isPortrait && <View style={[styles.turnBanner, { width: leftPanelW }]}>{turnBannerInner}</View>}
-
-            {game.extraTurnPlayer != null && (
-                <View style={[styles.collisionBanner, { top: insets.top + spacing.md }]}>
-                    <View style={styles.collisionTextColumn}>
-                        <Text style={styles.collisionText} noGlobalTint>
-                            {/* Столкновение происходит в любом случае — отказаться от него
-                                нельзя (по правилам выбор есть только у более крупного бегуна
-                                при столкновении разных размеров, см. myCollision выше). Выбор
-                                здесь — использовать уже брошенный кубик или перебросить его
-                                заново, а не "принять/отклонить само столкновение" — прежняя
-                                формулировка вводила в заблуждение (жалоба пользователя,
-                                2026-09-02). Имя победителя (collisionWinnerPlayer) — по
-                                прямому запросу пользователя, 2026-09-10: раньше баннер не
-                                говорил, КТО именно получил выбор, только сам факт "ожидаем
-                                реакцию игрока". Столкновение с "мячом" (препятствием) теперь
-                                идёт ЭТИМ ЖЕ путём, без отдельной ветки — по прямому запросу
-                                пользователя, у победителя (тот, чей бегун крупнее — мяч
-                                никогда структурно не бывает крупной стороной, см. коммент у
-                                collisionWinnerPlayer) должен быть тот же выбор, что и при
-                                столкновении с другим игроком. */}
-                            {myCollision
-                                ? `Столкновение — ${collisionWinnerPlayer?.name ?? 'вы'} крупнее`
-                                : `Столкновение — ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`}
-                        </Text>
-                        {/* Результат УЖЕ брошенного кубика (см. pendingCollisionRoll выше) —
-                            по прямому запросу пользователя, 2026-09-10: "не вижу результат
-                            первого столкновения, чтобы принять решение". Показывается ВСЕМ
-                            (не только решающему) синхронно с кнопками — до этого момента
-                            решение принималось вслепую. "меньший/больший" — категория
-                            размера из самого броска (Collision::LOWER/TOP), не "мой/чужой"
-                            бегун — см. коммент у pendingCollisionRoll про известный баг
-                            порядка lowRunner/topRunner на бэке в одной из веток. */}
-                        {pendingCollisionRoll && collisionDecisionReady && (
-                            <Text style={styles.collisionRollText} noGlobalTint>
-                                Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} → {directionLabel(pendingCollisionRoll.direction)}
-                            </Text>
-                        )}
-                    </View>
-                    {myCollision && !busy && collisionDecisionReady && (
-                        <>
-                            <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.collisionBtn} textStyle={styles.collisionBtnText} />
-                            <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.collisionBtn} textStyle={styles.collisionBtnText} />
-                        </>
-                    )}
-                    {!myCollision && showStuckRefresh && (
-                        <Button
-                            title="Обновить состояние"
-                            variant="info"
-                            onPress={() => {
-                                // Полный REST-рефетч заменяет game-стейт целиком, минуя
-                                // событийный поток, который двигает очередь анимаций —
-                                // без сброса застрявшая очередь держала бы бегуна в
-                                // визуальной позиции старого (уже неактуального) шага.
-                                runnerAnim.reset();
-                                setPendingDeathRunnerIds(new Set());
-                                resync();
-                            }}
-                            style={styles.collisionBtn}
-                        />
-                    )}
-                </View>
-            )}
+            {/* Баннер хода в альбомной раскладке (веб) — раньше отдельный
+                position:'absolute' блок НАД панелью (перекрывал переключатель
+                игроков сверху), теперь — headerContent панели, тем же приёмом,
+                что уже был у портретной раскладки: рендерится между
+                переключателем игроков и плиткой кубиков/усилений (см.
+                PlayerInfoPanel — !switcherAtBottom && switcher, потом
+                headerContent, потом diceAbilitiesTile). По прямому запросу
+                пользователя, 2026-09-26 — "менюшка поверх кнопок переключения,
+                сделай встроенной... под кнопками, но над панелью с кубиками".
+                width больше не передаётся явно — headerContent наследует
+                ширину панели через обычный layout-поток. */}
 
             {!isPortrait && (
                 <PlayerInfoPanel
@@ -2379,6 +2397,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     onRunnerCardDoubleTap={handleRunnerCardDoubleTap}
                     width={leftPanelW}
                     switcherHeight={switcherH}
+                    headerContent={<View style={styles.turnBanner}>{turnBannerInner}</View>}
                     roadBonusValue={game.trackGain}
                 />
             )}
@@ -2489,7 +2508,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         switcherHeight={switcherH}
                         switcherAtBottom
                         compactColumns
-                        headerContent={<View style={styles.panelTurnBanner}>{turnBannerInner}</View>}
+                        headerContent={<View style={styles.turnBanner}>{turnBannerInner}</View>}
                         roadBonusValue={game.trackGain}
                     />
                     {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
@@ -2596,42 +2615,37 @@ const styles = StyleSheet.create({
         gap: spacing.sm,
     },
     center: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-    collisionBanner: {
-        // right (не alignSelf:'center') — абсолютно спозиционированные дети в RN
-        // не центрируются через alignSelf надёжно, нужны явные координаты.
-        // top — задаётся динамически (insets.top+spacing.md, см. компонент).
-        position: 'absolute', right: spacing.md, zIndex: 20, elevation: 20,
-        flexDirection: 'row', alignItems: 'center', gap: spacing.sm,
-        backgroundColor: colors.bgLight, borderRadius: radius.pill,
-        paddingVertical: spacing.xs, paddingHorizontal: spacing.md,
-    },
+    // Раньше — контейнер отдельного плавающего collisionBanner (свой
+    // top-right угол, pill-форма). Теперь коллизия — просто одна из веток
+    // turnBannerInner (см. компонент), рисуется ВНУТРИ общего styles.turnBanner
+    // — этот стиль только про внутреннюю раскладку строки (текст слева,
+    // кнопки справа), не про позиционирование на экране.
+    collisionRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm },
     // flex:1 — забирает всю ширину, оставшуюся ПОСЛЕ кнопок (которые не
     // должны сжиматься), не наоборот — иначе длинный текст с результатом
     // броска мог бы вытолкнуть кнопки за пределы баннера.
     collisionTextColumn: { flex: 1 },
-    collisionText: { color: colors.textOnDark, fontSize: font.tiny },
     // Чуть тусклее основного текста — вспомогательная информация, не
     // основной вопрос баннера.
     collisionRollText: { color: colors.textOnDark, fontSize: font.tiny, opacity: 0.75, marginTop: 2 },
-    // Уменьшено по прямому запросу пользователя, 2026-09-11 — диалог
-    // столкновения на Android был слишком крупным (минимальная высота
-    // Button по умолчанию — 52, шрифт 18 жирным; тут явно меньше через
-    // collisionBtnText).
-    collisionBtn: { minHeight: 26, paddingVertical: 2, paddingHorizontal: spacing.sm },
     collisionBtnText: { fontSize: font.tiny, fontWeight: '600' },
+    // Баннер хода/столкновения/сдвига трассы — headerContent PlayerInfoPanel
+    // В ОБЕИХ раскладках (портретная и альбомная), между переключателем
+    // игроков и плиткой кубиков/усилений (см. место рендера в обоих вызовах
+    // PlayerInfoPanel). Раньше в альбомной раскладке был отдельный
+    // position:'absolute' блок НАД панелью (перекрывал переключатель) — по
+    // прямому запросу пользователя, 2026-09-26, встроен туда же, где уже был
+    // портретный вариант (тогда panelTurnBanner и turnBanner были двумя
+    // идентичными по сути стилями, слиты в один). minHeight+justifyContent —
+    // плитка ЗАФИКСИРОВАНА под 3 строки (см. TURN_BANNER_MIN_HEIGHT) и больше
+    // не "прыгает" по высоте между "Твой ход"/подсказкой/коллизией/сдвигом
+    // трассы — контент короче трёх строк просто центрируется внутри, а не
+    // растягивает контейнер.
     turnBanner: {
-        // left:0, было spacing.md (2026-09-14) — панель под ней начинается
-        // РОВНО у левого края экрана (wrapper), а ширина банера теперь =
-        // leftPanelW (см. место рендера) — старый отступ слева сдвигал ВЕСЬ
-        // блок вправо, из-за чего справа он вылезал за пределы панели ровно
-        // на ту же величину (живая жалоба пользователя, скриншот с разметкой).
-        position: 'absolute', top: spacing.md, left: 0, zIndex: 20, elevation: 20,
-        // maxWidth убран (2026-09-14) — width теперь передаётся явно
-        // (={leftPanelW}) в месте рендера; maxWidth:280, оставленный тут,
-        // ограничивал бы её сверху и на широких панелях (leftPanelW обычно
-        // заметно больше 280) банер продолжал бы выглядеть узким.
         backgroundColor: colors.bgLight, borderRadius: radius.md,
         paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
+        marginTop: spacing.xs,
+        minHeight: TURN_BANNER_MIN_HEIGHT, justifyContent: 'center',
     },
     turnTitle: { color: colors.textOnDarkSecondary, fontSize: font.small, fontWeight: 'bold' },
     // color тут больше не используется (PulseText сам управляет цветом, см.
@@ -2654,17 +2668,8 @@ const styles = StyleSheet.create({
     // себе узкая, полноразмерный паддинг кнопки тут ни к чему).
     // Ниже, чем обычный turnSkipBtn (minHeight:32) — по прямому запросу
     // пользователя, 2026-09-14 (сначала сказал "поуже", имел в виду "пониже").
-    // Та же величина, что уже используется для компактных кнопок в этом
-    // файле (см. collisionBtn).
+    // Та же величина, что раньше была у отдельного collisionBtn (теперь
+    // коллизия использует этот же стиль — см. turnBannerInner).
     turnSkipBtnCompact: { minHeight: 26, paddingVertical: 2, paddingHorizontal: spacing.md },
     turnBtnRow: { flexDirection: 'row', gap: spacing.xs },
-    // Тот же баннер хода, что в альбомной раскладке плавает над доской
-    // (styles.turnBanner), но встроенный в обычный поток панели (портретная
-    // раскладка) — там, где раньше было крупное имя игрока. Без
-    // position:'absolute' — это обычный блок в PlayerInfoPanel.headerContent.
-    panelTurnBanner: {
-        backgroundColor: colors.bgLight, borderRadius: radius.md,
-        paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
-        marginTop: spacing.xs,
-    },
 });

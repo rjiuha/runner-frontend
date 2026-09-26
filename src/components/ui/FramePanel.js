@@ -23,6 +23,32 @@ const BOTTOM_EDGE_H_NATIVE = 15;
 const BOTTOM_TILE_W_NATIVE = 25;
 const VERT_EDGE_W_NATIVE = 14;
 const VERT_TILE_H_NATIVE = 14;
+// Глубина выреза декоративной дуги (frame_panel_top_corner.png) от истинного
+// угла её 32px нативного бокса — измерено 2026-09-26 тем же способом, что и
+// NOTCH_NATIVE в PersonPanel.js (рендер угла поверх контрастного тестового
+// фона на разных радиусах, подобран минимальный радиус, при котором ничего
+// не просвечивает). Экспортируется — вызывающий код (AbilityZone.js/
+// PlayerInfoPanel.js) использует ТУ ЖЕ формулу для своих оверлеев
+// (заливка/PulseHighlight), которые рисуются рядом и должны визуально
+// совпадать со скруглением рамки — см. frameNotchRadius() ниже.
+const CORNER_NOTCH_NATIVE = 23;
+
+/**
+ * Радиус скругления, которым FramePanel сам обрезает свой `wrap` (см. её
+ * использование в компоненте ниже) — вызывающий код передаёт СЮДА ТЕ ЖЕ
+ * `size`/`targetCornerSize`, что и в саму `<FramePanel>`, чтобы получить
+ * идентичное значение для соседних оверлеев (заливка усиления/кубика,
+ * PulseHighlight), которые рисуются РЯДОМ, а не внутри FramePanel.
+ */
+export function frameNotchRadius(size, targetCornerSize = 12) {
+    if (!size) return 0;
+    const scale = Math.min(
+        targetCornerSize / CORNER_NATIVE,
+        size.width / (CORNER_NATIVE * 2),
+        size.height / (CORNER_NATIVE * 2),
+    );
+    return Math.round(CORNER_NOTCH_NATIVE * scale);
+}
 
 /**
  * Декоративная sci-fi рамка (9-slice) — тот же приём, что MobileFrameOverlay
@@ -115,10 +141,16 @@ function FramePanel({
     const bgTile = Math.round(backgroundTileSize * scale);
     const edgeW = Math.max(0, size.width - cornerSize * 2);
     const edgeH = Math.max(0, size.height - cornerSize * 2);
+    // notchRadius — тот же фикс, что и в PersonPanel.js (2026-09-26, "задний
+    // фон торчит по углам треугольником"), см. CORNER_NOTCH_NATIVE/
+    // frameNotchRadius() выше за полный разбор замера и известное
+    // ограничение (frame_panel_bottom_corner.png — диагональный росчерк, не
+    // трасса по контуру, полностью не чинится этим способом).
+    const notchRadius = Math.round(CORNER_NOTCH_NATIVE * scale);
 
     return (
         <View
-            style={[styles.wrap, { width: size.width, height: size.height }, style]}
+            style={[styles.wrap, { width: size.width, height: size.height, borderRadius: notchRadius }, style]}
             pointerEvents="none"
         >
             <Tiled
@@ -225,5 +257,8 @@ function FramePanel({
 export default React.memo(FramePanel);
 
 const styles = StyleSheet.create({
+    // borderRadius:4 — дефолт-заглушка, реально ВСЕГДА перекрывается инлайн
+    // (notchRadius, см. компонент выше) — оставлен просто как безопасный
+    // fallback, если сюда когда-нибудь попадёт рендер без него.
     wrap: { position: 'absolute', top: 0, left: 0, borderRadius: 4, overflow: 'hidden' },
 });

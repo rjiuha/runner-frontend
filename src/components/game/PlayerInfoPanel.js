@@ -9,7 +9,7 @@ import ReaperCard from './ReaperCard';
 import PulseText from '../ui/PulseText';
 import PulseHighlight from '../ui/PulseHighlight';
 import PersonPanel from '../ui/PersonPanel';
-import FramePanel from '../ui/FramePanel';
+import FramePanel, { frameNotchRadius } from '../ui/FramePanel';
 import {
     DICE_FACE_IMAGES,
     PLAYER_ABILITIES,
@@ -461,10 +461,12 @@ export default function PlayerInfoPanel({
                     size={diceTraySize}
                     targetCornerSize={8}
                 />
-                {/* borderRadius=4 — та же величина, что у FramePanel.js#styles.wrap
-                    (тот же фикс "рамка/заливка острым углом поверх скруглённой
-                    дуги", что уже применён в AbilityZone.js/RunnerCard.js). */}
-                <PulseHighlight active={diceHighlight} borderRadius={4} showBackground showBorder={false} />
+                {/* borderRadius — frameNotchRadius(diceTraySize, 8), та же
+                    величина, что FramePanel сам использует для своего wrap
+                    (см. её докстринг, 2026-09-26) — тот же фикс "рамка/заливка
+                    острым углом поверх скруглённой дуги", что уже применён в
+                    AbilityZone.js/RunnerCard.js. */}
+                <PulseHighlight active={diceHighlight} borderRadius={frameNotchRadius(diceTraySize, 8)} showBackground showBorder={false} />
                 <DiceTray
                     dice={trayDice}
                     draggable={dragMode != null}

@@ -75,6 +75,12 @@ export function runnerGameReducer(game, e) {
                 trackBegin: e.trackBegin,
                 trackMiddle: e.trackMiddle,
                 trackEnd: e.trackEnd,
+                // 2026-09-26: раньше тут не было trackNext — бэк его ОТДАЁТ (перепроверено
+                // чтением GameTrackUpdatedEvent.php/RunnerGameViewModel.php), просто редьюсер
+                // забывал скопировать. Из-за этого "пик" 4-го фрагмента (lib/board.js#
+                // flattenPeekColumn) залипал на значении из самого первого REST-снапшота и
+                // никогда не обновлялся при живом сдвиге трассы.
+                trackNext: e.trackNext,
                 trackNumber: e.trackNumber,
                 withFinish: e.withFinish,
             };
@@ -194,6 +200,18 @@ export function runnerGameReducer(game, e) {
                 dice3: e.player.dice_3,
                 dice4: e.player.dice_4,
             });
+
+        // 2026-09-26: раньше этот case отсутствовал вообще (падало в default) —
+        // player.ability на клиенте не переключался в 'unghost', когда Призрак
+        // реально расходовался сервером (GhostCollisionResolver::tryConsume()).
+        // Не критично для данных (REST-снапшот всё равно вернёт верный ability
+        // при любом реконнекте — сервер персистит его в БД), но живая сессия без
+        // этого показывала бы "Призрак ещё доступен" сколько угодно долго.
+        // Payload плоский (GhostConsumedEvent.php): `player` — само id игрока
+        // (не объект), `ability` — на верхнем уровне, НЕ `e.player.ability`, как
+        // у остальных ability_*-событий выше — не перепутать при копипасте.
+        case 'ghost_consumed':
+            return patchPlayer(game, e.player, { ability: e.ability });
 
         case 'ability_heal':
             return patchRunner(

@@ -61,6 +61,11 @@ export function getAccessToken() {
     return accessToken;
 }
 
+/** См. api/auth.js#logout — нужен, чтобы отправить ЕГО на сервер при выходе. */
+export function getRefreshToken() {
+    return refreshToken;
+}
+
 async function parseBody(response) {
     const text = await response.text();
     if (!text) return null;
