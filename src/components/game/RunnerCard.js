@@ -1,5 +1,5 @@
 // src/components/game/RunnerCard.js
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import PulseHighlight from '../ui/PulseHighlight';
@@ -104,6 +104,31 @@ const DICE_FRAME_SIZE = { width: DICE_SIZE, height: DICE_SIZE };
 const AVATAR_FRAME_SIZE_COMPACT = { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT };
 const DICE_FRAME_SIZE_COMPACT = { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT };
 
+// Отдаём паддинг карточки наружу (2026-09-26) — PlayerInfoPanel.js считает
+// по нему безопасный `sizeScale` для авто-РОСТА (см. её докстринг
+// leftScale/rightScale/maxAvatarSizeScale ниже): нужно знать, СКОЛЬКО от
+// ширины карточки реально остаётся под аватар после вычета paddingHorizontal
+// у cardCompact — magic-число иначе задваивалось бы в двух файлах и могло бы
+// разойтись при будущей правке паддинга здесь.
+export const RUNNER_CARD_COMPACT_PADDING_H = spacing.xs;
+
+/**
+ * Максимальный `sizeScale`, при котором `avatarBoxCompact` (шириной
+ * AVATAR_SIZE_COMPACT*scale) ещё гарантированно помещается в СВОЮ карточку —
+ * используется PlayerInfoPanel.js при авто-РОСТЕ compact-колонки (2026-09-26,
+ * по прямому запросу пользователя — "растянуть контент крупнее", см. её
+ * докстринг leftScale/leftGrow). Три карточки стоят плотно в ряд (`flex:1`,
+ * без запаса по ширине сверх этого), а сам аватар — ФИКСИРОВАННОГО пиксельного
+ * размера (не ужимается вместе с flex-родителем) — без этой проверки рост мог
+ * бы вытолкнуть аватар за границы своей карточки (наезд на соседние).
+ * `cardContentWidth` — ширина ОДНОЙ карточки уже БЕЗ padding (вызывающая
+ * сторона сама вычитает RUNNER_CARD_COMPACT_PADDING_H*2).
+ */
+export function maxAvatarSizeScale(cardContentWidth) {
+    if (!cardContentWidth) return 1;
+    return Math.max(1, cardContentWidth / AVATAR_SIZE_COMPACT);
+}
+
 // Стабильные ссылки (тот же принцип, что и у *_FRAME_SIZE выше — React.memo
 // сравнивает пропсы по ссылке, новый массив на каждый рендер сломал бы это) —
 // только количество занятых слотов имеет значение (см. рендер ниже —
@@ -143,17 +168,40 @@ function RunnerCard({
     compact = false,
     remeasureTick = 0,
     roadBonus = null,
+    // Авто-РОСТ compact-колонки (2026-09-26, см. maxAvatarSizeScale выше и
+    // PlayerInfoPanel.js#leftGrow) — >1, когда контента МЕНЬШЕ, чем реально
+    // доступная высота колонки, уже прошедший клэмп по безопасной ширине.
+    // 1 (по умолчанию) — обычная раскладка/без роста, размеры как раньше.
+    sizeScale = 1,
 }) {
+    // useMemo — та же причина, что и у AVATAR_FRAME_SIZE_COMPACT (стабильная
+    // ссылка объекта для React.memo у FramePanel, см. её докстринг) — но
+    // размер теперь не всегда одна и та же module-level константа, а
+    // ПЕРЕСЧИТЫВАЕТСЯ от sizeScale. Меняется редко (только когда PlayerInfoPanel
+    // пересчитывает leftGrow — при изменении высоты колонки/контента, НЕ на
+    // каждый рендер), useMemo с [sizeScale] отдаёт ТУ ЖЕ ссылку между
+    // рендерами, пока sizeScale не изменился — свойство React.memo не рушится.
+    const avatarSizeCompact = Math.round(AVATAR_SIZE_COMPACT * sizeScale);
+    const diceSizeCompact = Math.round(DICE_SIZE_COMPACT * sizeScale);
+    const damageIconSizeCompact = Math.round(DAMAGE_ICON_SIZE_COMPACT * sizeScale);
+    const avatarFrameSizeCompact = useMemo(
+        () => (sizeScale === 1 ? AVATAR_FRAME_SIZE_COMPACT : { width: avatarSizeCompact, height: avatarSizeCompact }),
+        [sizeScale, avatarSizeCompact],
+    );
+    const diceFrameSizeCompact = useMemo(
+        () => (sizeScale === 1 ? DICE_FRAME_SIZE_COMPACT : { width: diceSizeCompact, height: diceSizeCompact }),
+        [sizeScale, diceSizeCompact],
+    );
     const display = RUNNER_DISPLAY[runner.type];
     // Жетоны повреждения — считаются НАПРЯМУЮ от runner.status (2026-09-24, по
-    // прямому запросу пользователя), не от накопленной истории событий
-    // (runner.damageTokens/useRunnerDamageTokens — та инфраструктура остаётся
-    // в проекте нетронутой, просто здесь больше не читается): DAMAGED — один
-    // занятый (red) слот, BROKEN/DESTROYED — оба, HEALTHY — ни одного. Статус
-    // синхронизируется через обычный снапшот и НИКОГДА не теряется при
-    // reconnect/relaunch — в отличие от истории событий, которая теряется
-    // (см. докстринг useRunnerDamageTokens.js), это гарантированно верно
-    // всегда, а не только пока жив тот же живой Mercure-коннект.
+    // прямому запросу пользователя), не от накопленной истории событий:
+    // DAMAGED — один занятый (red) слот, BROKEN/DESTROYED — оба, HEALTHY —
+    // ни одного. Статус синхронизируется через обычный снапшот и НИКОГДА не
+    // теряется при reconnect/relaunch — в отличие от истории событий, которая
+    // теряется, это гарантированно верно всегда, а не только пока жив тот же
+    // живой Mercure-коннект. Старая инфраструктура накопления по истории
+    // событий (`lib/runnerDamageTokens.js`/`hooks/useRunnerDamageTokens.js`,
+    // её вывод никто больше не читал) удалена 2026-09-28 как мёртвый код.
     const slots = damageSlotsFromStatus(runner.status);
     const destroyed = runner.status === RUNNER_STATUS.DESTROYED;
     const zoneKey = `move:${runner.id}`;
@@ -162,9 +210,23 @@ function RunnerCard({
     // собственный onLayout PersonPanel (живая жалоба пользователя + логи
     // подтвердили: на Android onLayout абсолютно спозиционированного ребёнка
     // с auto-height родителем стабильно ловит height=0 — родитель ещё не
-    // "устаканился" на момент этого конкретного measure-пути), а через УЖЕ
-    // работающий здесь measureInWindow (тот самый, что годами используется
-    // для drag-n-drop зоны — там реальный размер приходит верно).
+    // "устаканился" на момент этого конкретного measure-пути) — это ДРУГОЙ
+    // случай, чем ниже: тут речь про onLayout САМОГО PersonPanel (абсолютно
+    // спозиционированный потомок).
+    //
+    // **Но НЕ через measureInWindow тоже** (2026-09-26, симметричный фикс к
+    // тому же живому багу в AbilityZone.js/PlayerInfoPanel.js — "рамки
+    // усилений висят в воздухе" после введения авто-масштабирования колонок
+    // leftScale/rightScale, см. их докстринги за полным разбором). Card
+    // (TouchableOpacity, обычный flex-ребёнок, НЕ абсолютно спозиционирован)
+    // теперь может оказаться внутри `transform:scale`-колонки — measureInWindow
+    // отражает УЖЕ применённый scale, PersonPanel рисуется ВНУТРИ той же
+    // масштабируемой колонки и получал бы уже уменьшенный размер, ужимаясь
+    // transform'ом ЕЩЁ РАЗ поверх этого (двойное уменьшение). Используем
+    // onLayout САМОЙ карточки (`cardRef`, обычный flow-элемент — тот путь,
+    // что и так надёжно работает в проекте, см. infoWidth ниже) — он отдаёт
+    // НАТУРАЛЬНЫЙ, transform-independent размер, ровно то, что нужно
+    // декоративной рамке.
     const [cardSize, setCardSize] = useState(null);
     // Ширина СРЕДНЕЙ зоны (имя+жетоны, между аватаром и кубиком) — ТОЛЬКО
     // горизонтальная раскладка (см. infoCol в её JSX-ветке ниже); живая
@@ -201,34 +263,100 @@ function RunnerCard({
         onPress?.(runner);
     }, [onPress, onDoubleTap, runner]);
 
+    // ВАЖНО (контекст для cardSize, читается через onLayout, см. handleLayout
+    // ниже): раньше тут вычитался spacing.sm*2 (предположение "PersonPanel
+    // рисуется ВНУТРИ паддинга, значит размер нужно ужать") — живая проверка
+    // (замер реального DOM на вебе) это опровергла: `PersonPanel.wrap`
+    // (`position:'absolute', top:0, left:0`) позиционируется относительно
+    // ГРАНИЦЫ card, а не его content-box — паддинг родителя АБСОЛЮТНО
+    // спозиционированный потомок в RN/RN-web не учитывает вообще (та же
+    // семантика, что и в обычном CSS: offset absolute-элемента отсчитывается
+    // от padding-box предка, что здесь равно border-box, т.к. paddingBox
+    // включает padding). Из-за двойного вычитания рамка оставалась размером
+    // 323×64 при реальной карточке 339×80 — прижатой к левому верхнему углу,
+    // с ЛИШНЕЙ пустой полосой 16px справа/снизу, где сквозь дыру просто был
+    // виден фон экрана (ровно жалоба пользователя "рамка значительно меньше
+    // плитки", подтверждена скриншотом+замером). Передаём ПОЛНЫЙ border-box
+    // без вычитания — раз абсолютный потомок и так игнорирует padding, это и
+    // есть корректный размер, чтобы рамка легла ровно по границе карточки.
     const measure = useCallback(() => {
         requestAnimationFrame(() => {
             cardRef.current?.measureInWindow((x, y, width, height) => {
                 onMoveDiceMeasured?.(zoneKey, { x, y, width, height });
-                // ВАЖНО: раньше тут вычитался spacing.sm*2 (предположение "PersonPanel
-                // рисуется ВНУТРИ паддинга, значит размер нужно ужать") — живая проверка
-                // (замер реального DOM на вебе) это опровергла: `PersonPanel.wrap`
-                // (`position:'absolute', top:0, left:0`) позиционируется относительно
-                // ГРАНИЦЫ card, а не его content-box — паддинг родителя АБСОЛЮТНО
-                // спозиционированный потомок в RN/RN-web не учитывает вообще (та же
-                // семантика, что и в обычном CSS: offset absolute-элемента отсчитывается
-                // от padding-box предка, что здесь равно border-box, т.к. paddingBox
-                // включает padding). Из-за двойного вычитания рамка оставалась размером
-                // 323×64 при реальной карточке 339×80 — прижатой к левому верхнему углу,
-                // с ЛИШНЕЙ пустой полосой 16px справа/снизу, где сквозь дыру просто был
-                // виден фон экрана (ровно жалоба пользователя "рамка значительно меньше
-                // плитки", подтверждена скриншотом+замером). Теперь передаём ПОЛНЫЙ
-                // border-box без вычитания — раз абсолютный потомок и так игнорирует
-                // padding, это и есть корректный размер, чтобы рамка легла ровно по
-                // границе карточки.
-                setCardSize({ width, height });
             });
         });
     }, [zoneKey, onMoveDiceMeasured]);
 
+    const handleLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setCardSize({ width, height });
+        measure();
+    }, [measure]);
+
     useEffect(() => {
         if (remeasureTick) measure();
     }, [remeasureTick, measure]);
+
+    // 2026-09-28 — СТРУКТУРНЫЙ фикс класса бага "зона дропа устарела после
+    // смены игрока", вместо точечной заплатки в PlayerInfoPanel.js (которая
+    // теперь убрана, см. её докстринг рядом с местом, где она раньше стояла).
+    // Раньше починка держалась на том, что РОДИТЕЛЬ (PlayerInfoPanel) явно
+    // знал о каждой причине "зона могла сместиться/принадлежать другому
+    // бегуну" и бампал общий remeasureTick под КАЖДУЮ из них по отдельности
+    // (скролл, масштаб, переключение таба...) — хрупко: любая НОВАЯ причина
+    // в будущем (ещё не придуманная фича) требовала бы вспомнить добавить
+    // ЕЩЁ один такой триггер, иначе кэш зоны снова незаметно устареет (ровно
+    // так уже дважды ломалось — 2026-09-26 auto-scale и 2026-09-27 стабильный
+    // key). Вместо этого — карточка сама отвечает за свежесть СВОЕЙ
+    // регистрации: как только меняется `zoneKey` (т.е. `runner.id`, который
+    // реально попадёт в `zoneLayoutsRef` и уйдёт бэку при дропе) — неважно,
+    // ПОЧЕМУ он поменялся (смена таба, будущая фича, что угодно ещё) — сразу
+    // перемеряется. Это не отменяет remeasureTick выше (тот всё ещё нужен
+    // для PAINT-ONLY смещения — scale/scroll, где `zoneKey` не меняется
+    // вообще, а меняется только ЭКРАННАЯ позиция того же бегуна), но
+    // закрывает КЛАСС "сменилась личность бегуна за тем же слотом" раз и
+    // навсегда, а не конкретный сегодняшний случай.
+    //
+    // **2026-09-28, дополнено ТЕМ ЖЕ вечером — реальный баг, найден живым
+    // логом (`zoneLayoutsRef` целиком напечатан в консоль на дропе)**: этот
+    // `useEffect` перемерял и РЕГИСТРИРОВАЛ новый `zoneKey`, но никогда не
+    // УДАЛЯЛ старый — `zoneLayoutsRef.current` в PlayerInfoPanel.js только
+    // ДОБАВЛЯЛ записи, никогда не чистил. У слота с той же экранной
+    // позицией (Танк — первый в RUNNER_ORDER, всегда крайний слот) после
+    // нескольких переключений игрока накопилось ПО ДВЕ записи с ОДИНАКОВЫМ
+    // прямоугольником, но РАЗНЫМИ `runner.id` (старого и нового игрока) —
+    // `findZoneAt` (простой перебор `Object.entries`, первое совпадение
+    // побеждает) стабильно попадал на ПЕРВУЮ когда-либо вставленную (значит
+    // самую старую, уже недействительную) — отсюда "не наводится на Танка"
+    // и "подсветка не совпадает ни с чем" (hover.key всегда был устаревшим
+    // id, с которым текущий рендер уже не сравнивал себя).
+    //
+    // **2026-09-29, живой лог (`DROPDBG2`) показал: фикс выше (ручной
+    // `prevZoneKeyRef`) НЕ закрывал класс бага целиком** — он удаляет старую
+    // запись ТОЛЬКО когда `zoneKey` меняется у ЖИВОГО (не размонтированного)
+    // компонента. Если карточка хоть раз реально РАЗМОНТИРУЕТСЯ (а не просто
+    // получает новый `runner`-проп под тем же `key={runner.type}`) — этот
+    // `useEffect` никогда не успевает вызваться с новым `zoneKey`, и старая
+    // регистрация остаётся в `zoneLayoutsRef` НАВСЕГДА, без вариантов её
+    // когда-либо удалить. Живой лог поймал ровно это: зоны ОБОИХ игроков
+    // партии (id одного и id другого) одновременно висели в реестре с
+    // ПОПИКСЕЛЬНО одинаковыми прямоугольниками — хит-тест наведения ПОЛНОСТЬЮ
+    // переставал совпадать с текущими карточками (ни подсветки, ни успешного
+    // дропа: `findZoneAt` матчил древний id, бэк отвечал 404 "Runner not
+    // found"). Фикс — обычный React-идиом "зарегистрировался на маунт/апдейт,
+    // снялся с регистрации в cleanup" вместо ручного `prevZoneKeyRef`:
+    // `useEffect` со cleanup-функцией вызывается ПЕРЕД каждым повторным
+    // запуском эффекта (значит и при смене `zoneKey` тоже — там она удаляет
+    // СТАРЫЙ zoneKey из замыкания ПРЕДЫДУЩЕГО рендера, эффект следом
+    // регистрирует новый) И при настоящем размонтировании компонента —
+    // закрывает оба случая одним и тем же механизмом, без самодельного
+    // отслеживания "предыдущего" значения.
+    useEffect(() => {
+        measure();
+        return () => {
+            onMoveDiceMeasured?.(zoneKey, null);
+        };
+    }, [zoneKey, measure, onMoveDiceMeasured]);
 
     const tintColor =
         hoverState === 'invalid' ? colors.danger
@@ -260,7 +388,7 @@ function RunnerCard({
     return (
         <TouchableOpacity
             ref={cardRef}
-            onLayout={measure}
+            onLayout={handleLayout}
             style={[compact ? styles.cardCompact : styles.card, destroyed && styles.cardDestroyed]}
             onPress={handlePress}
             activeOpacity={0.8}
@@ -292,9 +420,9 @@ function RunnerCard({
                 // по центру → имя (скрыто на Android) → жетоны в ряд → слот
                 // кубика снизу.
                 <View style={styles.colInner}>
-                    <View style={styles.avatarBoxCompact}>
+                    <View style={[styles.avatarBoxCompact, sizeScale !== 1 && { width: avatarSizeCompact, height: avatarSizeCompact }]}>
                         <FramePanel
-                            size={AVATAR_FRAME_SIZE_COMPACT}
+                            size={avatarFrameSizeCompact}
                             backgroundSource={FRAME_PANEL_BACKGROUND}
                             backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
                             backgroundTileSize={60}
@@ -304,7 +432,7 @@ function RunnerCard({
                             status={runner.status}
                             avatar
                             color={color}
-                            size={AVATAR_SIZE_COMPACT}
+                            size={avatarSizeCompact}
                             imageScale={0.85}
                             selected={active}
                             showRing={false}
@@ -321,12 +449,16 @@ function RunnerCard({
                                 key={i}
                                 source={slots[i] ? DAMAGE_SLOT_ICONS.filled : DAMAGE_SLOT_ICONS.empty}
                                 resizeMode="contain"
-                                style={[styles.damageIconCompact, i === 1 && styles.damageIconCompactGap]}
+                                style={[
+                                    styles.damageIconCompact,
+                                    sizeScale !== 1 && { width: damageIconSizeCompact, height: damageIconSizeCompact },
+                                    i === 1 && styles.damageIconCompactGap,
+                                ]}
                             />
                         ))}
                     </View>
-                    <View style={styles.diceBoxCompact}>
-                        <FramePanel size={DICE_FRAME_SIZE_COMPACT} />
+                    <View style={[styles.diceBoxCompact, sizeScale !== 1 && { width: diceSizeCompact, height: diceSizeCompact }]}>
+                        <FramePanel size={diceFrameSizeCompact} />
                         <Text style={styles.diceValueCompact} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
                     </View>
                     {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой ПОД слотом кубика

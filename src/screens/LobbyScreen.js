@@ -35,16 +35,44 @@ export default function LobbyScreen({ route, navigation }) {
         navigation.reset({ index: 0, routes: [{ name: ROUTES.MAIN_MENU }] });
     }, [navigation]);
 
-    const { state: lobby, status } = useMercure({
-        topic: `lobby_${lobbyId}`,
-        fetchSnapshot,
-        reduce: lobbyReducer,
-        onTransient: (e) => {
+    // 2026-09-29 — живая жалоба: "андроид не видит зашедшего с веба, статус
+    // ready не меняется нигде, хотя REST 200 OK". Причина — бэк с 2026-09-27
+    // заворачивает ВСЕ Mercure-события (лобби тоже, тот же общий
+    // MercureService) в конверт `{event:'action_result', sequence:[...]}`
+    // (см. GameBoardScreen.js#reduceAndLog за разбором того же контракта для
+    // игры) — а этот экран продолжал отдавать `lobbyReducer` напрямую в
+    // useMercure и сравнивать `e.event` внутри onTransient БЕЗ разворачивания
+    // `bundle.sequence`. `lobbyReducer(lobby, {event:'action_result',...})`
+    // не матчился ни с одним `case`, тихо падал в `default: return lobby` —
+    // версия у useMercure исправно продвигалась (`commit()` не знает, что
+    // reduce() вернул тот же объект), а реальный список игроков/ready/
+    // lobby_closed — никогда. Пропущено при миграции 2026-09-27 (там
+    // мигрировали только GameBoardScreen.js). Фикс — та же схема разворачивания,
+    // что и в reduceAndLog, только без анимационной надстройки (лобби не
+    // рисует боевые анимации).
+    const reduce = useCallback((state, bundle) => {
+        let current = state;
+        for (const item of bundle.sequence ?? [bundle]) {
+            current = lobbyReducer(current, { ...item, event: item.type ?? item.event });
+        }
+        return current;
+    }, []);
+
+    const onTransient = useCallback((bundle) => {
+        for (const item of bundle.sequence ?? [bundle]) {
+            const e = { ...item, event: item.type ?? item.event };
             if (e.event === 'lobby_closed' && !leftRef.current) {
                 notify('Лобби закрыто');
                 goMenu();
             }
-        },
+        }
+    }, [goMenu]);
+
+    const { state: lobby, status } = useMercure({
+        topic: `lobby_${lobbyId}`,
+        fetchSnapshot,
+        reduce,
+        onTransient,
     });
 
     const me = lobby?.players.find((p) => p.id === user?.id);

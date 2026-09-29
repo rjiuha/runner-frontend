@@ -45,8 +45,30 @@ const IS_WEB = Platform.OS === 'web';
  * жест не ловит и рисуется как пустое место, а не тусклая кость.
  * draggable=false — кубик виден (не отдан), но жест выключен: не мой ход
  * или не тот шаг хода (см. dragMode в PlayerInfoPanel).
+ *
+ * **`ghostX`/`ghostY`/`panelOriginX`/`panelOriginY` (2026-09-28, native
+ * only)** — опциональные reanimated shared values, созданные и рендерящиеся
+ * СНАРУЖИ (`PlayerInfoPanel.js`), сюда просто передаются пропом. Нужны для
+ * того же "призрака поверх всего", что и веб (`dragGhost` в PlayerInfoPanel),
+ * но БЕЗ JS-моста на каждый кадр: `.onUpdate()` — воркет, крутится на
+ * UI-потоке, и запись `ghostX.value = ...` В ДРУГОЙ shared value (созданный
+ * ancestor-компонентом, но тот же самый JS-объект-ref под капотом) — тоже
+ * чисто UI-поток, без единого `runOnJS`. Раньше (тот же день, чуть раньше)
+ * для этого использовался legacy `Animated.ValueXY.setValue()` внутри
+ * `runOnJS(onDragMove)` — работало, но КАЖДЫЙ кадр драга пересекал JS-мост,
+ * и на живом (особенно нагруженном) Android это давало заметный лаг —
+ * "подсветка зоны не поспевает за пальцем", живая жалоба. `panelOriginX/Y` —
+ * оконные координаты панели (см. PlayerInfoPanel#measurePanelOrigin) —
+ * `origin`/`e.translationX/Y` этого кубика УЖЕ в оконных координатах (см.
+ * докстринг про native выше), а `dragGhost` рисуется `position:'absolute'`
+ * ПРЯМЫМ ребёнком корня панели — нужен пересчёт в координаты этого корня.
+ * На вебе эти пропы не передаются (не нужны — там свой, отдельный,
+ * legacy-Animated путь, см. `IS_WEB`-ветку ниже, её не трогали).
  */
-export default function DiceDie({ value, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size = 44 }) {
+export default function DiceDie({
+    value, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size = 44,
+    ghostX, ghostY, panelOriginX, panelOriginY,
+}) {
     const originX = useSharedValue(0);
     const originY = useSharedValue(0);
     const translateX = useSharedValue(0);
@@ -82,6 +104,11 @@ export default function DiceDie({ value, draggable = true, onDragStart, onDragMo
             } else {
                 translateX.value = e.translationX;
                 translateY.value = e.translationY;
+                // Позиция призрака — ЧИСТО на UI-потоке, см. докстринг файла.
+                if (ghostX && ghostY) {
+                    ghostX.value = originX.value + e.translationX - (panelOriginX?.value ?? 0);
+                    ghostY.value = originY.value + e.translationY - (panelOriginY?.value ?? 0);
+                }
                 if (onDragMove) runOnJS(onDragMove)(originX.value + e.translationX, originY.value + e.translationY, value);
             }
         })
@@ -119,12 +146,23 @@ export default function DiceDie({ value, draggable = true, onDragStart, onDragMo
         // для похожей причины).
         elevation: dragging.value ? 10 : 0,
         backgroundColor: 'transparent',
-        // На вебе поверх едет независимый "призрак" кубика (см. dragGhost в
-        // PlayerInfoPanel) — без этого во время драга были видны ДВА кубика
-        // одновременно (этот, застрявший под карточкой по стекингу, и призрак
-        // поверх неё). На native призрака нет — там сам кубик и есть обратная
-        // связь, прятать нечего.
-        opacity: Platform.OS === 'web' && dragging.value ? 0 : 1,
+        // Поверх едет независимый "призрак" кубика (см. dragGhost в
+        // PlayerInfoPanel) — на ОБЕИХ платформах — без этого во время драга
+        // были бы видны ДВА кубика одновременно (этот, ограниченный
+        // стекингом/clip своей колонки, и призрак поверх неё). 2026-09-28,
+        // два захода за один день: сначала призрак на native вёлся через
+        // `runOnJS`+legacy `Animated.ValueXY` (JS-мост на каждый кадр,
+        // живая жалоба на лаг подсветки) → откачено на "оставить видимым,
+        // просто снять overflow:hidden колонки на время драга" → живая
+        // проверка показала, что этого НЕДОСТАТОЧНО (кубик всё ещё уходит
+        // "за" соседнюю колонку — видимо, `transform:scale` на
+        // `leftColumnContent`/`rightColumnContent` создаёт свой stacking-
+        // контекст, из которого elevation/zIndex не может вырваться, не
+        // только clip был виноват) → финально призрак вернули, но уже через
+        // reanimated shared values (`ghostX`/`ghostY`, см. докстринг файла)
+        // вместо legacy `Animated` — та же визуальная логика, что и раньше,
+        // но обновление позиции ЦЕЛИКОМ на UI-потоке, без JS-моста на кадр.
+        opacity: dragging.value ? 0 : 1,
     }));
 
     if (value == null) {

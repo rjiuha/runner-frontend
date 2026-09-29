@@ -26,7 +26,7 @@ export const COMMENT_SOUNDS = {
     // (см. runnerSounds.js), синхронно с появлением позы столкновения.
     collision: [require('../assets/sounds/comments/collision_1.wav')],
     // Опасная клетка вскрылась как Аномалия (чёрная дыра) — транзиентное
-    // 'anomaly'-событие, см. lib/runnerAnimTriggers#handleTransientRunnerAnimEvent.
+    // 'anomaly'-событие, см. lib/runnerAnimTriggers#handleSequenceItem.
     anomalyHole: [require('../assets/sounds/comments/anomaly_hole_1.wav')],
     // Выстрел (обычный ИЛИ атака Жнеца при размещении, оба идут через
     // AttackResolutionService::resolve() на бэке, read-only) не попал —
@@ -38,8 +38,9 @@ export const COMMENT_SOUNDS = {
     ],
     // Опасная клетка вскрылась как Рикошет — транзиентное 'ricochet'-событие
     // (та же категория "исход опасности", что и anomaly/rocket/stupor, см.
-    // Damage.php на бэке), своего анимационного case не имеет — общая
-    // forwardNeighbors-эвристика в handleVersionedRunnerAnimEvent уже триггерит
-    // визуальный fly сама, тут только звук.
+    // Damage.php на бэке), своего анимационного case не имеет — визуальный
+    // эффект (fly того runnerId, которого рикошет реально задел) даёт
+    // последующий 'runner_save' с явным reason через handleSequenceItem, тут
+    // только звук.
     ricochet: [require('../assets/sounds/comments/ricochet_1.wav')],
 };

@@ -12,7 +12,7 @@ export function normalizeLobby(raw) {
         id: raw.id,
         version: raw.version ?? 0,
         status: raw.status,                                   // 'waiting' | 'starting'
-        maxPlayers: raw.maxPlayers ?? raw.maxPlayers ?? 0, // ← сглаживаем расхождение
+        maxPlayers: raw.maxPlayers ?? 0,
         // host может прийти строкой (старый формат) или объектом {id, username}
         host: typeof raw.host === 'string'
             ? { id: null, username: raw.host }

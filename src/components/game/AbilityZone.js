@@ -14,6 +14,10 @@ import { colors, spacing } from '../../theme';
 // Platform.OS не меняется в течение жизни приложения — модульная константа
 // (тот же приём, что isAndroid в RunnerCard.js/DiceTray.js).
 const isAndroid = Platform.OS === 'android';
+// Вынесено из styles.iconCompact (2026-09-26) — нужно ЧИСЛОМ для расчёта
+// sizeScale-роста (см. проп sizeScale/место рендера иконки ниже), не только
+// как style-константа.
+const ICON_SIZE_COMPACT = 34;
 
 /**
  * Зона-цель для перетаскивания кубика. Сама зона не решает, подходит ли ей
@@ -51,6 +55,17 @@ function AbilityZone({
     compact = false,
     color,
     pulseHighlight = false,
+    // Авто-РОСТ compact-колонки (2026-09-26, см. PlayerInfoPanel.js#rightGrow
+    // за полным разбором) — >1, когда контента МЕНЬШЕ реально доступной
+    // высоты правой колонки. Зона сама шириной 48% родителя (см.
+    // styles.zone) — растёт ВМЕСТЕ с родителем при желании, но иконка внутри
+    // неё фиксированного пиксельного размера, поэтому именно ЕЙ нужен явный
+    // множитель, чтобы визуально расти вместе с высотой зоны. Клэмп по
+    // ширине тут не нужен (в отличие от RunnerCard.js) — зона занимает 48%
+    // ширины колонки НЕЗАВИСИМО от размера иконки, а иконка (34px в
+    // compact) занимает от силы половину этой зоны — запас по ширине
+    // заведомо больше, чем разумный рост от нехватки высоты.
+    sizeScale = 1,
 }) {
     const ref = useRef(null);
     const ability = PLAYER_ABILITIES[abilityKey];
@@ -59,9 +74,31 @@ function AbilityZone({
     // StyleSheet.absoluteFill (на Android либо не рендерился вовсе, либо не
     // масштабировался — живые жалобы "рамки нет вообще"/"не в масштабе"),
     // размер приходит явно. Зона тут ПЕРЕМЕННОЙ ширины (48%), константой не
-    // обойтись — берём из ТОГО ЖЕ measureInWindow, что уже есть ниже.
+    // обойтись.
+    //
+    // **`onLayout`, НЕ `measureInWindow`** (2026-09-26, живая жалоба на
+    // реальном устройстве после введения авто-масштабирования колонок —
+    // "рамки усилений висят в воздухе, иконки вне рамок"). Причина: колонка
+    // теперь может быть обёрнута в `transform:scale` (см. leftScale/rightScale
+    // в PlayerInfoPanel.js) — `measureInWindow` (в отличие от `onLayout`)
+    // отражает УЖЕ применённый scale родителя, а не натуральный layout-размер.
+    // Раз FramePanel рисуется ВНУТРИ той же масштабируемой колонки, передача
+    // ему уже уменьшенного (post-scale) `size` даёт ДВОЙНОЕ уменьшение — сама
+    // рамка ужимается transform'ом ЕЩЁ РАЗ поверх уже уменьшенных пиксельных
+    // размеров, а иконка (у неё фиксированный style-размер, см. styles.icon
+    // ниже) уменьшается только транформом один раз — рамка и иконка
+    // расходятся. `onLayout` (как и `leftContentH`/`rightContentH` в
+    // PlayerInfoPanel.js) отдаёт НАТУРАЛЬНЫЙ, transform-independent размер —
+    // ровно то, что нужно декоративной рамке (сама она потом корректно
+    // ужимается ОДИН раз вместе со всем остальным содержимым той же
+    // transform-колонки).
     const [zoneSize, setZoneSize] = useState(null);
 
+    // Хит-тест дропа кубика (zoneLayoutsRef в PlayerInfoPanel.js) — ЕДИНСТВЕННЫЙ
+    // оставшийся потребитель measureInWindow: ему НУЖНЫ реальные оконные
+    // координаты (сравниваются с абсолютными координатами жеста), в том числе
+    // корректно уменьшенные/сдвинутые transform'ом — тут measureInWindow ведёт
+    // себя ровно так, как нужно, не трогаем.
     const measure = useCallback(() => {
         // requestAnimationFrame — см. тот же приём и объяснение в RunnerCard.js.
         // Плюс отложенный ПОВТОРНЫЙ замер (setTimeout) — узкая подстраховка
@@ -80,12 +117,17 @@ function AbilityZone({
         const run = () => {
             ref.current?.measureInWindow((x, y, width, height) => {
                 onMeasured(abilityKey, { x, y, width, height });
-                setZoneSize({ width, height });
             });
         };
         requestAnimationFrame(run);
         setTimeout(run, 150);
     }, [abilityKey, onMeasured]);
+
+    const handleLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setZoneSize({ width, height });
+        measure();
+    }, [measure]);
 
     useEffect(() => {
         if (remeasureTick) measure();
@@ -115,7 +157,7 @@ function AbilityZone({
     return (
         <TouchableOpacity
             ref={ref}
-            onLayout={measure}
+            onLayout={handleLayout}
             onPress={filled ? handlePress : undefined}
             activeOpacity={filled ? 0.7 : 1}
             style={[styles.zone, compact && styles.zoneCompact]}
@@ -164,7 +206,19 @@ function AbilityZone({
                 увеличена (см. styles.icon/iconCompact), занимает
                 освободившееся место. hint (диапазон кубика) оставлен — это
                 функциональная информация, не название. */}
-            <Image source={PLAYER_ABILITY_ICONS[abilityKey]} style={[styles.icon, compact && styles.iconCompact, isAndroid && styles.iconNoHint]} resizeMode="contain" />
+            <Image
+                source={PLAYER_ABILITY_ICONS[abilityKey]}
+                style={[
+                    styles.icon,
+                    compact && styles.iconCompact,
+                    compact && sizeScale !== 1 && {
+                        width: Math.round(ICON_SIZE_COMPACT * sizeScale),
+                        height: Math.round(ICON_SIZE_COMPACT * sizeScale),
+                    },
+                    isAndroid && styles.iconNoHint,
+                ]}
+                resizeMode="contain"
+            />
             {/* Подсказка (диапазон кубика) убрана на Android целиком, включая
                 цифры (2026-09-20, по прямому запросу пользователя) — иконка
                 уже даёт основную информацию, а текстовые элементы поверх
@@ -202,9 +256,13 @@ const styles = StyleSheet.create({
     // пользователя "ужать пространство под усиления".
     zoneCompact: { paddingVertical: 4 },
     // Увеличены (было 34/26) — заняли место убранного текстового названия
-    // усиления (см. комментарий у места рендера).
+    // усиления (см. комментарий у места рендера). 2026-09-26: точечная
+    // попытка уменьшить (34→30) под нехватку высоты columns ОТКАЧЕНА — см.
+    // тот же комментарий у DiceTray size в PlayerInfoPanel.js, масштабирует
+    // теперь всю колонку целиком (leftScale/rightScale), не отдельные
+    // константы.
     icon: { width: 44, height: 44, marginBottom: 2 },
-    iconCompact: { width: 34, height: 34, marginBottom: 1 },
+    iconCompact: { width: ICON_SIZE_COMPACT, height: ICON_SIZE_COMPACT, marginBottom: 1 },
     // Android — под иконкой больше нет текста (см. рендер выше), лишний
     // нижний отступ иконки не нужен.
     iconNoHint: { marginBottom: 0 },

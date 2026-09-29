@@ -45,12 +45,13 @@ export function colorKeyForHex(hex) {
  *
  * `direction` в бою — ВСЕГДА одно из 3 "вперёд" (UP/LEFT_UP/RIGHT_UP,
  * MoveDto/ShootDto на бэке других не разрешают) — ветки DOWN/LEFT_DOWN/
- * RIGHT_DOWN ниже физически недостижимы из боевого кода, добавлены ТОЛЬКО
- * ради screens/MockRoadScreen.js ("Шаг" в любую из 6 смежных клеток, не
- * только вперёд) — существующее поведение для 3 боевых направлений не
- * тронуто ни на бит. В паке (spritePackStrips.js) реально ЕСТЬ south/east/
- * west move-клипы (проверено, 2026-09-25) — используем их напрямую, а не
- * приближение через south-east/south-west, как было в первой версии мока.
+ * RIGHT_DOWN ниже физически недостижимы из боевого кода, были добавлены
+ * ради песочницы анимаций ("Шаг" в любую из 6 смежных клеток, не только
+ * вперёд, см. screens/MockRoadScreen.js — удалён 2026-09-29) — существующее
+ * поведение для 3 боевых направлений не тронуто ни на бит. В паке
+ * (spritePackStrips.js) реально ЕСТЬ south/east/west move-клипы (проверено,
+ * 2026-09-25) — сами ветки оставлены (аддитивны, безопасны), хотя после
+ * удаления песочницы физически недостижимы вообще ниоткуда.
  */
 export function resolveMoveAssetDirection(direction, depthChanged, targetLaneShifted) {
     if (direction === 'UP') return 'north';

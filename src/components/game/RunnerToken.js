@@ -8,9 +8,8 @@ import { getAvatarGif, hasAvatarGif } from '../../constants/avatarGifs';
 // SpritePackAnimation — рендерер нового AI-спрайт-пака (assets/sprites/,
 // 2026-09-23, см. CLAUDE.md) — заменяет старый комбинированный gif-спрайт-
 // хак только для Скаута/Android (constants/scoutSpriteSheets.js/
-// SpriteSheetAnimation.js — оставлены нетронутыми, но ничем не импортируются
-// вообще — их единственный потребитель, screens/__SpriteSheetPreview.js,
-// удалён при этой миграции, см. CLAUDE.md). Один заранее перекрашенный PNG-
+// SpriteSheetAnimation.js — были мёртвым кодом, никем не импортировались
+// после миграции, удалены 2026-09-28). Один заранее перекрашенный PNG-
 // лист на тип+статус+цвет декодируется ОДИН раз при монтировании токена,
 // смена анимационной позы — чистый сдвиг row/frameIndex внутри уже
 // загруженного листа, не смена source — тот самый класс Android-decode-

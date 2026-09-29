@@ -23,7 +23,10 @@ const isAndroid = Platform.OS === 'android';
  * не приходится гадать, сработает ли flexWrap на конкретном экране. Веб/iOS
  * не тронуты — там как и раньше один ряд с переносом при нехватке места.
  */
-export default function DiceTray({ dice, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size }) {
+function DiceTray({
+    dice, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size,
+    ghostX, ghostY, panelOriginX, panelOriginY,
+}) {
     const renderDie = (value, index) => (
         <DiceDie
             key={index}
@@ -33,6 +36,10 @@ export default function DiceTray({ dice, draggable = true, onDragStart, onDragMo
             onDragMove={(x, y, v) => onDragMove(index, x, y, v)}
             onDrop={(x, y, v) => onDrop(index, x, y, v)}
             onDragEnd={onDragEnd}
+            ghostX={ghostX}
+            ghostY={ghostY}
+            panelOriginX={panelOriginX}
+            panelOriginY={panelOriginY}
             {...(size != null ? { size } : {})}
         />
     );
@@ -52,6 +59,13 @@ export default function DiceTray({ dice, draggable = true, onDragStart, onDragMo
         </View>
     );
 }
+
+// React.memo (2026-09-27) — тот же резон, что у AbilityZone/ReaperCard/
+// RunnerCard: без него ЛЮБОЙ ре-рендер PlayerInfoPanel (не только смена
+// таба игрока) пересобирал бы все 4 кубика заново. Требует стабильных
+// ссылок у вызывающего кода (см. `trayDice`#useMemo в PlayerInfoPanel.js) —
+// `onDragStart`/`onDragMove`/`onDrop`/`onDragEnd` там уже useCallback.
+export default React.memo(DiceTray);
 
 const styles = StyleSheet.create({
     // flexWrap — правая колонка в compactColumns заметно уже панели целиком

@@ -101,8 +101,20 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
                 .sort((a, b) => a.version - b.version);
             bufferRef.current = [];
 
+            // 2026-09-28 — раньше тут был `if (e.version !== ver + 1) break`
+            // ("дырка — доберём следующим sync"). С бандлингом Mercure-событий
+            // (`action_result`+`sequence`, см. `useMercure`/`handleEvent` ниже
+            // за полным разбором) ОДИН бандл сам может продвинуть version
+            // больше чем на 1 (несколько `bumpVersion()` за одну транзакцию на
+            // бэке) — это норма, не признак пропущенного сообщения. Строгий
+            // `+1`-чек проваливался почти на КАЖДОМ бандле и молча выбрасывал
+            // его из применения (следующий sync() смотрел уже на снапшот, а не
+            // на выброшенный бандл) — состояние оставалось корректным (снапшот
+            // и так самый свежий), но `reduce()` для этого бандла не звался ни
+            // разу, значит НИ ОДНА анимация из него не проигрывалась. Раз
+            // бандл самодостаточен (несёт всю цепочку целиком), применяем
+            // просто по возрастанию версии, без проверки на строгую смежность.
             for (const e of pending) {
-                if (e.version !== ver + 1) break; // дырка — доберём следующим sync
                 cur = cb.current.reduce(cur, e);
                 ver = e.version;
             }
@@ -140,15 +152,27 @@ export function useMercure({ topic, token = null, fetchSnapshot, reduce, onTrans
 
         const cur = versionRef.current;
         if (e.version <= cur) { log(`event v${e.version} — дубль (уже на v${cur}), игнор`); return; }
-        if (e.version === cur + 1) {
-            log(`event v${e.version} (${e.event ?? '?'}) — применено`);
-            commit(cb.current.reduce(stateRef.current, e), e.version);
-            return;
-        }
-        log(`event v${e.version} — ПРОПУСК (жду v${cur + 1}), в буфер + форс sync()`);
-        bufferRef.current.push(e);   // пропуск — не угадываем
-        sync(genRef.current);
-    }, [sync]);
+        // 2026-09-28 — раньше тут был строгий `e.version === cur + 1`
+        // (иначе — "пропуск", буфер + форс sync()). С бандлингом Mercure-
+        // событий (`action_result` + `sequence`, бэк — `MercureService::
+        // publishBundle()`) ОДИН бандл несёт `version` = ПОСЛЕДНЕЕ значение
+        // из всех событий транзакции, а не гарантированно cur+1 — почти
+        // любое игровое действие вызывает `bumpVersion()` несколько раз за
+        // одну транзакцию (например `step_selection`+`player_step`, или
+        // `runner_save`+`game_turn_changed`), так что версия почти ВСЕГДА
+        // прыгает больше чем на 1. Старая проверка проваливалась на каждом
+        // таком бандле, считая его "пропуском" — реальный live-апдейт уходил
+        // в буфер и форсил REST-resync ВМЕСТО `reduce()`: итоговое состояние
+        // оставалось верным (resync его всё равно подтягивал), но `reduce()`
+        // ни разу не вызывался — значит НИ ОДНА анимация из этого бандла не
+        // триггерилась (живая жалоба "после правок перестали проигрываться
+        // очереди анимаций" — это оно). Раз бандл самодостаточен (несёт
+        // всю цепочку целиком), большой скачок версии — это теперь норма,
+        // не сигнал потери сообщения — применяем сразу, без проверки на
+        // строгую смежность.
+        log(`event v${e.version} (${e.event ?? '?'}) — применено`);
+        commit(cb.current.reduce(stateRef.current, e), e.version);
+    }, []);
 
     const disconnect = useCallback(() => {
         genRef.current += 1;

@@ -495,12 +495,41 @@ export function useRunnerAnimations() {
     // runnerAnimTriggers.js). KNOCKBACK_WAIT_MS (обычный таймер в
     // advanceQueue) остаётся страховкой на случай, если победитель почему-то
     // никогда не долетит.
-    const completeWaitStep = useCallback((runnerId) => {
+    //
+    // **2026-09-28, реальный живой баг** — раньше эта функция просто звала
+    // `advanceQueue(runnerId)`, а вызывающая сторона ОТДЕЛЬНОЙ следующей
+    // строкой сама делала `trigger(runnerId, 'fly', {toPosition})`. Если для
+    // ТОГО ЖЕ runnerId в ЭТОМ ЖЕ бандле ещё РАНЬШЕ (синхронно, пока мы ждали
+    // асинхронного onceStepDone) успел прилететь каскадный `runner_destroy`
+    // (например отброс приземлил бегуна на клетку 'acid'/'fire') —
+    // `trigger()` для терминальной позы уже поставил её В ОЧЕРЕДЬ ЗА 'wait'
+    // (не мог начать сразу — 'wait' был активен). `advanceQueue()` внутри
+    // этой функции доставал ИМЕННО эту уже стоящую в очереди терминальную
+    // позу — она стартовала ПЕРВОЙ, а `trigger(..., 'fly', ...)` следующей
+    // строкой уже просто вставал в очередь ЗА терминальной позой (та
+    // терминальная, `queues.current[runnerId] = []` внутри advanceQueue,
+    // забрасывала 'fly' навсегда — терминальный шаг ничего за собой не
+    // играет). Итог — живая жалоба: "анимация acid началась ПРЯМО во время
+    // движения на клетку, а не после того, как бегун на неё встал" — на
+    // самом деле 'fly' вообще не играла, показывалась сразу терминальная
+    // 'acid'-поза, пока RunnerTokenSlide просто честно доезжал до её
+    // toPosition (та же клетка, что и у отброса).
+    //
+    // Фикс — следующий шаг (`nextKind`/`nextExtra`, обычно 'fly') ВСТАВЛЯЕТСЯ
+    // В НАЧАЛО очереди ДО вызова `advanceQueue()`, а не триггерится отдельным
+    // вызовом ПОСЛЕ него — значит `advanceQueue()` всегда достаёт именно его,
+    // а не то, что синхронно успело встать в очередь раньше; уже стоявшая
+    // терминальная поза остаётся ЗА ним и играет, как и задумано, уже ПОСЛЕ
+    // приземления.
+    const completeWaitStep = useCallback((runnerId, nextKind, nextExtra) => {
         const current = active.current[runnerId];
         if (!current || current.kind !== 'wait') return;
         if (timers.current[runnerId]) {
             clearTimeout(timers.current[runnerId]);
             delete timers.current[runnerId];
+        }
+        if (nextKind) {
+            queues.current[runnerId] = [{ kind: nextKind, extra: nextExtra }, ...(queues.current[runnerId] ?? [])];
         }
         advanceQueue(runnerId);
     }, [advanceQueue]);

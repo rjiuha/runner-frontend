@@ -16,10 +16,16 @@ export function lobbyReducer(lobby, e) {
             };
 
         case 'player_left':
+            // 2026-09-27: было `e.newHost` — бэк реально шлёт поле `host`
+            // (LobbyPlayerLeftEvent.php: `'host' => $host`, {} если хозяин
+            // не менялся, иначе {id,username} нового) — смена хозяина через
+            // это событие раньше никогда не применялась на фронте. Пустой
+            // объект `{}` (не null/undefined) — фолбэк `?? lobby.host`
+            // сработал бы неверно (сохранил бы старого), проверяем `id`.
             return {
                 ...lobby,
                 players: lobby.players.filter((p) => p.id !== e.playerId),
-                host: e.newHost ?? lobby.host,
+                host: e.host?.id != null ? e.host : lobby.host,
             };
 
         // 2026-09-18: хост может выгнать игрока (POST /lobby/kick) — событие

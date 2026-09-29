@@ -15,11 +15,11 @@ import EventLogPanel from '../components/game/EventLogPanel';
 import Button from '../components/ui/Button';
 import LoadingCard from '../components/ui/LoadingCard';
 import PulseText from '../components/ui/PulseText';
+import FramePanel from '../components/ui/FramePanel';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
-import { useRunnerDamageTokens } from '../hooks/useRunnerDamageTokens';
 import { useGhostPairs } from '../hooks/useGhostPairs';
 import { useMineBlasts } from '../hooks/useMineBlasts';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
@@ -27,10 +27,7 @@ import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
-import {
-    handleVersionedRunnerAnimEvent, handleTransientRunnerAnimEvent, DEATH_KIND_BY_REASON, identifyStatusWorsening,
-} from '../lib/runnerAnimTriggers';
-import { identifyPendingDamageType, getWorsenedDamageRunnerId } from '../lib/runnerDamageTokens';
+import { handleSequenceItem, DEATH_KIND_BY_REASON } from '../lib/runnerAnimTriggers';
 import { identifyGhostConsumption } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
@@ -265,21 +262,10 @@ export default function GameBoardScreen({ route, navigation }) {
 
     // Анимации бегунов (пока только Скаут — см. constants/runnerAnimations) —
     // транзиентный стейт "что сейчас играется" по runnerId, отдельно от
-    // самого game. handleVersionedRunnerAnimEvent/handleTransientRunnerAnimEvent
-    // (lib/runnerAnimTriggers) — чистые функции "событие → что триггернуть",
-    // сам стейт трогает только runnerAnim.trigger.
+    // самого game. handleSequenceItem (lib/runnerAnimTriggers) — чистая
+    // функция "событие → что триггернуть", сам стейт трогает только
+    // runnerAnim.trigger.
     const runnerAnim = useRunnerAnimations();
-    // Локальный стор жетонов повреждений (см. lib/runnerDamageTokens.js) —
-    // бэк не отдаёт ТИП жетона (Runner::toArray() только status), фронт сам
-    // копит его из потока событий — иначе кружки повреждений на RunnerCard
-    // всегда пустые (жалоба пользователя, 2026-08-31). Двухшаговая
-    // корреляция (см. reduceAndLog/onTransient ниже): транзиентное событие
-    // с типом жетона (damage/ricochet/rocket/stupor/anomaly) только
-    // ЗАПОМИНАЕТ тип, реальный жетон пишется лишь когда следом ПРИДЁТ
-    // версионный runner_damage — живьём поймано, что 'anomaly' сама по себе
-    // может означать чистый редирект без урона (см. подробный разбор в
-    // lib/runnerDamageTokens.js).
-    const runnerDamageTokens = useRunnerDamageTokens();
     // Пары бегунов, мирно сосуществующих на одной клетке благодаря "призраку"
     // (см. lib/ghostPairs.js) — BoardGrid рисует их как два независимых
     // solo-токена (idle рядом), не коллизионную позу, по прямому запросу
@@ -315,49 +301,6 @@ export default function GameBoardScreen({ route, navigation }) {
     // держать взрыв невидимым вечно.
     const MINE_TRIGGER_SAFETY_TIMEOUT_MS = 8000;
 
-    // **2026-09-25, живая жалоба пользователя** — "healthy меняется на
-    // damaged ДО того, как проигралась анимация move, до взрыва мины, до
-    // анимации получения урона". Та же природа, что и у мины/heldCells чуть
-    // выше: `runner.status` (решает, healthy или damaged bucket спрайт-пака
-    // рисует RunnerToken — см. resolveSpriteRef) обновляется МГНОВЕННО вместе
-    // с игровым стейтом (архитектурное правило проекта — состояние не ждёт
-    // анимацию), а бегун в этот момент может ещё доигрывать move/fly К месту
-    // удара. Тот же честный `onStart`-приём, не отдельный таймер: держим
-    // СТАРЫЙ статус, пока не начнёт реально играть та поза (gotShot/
-    // destroyed/acid/burn), которая и ЕСТЬ визуальный момент удара — см.
-    // identifyStatusWorsening (lib/runnerAnimTriggers.js) и
-    // statusReleaseOnStart в triggerWithSound ниже.
-    //
-    // `heldRunnerStatusesRef` (не только React state) — по ТОЙ ЖЕ причине,
-    // что и activatedCellKeysRef/pendingMineCellIdsRef выше: заморозка
-    // ставится в reduceAndLog ДО handleVersionedRunnerAnimEvent (см. там,
-    // тот же порядок, что уже у pendingDeathRunnerIds — если очередь этого
-    // бегуна сейчас пуста, onStart может сработать СИНХРОННО прямо внутри
-    // этого вызова), а снимается ИЗ triggerWithSound — оба места должны
-    // видеть АКТУАЛЬНОЕ значение в рамках одного синхронного прохода, не
-    // ждать следующего рендера (React batching). State — чисто для того,
-    // чтобы BoardGrid реально перерисовался с переопределённым статусом.
-    //
-    // Пишем ТОЛЬКО если для этого runnerId ЕЩЁ НИЧЕГО не заморожено (не
-    // перезаписываем) — при каскаде из НЕСКОЛЬКИХ ударов подряд (redко, но
-    // возможно) это сохраняет САМЫЙ РАННИЙ статус (тот, что был ДО всего
-    // каскада), а не статус "перед последним конкретным ударом" — иначе
-    // промежуточные позы каскада увидели бы уже "наполовину" ухудшённый
-    // статус вместо честного исходного.
-    const [heldRunnerStatuses, setHeldRunnerStatuses] = useState({});
-    const heldRunnerStatusesRef = useRef({});
-    const HELD_RUNNER_STATUS_TIMEOUT_MS = 8000; // тот же принцип, что и у HELD_CELL_TIMEOUT_MS/MINE_TRIGGER_SAFETY_TIMEOUT_MS
-    const releaseHeldRunnerStatus = useCallback((runnerId) => {
-        if (!(runnerId in heldRunnerStatusesRef.current)) return;
-        delete heldRunnerStatusesRef.current[runnerId];
-        setHeldRunnerStatuses((prev) => {
-            if (!(runnerId in prev)) return prev;
-            const next = { ...prev };
-            delete next[runnerId];
-            return next;
-        });
-    }, []);
-
     // Гейт для GameFinishModal (см. hasDeathAnimPlaying ниже) — живая жалоба,
     // 2026-09-12: "диалог победы на мгновение появился и исчез, потом
     // проигралась анимация, потом диалог снова появился (уже валидно)".
@@ -390,7 +333,12 @@ export default function GameBoardScreen({ route, navigation }) {
     // сравняется с этой клеткой — то есть пока анимация того самого хопа не
     // НАЧНЁТ играть. Передаётся в BoardGrid как cellOverrides.
     const [heldCells, setHeldCells] = useState({});
-    const cellKeyFromPosition = (pos) => (pos ? `${pos.segment}-${pos.positionY}-${pos.positionX}` : null);
+    // Тот же формат, что `lib/hexDirection#cellKey` (уже используется в этом
+    // файле для подсветки/соседей) — раньше был независимо переизобретён тут
+    // же строковым шаблоном, а строкой ниже (game_cell_updated) ещё и
+    // переизобретён ВТОРОЙ раз инлайном; сведено к одной канонической
+    // реализации, просто с null-гардом под опциональный `toPosition`.
+    const cellKeyFromPosition = (pos) => (pos ? cellKey(pos) : null);
     // Страховочный потолок — если по какой-то причине ни один visualPositions
     // никогда не совпадёт с этой клеткой (бегуна уничтожило раньше, чем он
     // формально "долетел" туда, и т.п.), не держать клетку закрытой вечно.
@@ -438,11 +386,10 @@ export default function GameBoardScreen({ route, navigation }) {
             });
         };
     }, []);
-    // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен для
-    // anomaly и для жетонов повреждений — оба берут activeRunner текущего
-    // ходящего игрока, ни то ни другое событие не несёт id бегуна само по
-    // себе, см. lib/runnerAnimTriggers и lib/runnerDamageTokens). Обычный
-    // `game` из замыкания тут не годится — onTransient коллбэк не должен
+    // gameRef — актуальный game НА МОМЕНТ транзиентного события (нужен
+    // handleSequenceItem внутри onTransient, см. lib/runnerAnimTriggers —
+    // reduce() получает свежий state параметром, а onTransient — нет).
+    // Обычный `game` из замыкания тут не годится — onTransient коллбэк не должен
     // пересоздаваться на каждый рендер (иначе useMercure видел бы это как
     // повод переподключаться, см. его cb-ref).
     const gameRef = useRef(null);
@@ -479,10 +426,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // может быть больше одной сразу) — collisionSound останавливаем, только
     // когда ПОСЛЕДНЯЯ пара реально разошлась, не раньше.
     const activeCollisionPosesRef = useRef(0);
-    // "start"-комментарий должен прозвучать РОВНО один раз за всю партию —
-    // единственный надёжный сигнал "это самый первый ход" — событие
-    // player_roll_move_dice, бэк шлёт его ТОЛЬКО из StepBeginService::start()
-    // (никогда из startNewRound()/resetPlayer()), см. commentSounds.js.
+    // "start"-комментарий должен прозвучать РОВНО один раз за всю партию.
+    // Единственный реально работающий путь — mount-эффект на `justStarted`
+    // ниже (см. его комментарий) — событие `player_roll_move_dice`, на
+    // которое раньше рассчитывал ЭТОТ реф в reduceAndLog, на бэке НЕ
+    // СУЩЕСТВУЕТ И НИКОГДА НЕ СУЩЕСТВОВАЛО (проверено grep'ом по всему
+    // бэку, 2026-09-26) — тот код был мёртвым, убран при переходе на
+    // бандлинг событий (2026-09-27, см. reduceAndLog).
     const gameStartSoundPlayedRef = useRef(false);
     const playOneShot = useCallback((player, source) => {
         if (!source) return;
@@ -623,267 +573,232 @@ export default function GameBoardScreen({ route, navigation }) {
         [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, releaseHeldCellOnStart, mineBlasts.trigger],
     );
 
-    // Логируем И версионные события (через reduce — вызывается ровно по разу
-    // на применённое событие, дубли уже отфильтрованы useMercure), И
-    // транзиентные (step_*/orchestrator без version) — теперь они хоть куда-то
-    // попадают, а не просто отбрасываются.
-    const reduceAndLog = useCallback(
-        (state, e) => {
-            pushLog(e);
-            // Детекция ДО handleVersionedRunnerAnimEvent (см. докстринг у
-            // pendingDeathRunnerIds выше) — порядок важен: если очередь
-            // анимаций у этого бегуна сейчас пуста, acid/burn стартует
-            // СИНХРОННО прямо внутри вызова handleVersionedRunnerAnimEvent
-            // ниже (advanceQueue вызывает onStart сразу же), и deathOnStart
-            // уже успеет убрать runnerId из этого Set к моменту, когда
-            // управление сюда вернётся — если добавлять ПОСЛЕ вызова, эта
-            // ранняя отписка произошла бы РАНЬШЕ подписки, и флаг завис бы
-            // навсегда. Проверка ТА ЖЕ (DEATH_KIND_BY_REASON), что уже
-            // используется в lib/runnerAnimTriggers.js для решения "acid или
-            // burn вместо destroyed" — продублирована намеренно (независимый
-            // потребитель того же факта). 2026-09-18: раньше тут тоже
-            // приходилось звать cellTypeAt по последней известной позиции —
-            // теперь бэк прямо называет причину в e.reason.
-            if (e.event === 'runner_destroy' && DEATH_KIND_BY_REASON[e.reason]) {
-                setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
-            }
-            handleVersionedRunnerAnimEvent(state, e, triggerWithSound, {
-                onceStepDone: runnerAnim.onceStepDone,
-                completeWaitStep: runnerAnim.completeWaitStep,
-                // 2026-09-26 — см. докстринг у pushedFrom в runnerAnimTriggers.js:
-                // без этого уход с клетки, где Призрак допустил мирное
-                // сосуществование, ложно классифицировался как отброс (fly).
-                ghostPairs: ghostPairs.pairs,
-            });
-            // "Игра стартовала, кубики розданы" — см. gameStartSoundPlayedRef
-            // выше за тем, почему именно player_roll_move_dice (а не
-            // game_active/step_begin) — это событие приходит N раз (по разу
-            // на игрока), звук должен прозвучать один раз на всю партию.
-            if (e.event === 'player_roll_move_dice' && !gameStartSoundPlayedRef.current) {
-                gameStartSoundPlayedRef.current = true;
-                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.start));
-            }
-            // Лечение возвращает бегуна к healthy — стираем локально
-            // накопленные жетоны повреждений, иначе кружки останутся
-            // закрашенными вопреки уже здоровому статусу. Заодно триггерим
-            // 'heal'-анимацию (2026-09-12, новый ассет пользователя) — по
-            // прямому запросу проигрывается МЕЖДУ damaged_idle и healthy_idle
-            // (getRunnerAnimationImage сам достаёт heal-ассет из damaged-
-            // бакета, независимо от уже применённого нового статуса).
-            if (e.event === 'ability_heal' && e.runner?.id != null) {
-                runnerDamageTokens.clearRunner(e.runner.id);
-                triggerWithSound(e.runner.id, 'heal', {});
-            }
-            // 2026-09-26: раньше это жило в onTransient и слушало 'ghost_pass' —
-            // события с таким именем на бэке НЕТ И НИКОГДА НЕ БЫЛО (проверено
-            // grep'ом по всему бэку), так что "мирное сосуществование" при
-            // Призраке ни разу не срабатывало в реальной игре. Реальный сигнал —
-            // ЭТО событие ('ghost_consumed'), и оно ВЕРСИОННОЕ (есть `version`),
-            // а не транзиентное — в onTransient оно вообще не должно было
-            // попадать, см. useMercure. Само событие не называет ни бегуна, ни
-            // клетку (только id игрока) — реконструируем через prevGame (`state`):
-            // активный бегун этого игрока, и кто ещё стоит на его клетке прямо
-            // сейчас (тот, кого он "проехал насквозь"). Та же эвристика по духу,
-            // что и у anomaly/damage-токенов (единственный кандидат — движущийся
-            // бегун), см. lib/ghostPairs.js#identifyGhostConsumption.
-            const ghostPass = identifyGhostConsumption(state, e);
-            if (ghostPass) ghostPairs.record(ghostPass.key);
-            // Жетон повреждения записываем ТОЛЬКО здесь, на реальном
-            // ухудшении статуса — не на самом транзиентном событии с типом
-            // (см. lib/runnerDamageTokens.js: 'anomaly' в частности может
-            // означать чистый редирект без урона, живьём поймано, что
-            // считать его жетоном напрямую — ошибка).
-            const worsenedRunnerId = getWorsenedDamageRunnerId(state, e);
-            if (worsenedRunnerId != null) {
-                const type = runnerDamageTokens.consumePendingType(worsenedRunnerId);
-                if (type) runnerDamageTokens.recordToken(worsenedRunnerId, type);
-            }
-            // Замораживаем клетку в ЕЁ ЖЕ ВИДЕ ДО вскрытия (см. heldCells выше)
-            // — читаем rawType из `state` (это ещё PRE-update снимок, сам
-            // редьюсер применится строкой ниже). e.cell.row/column — это
-            // positionX/positionY соответственно (см. store/runnerGameReducer
-            // #patchCell — та же путаница в именах полей унаследована от
-            // бэка), cellId собираем в ТОМ ЖЕ формате, что и BoardGrid/lib/board
-            // (`${segment}-${positionY}-${positionX}`).
-            if (e.event === 'game_cell_updated' && e.cell) {
-                const { segment, row: positionX, column: positionY } = e.cell;
-                const cellId = `${segment}-${positionY}-${positionX}`;
-                // См. minePendingRef/onTransient выше — если непосредственно
-                // ПЕРЕД этим вскрытием пришёл транзиент danger==='mine',
-                // именно ЭТА клетка и есть место взрыва (бэк публикует их
-                // строго подряд в одном и том же коде-пути, см. Danger.php
-                // read-only). Флаг одноразовый — сбрасываем сразу, следующее
-                // вскрытие (не мина) не должно случайно унаследовать его.
-                if (minePendingRef.current) {
-                    minePendingRef.current = false;
-                    // Как и у heldCells чуть ниже (см. activatedCellKeysRef) —
-                    // если onStart для ЭТОЙ позиции уже отработал ДО того, как
-                    // мы узнали про мину (однохоповый случай, без каскада —
-                    // мгновенный мердж пришёл раньше вскрытия), ждать больше
-                    // нечего, взрываем сейчас же. Иначе — откладываем до
-                    // onStart (см. triggerWithSound#mineOnStart), с
-                    // страховочным потолком на случай, если он не придёт.
-                    if (activatedCellKeysRef.current.has(cellId)) {
-                        mineBlasts.trigger(cellId);
-                    } else {
-                        pendingMineCellIdsRef.current.add(cellId);
-                        setTimeout(() => {
-                            if (pendingMineCellIdsRef.current.delete(cellId)) mineBlasts.trigger(cellId);
-                        }, MINE_TRIGGER_SAFETY_TIMEOUT_MS);
-                    }
-                }
-                // Если позиция УЖЕ активирована (см. activatedCellKeysRef выше)
-                // — типовой случай "один хоп, не каскад" (например мина-Мяч):
-                // trigger() для этой же клетки уже синхронно сработал ДО этого
-                // события (мгновенный мердж пришёл раньше вскрытия) — замораживать
-                // нечего, анимация и так уже активна/стартует в этом же кадре.
-                if (!activatedCellKeysRef.current.has(cellId)) {
-                    const oldRawType = [state?.trackBegin, state?.trackMiddle, state?.trackEnd][segment]
-                        ?.grid?.[positionX]?.[positionY] ?? null;
-                    const oldType = resolveCellVisual(oldRawType);
-                    setHeldCells((prev) => ({
-                        ...prev,
-                        [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
-                    }));
-                    setTimeout(() => {
-                        setHeldCells((prev) => {
-                            if (!(cellId in prev)) return prev;
-                            const next = { ...prev };
-                            delete next[cellId];
-                            return next;
-                        });
-                    }, HELD_CELL_TIMEOUT_MS);
-                }
-            }
-            const nextState = runnerGameReducer(state, e);
-            // Игрок выбыл (player_out) — играет у ВСЕХ клиентов партии, КРОМЕ
-            // случая, когда это выбывание ПОСЛЕДНЕГО соперника и партия тут
-            // же завершилась победой оставшегося (пользователь прямо попросил
-            // не дублировать этот момент отдельным "выбыл", раз сразу следом
-            // придёт game_finish). Считаем активных игроков ПОСЛЕ применения
-            // патча (nextState — этот игрок уже OUT): если остался РОВНО 1 —
-            // по бэковой логике (PlayerOutService::run(), read-only) это и
-            // есть терминальный случай (count($activePlayers)===1 → сразу
-            // GameFinishService) — иначе игра продолжается, звук нужен.
-            if (e.event === 'player_out') {
-                const activeCount = (nextState.gamePlayers ?? []).filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
-                if (activeCount !== 1) playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
-            }
-            // Voice-реплика — НЕ в момент выбора бегуна (SELECT), а когда для
-            // него РЕАЛЬНО появляются зелёные клетки хода, то есть шаг игрока
-            // становится MOVE (по прямому запросу пользователя, 2026-09-07:
-            // раньше играла сразу на SELECT, пока игрок ещё мог проходить
-            // ABILITY — ощущалось преждевременно, до того как вообще стало
-            // ясно, что делать). Диффим player.step ДО/ПОСЛЕ применения
-            // события — тот же приём, что раньше был у activeRunner (поле
-            // приходит в разных типах событий, см. CLAUDE.md). Условие на
-            // activeRunner != null остаётся — без него ссылка на бегуна ниже
-            // могла бы не найтись. Играем для ЛЮБОГО игрока (не только
-            // "своего") — все клиенты партии слышат один и тот же выбор.
-            for (const player of nextState.gamePlayers ?? []) {
-                const prevPlayer = state.gamePlayers?.find((p) => p.id === player.id);
-                if (player.step === PLAYER_STEP.MOVE && prevPlayer?.step !== PLAYER_STEP.MOVE && player.activeRunner != null) {
-                    const runner = nextState.runners?.find((r) => String(r.id) === String(player.activeRunner));
-                    if (runner) playOneShot(voiceSound, pickActiveSoundSource(runner.type, runner.status));
-                }
-            }
-            return nextState;
-        },
-        // Зависим от конкретных мемоизированных функций, не от всего объекта
-        // runnerDamageTokens — тот пересоздаётся на каждый рендер хука
-        // (новый литерал {tokensByRunner,...}), это пересоздавало бы
-        // reduceAndLog/onTransient на каждый рендер экрана и (см. коммент у
-        // gameRef выше) заставляло бы useMercure видеть повод переподключаться.
-        [
-            pushLog, triggerWithSound, runnerDamageTokens.clearRunner, runnerDamageTokens.consumePendingType,
-            runnerDamageTokens.recordToken, playOneShot, voiceSound, commentSound, mineBlasts.trigger,
-            ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
-        ],
-    );
+    // 2026-09-27 — бэк перешёл на бандлинг Mercure-событий одного игрового
+    // действия в одно сообщение (`action_result` + `sequence`, см.
+    // `1_pitch_for_backend_dev.md`/`2_backend_todo.md`/`3_frontend_todo.md` в
+    // scratchpad сессии, где всё это обсуждалось и было реализовано
+    // бэкендером). `reduceAndLog` теперь получает ОДИН бандл за раз (не одно
+    // плоское событие) и разворачивает `bundle.sequence` в цикл, применяя
+    // ВЕСЬ прежний per-event код к каждому элементу по очереди — то, что
+    // раньше вызывалось один раз на одно событие, теперь просто делает то же
+    // самое N раз подряд, для каждого шага одной цепочки (мина→коллизия→
+    // кислота→смерть и т.п.), внутри ОДНОГО React-колбэка на ОДНО сетевое
+    // сообщение. `bundle.sequence ?? [bundle]` — защитный фолбэк на случай
+    // одиночного (не завёрнутого) события, не должен понадобиться при
+    // реальной работе с бэком, но не даёт молча сломаться, если где-то
+    // событие придёт по старинке, плоским.
+    //
+    // `pendingCollisionPair`/`sawStepCollision` — контекст ОДНОЙ цепочки
+    // (одного bundle), живёт только внутри этого вызова: 'collision'-item
+    // запоминает участников (`runnerId`/`otherRunnerId`, см.
+    // lib/runnerAnimTriggers.js#handleSequenceItem за тем, зачем) для
+    // СЛЕДУЮЩЕГО в этой же цепочке 'runner_save' с reason:'collision'.
+    // `sawStepCollision` — резервный сигнал для известного бэкового пробела
+    // (ветка "Использовать" у /collision не проставляет reason вообще, см.
+    // докстринг в runnerAnimTriggers.js) — раз `step_collision`-транзиент
+    // (StepCollisionEvent) в этой цепочке был, следующий безreason'ный
+    // runner_save всё равно нужно считать отбросом (fly), не шагом (move).
 
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
     // пользователя, 2026-09-10: баннер "Использовать/Перебросить" не
     // показывал, ЧТО именно произойдёт при "Использовать", решение
-    // принималось вслепую. `CollisionEvent` (бэк, read-only) публикуется
-    // РОВНО в момент броска (до того, как игрок вообще видит баннер —
-    // тот же кубик потом либо применяется, либо перебрасывается заново) —
-    // несёт `{collision, direction}`. `collision` — PHP int-backed enum
+    // принималось вслепую. `CollisionEvent` несёт `{collision, direction,
+    // runnerId, otherRunnerId}`. `collision` — PHP int-backed enum
     // (Collision::LOWER=1/TOP=2, см. Enum/Collision.php), json_encode
     // сериализует backed enum в его value НАПРЯМУЮ (число, не строка) — см.
-    // COLLISION_LOWER/COLLISION_TOP ниже. Не пытаемся определить, ЧЕЙ именно
-    // бегун сдвинется ("мой"/"чужой") — у backend'а есть задокументированный
-    // (см. CLAUDE.md, находка 2026-09-10) баг с перепутанным порядком
-    // lowRunner/topRunner в одной из веток `runnerCollision()`, так что
-    // категория "меньший/больший бегун" (сама по себе корректна — это прямое
-    // значение броска) безопаснее конкретного "твой/их".
+    // COLLISION_LOWER/COLLISION_TOP ниже. Баннер по-прежнему показывает
+    // категорию "меньший/больший бегун" (сама по себе корректна — это прямое
+    // значение броска), не конкретное "твой/их" — см. известный бэковый баг
+    // с перепутанным порядком lowRunner/topRunner в CLAUDE.md.
     const [pendingCollisionRoll, setPendingCollisionRoll] = useState(null);
     // Одноразовый комментарий (collision_*.wav) — ЗАЩИТА от двойного/
-    // запоздалого звука, 2026-09-20, живая жалоба пользователя: "звук
-    // comments для чёрной дыры проигрался РАНЬШЕ, чем звук для коллизии",
-    // хотя коллизия по игровому времени случилась ПЕРВОЙ. Причина —
-    // раньше этот звук стартовал ТОЛЬКО из handleCollisionPoseStart, колбэка
-    // от BoardGrid, который срабатывает лишь ПОСЛЕ того, как React
-    // ПЕРЕРИСУЕТ доску с новыми позициями бегунов (versioned-событие →
-    // reduceAndLog → commit → ре-рендер BoardGrid → он сам обнаруживает
-    // новую пару) — целый цикл рендера задержки. anomalyHole/ricochet/miss
-    // ниже, наоборот, играют ПРЯМО ЗДЕСЬ, синхронно с приходом транзиента,
-    // без всякой зависимости от рендера — отсюда и обгон по факту, хотя
-    // коллизия произошла раньше по времени сервера. Фикс — играть комментарий
-    // столкновения ТОЖЕ синхронно, прямо на транзиент 'collision' (тот же
-    // CollisionEvent, что уже даёт pendingCollisionRoll чуть ниже — бэк шлёт
-    // его сразу в момент броска, задолго до того, как BoardGrid вообще
-    // успевает отрисовать позу). `collisionCommentPlayedRef` не даёт звуку
-    // повториться на КАЖДЫЙ ПЕРЕБРОС ("Перебросить" шлёт новый /collision →
-    // новый транзиент 'collision' с тем же extraTurnPlayer, тот же
-    // конфликт ещё не разрешён) — сбрасывается вместе с pendingCollisionRoll
-    // ниже, когда game.extraTurnPlayer возвращается в null (коллизия
-    // ПОЛНОСТЬЮ разрешена). Зацикленный collisionSound (см.
-    // handleCollisionPoseStart ниже) специально НЕ трогали — та часть
-    // осознанно ждёт реальной ВИДИМОЙ позы, не сдвигали.
+    // запоздалого звука (звук должен звучать синхронно с транзиентом
+    // 'collision', не ждать цикл рендера BoardGrid). `collisionCommentPlayedRef`
+    // не даёт звуку повториться на КАЖДЫЙ ПЕРЕБРОС — сбрасывается вместе с
+    // pendingCollisionRoll ниже, когда game.extraTurnPlayer возвращается в
+    // null (коллизия ПОЛНОСТЬЮ разрешена).
     const collisionCommentPlayedRef = useRef(false);
-    const onTransient = useCallback(
-        (e) => {
-            pushLog(e);
-            handleTransientRunnerAnimEvent(e, gameRef, triggerWithSound);
-            const pending = identifyPendingDamageType(e, gameRef);
-            if (pending) runnerDamageTokens.notePendingType(pending.runnerId, pending.type);
-            // 'ghost_pass' убран отсюда 2026-09-26 — такого события на бэке нет,
-            // реальный сигнал ('ghost_consumed') версионный и обрабатывается в
-            // reduceAndLog, см. там.
-            // Взрыв мины (см. mineBlasts выше) — только ЗАПОМИНАЕМ факт "ждём
-            // клетку", саму клетку узнаём из следующего game_cell_updated
-            // (транзиент 'danger' координат не несёт вообще, см.
-            // DangerEvent.php на бэке read-only) — см. reduceAndLog ниже.
-            if (e.event === 'danger' && e.danger === 'mine') {
-                minePendingRef.current = true;
+
+    const reduceAndLog = useCallback(
+        (state, bundle) => {
+            let current = state;
+            let pendingCollisionPair = null;
+            let sawStepCollision = false;
+            for (const item of bundle.sequence ?? [bundle]) {
+                const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
+                pushLog(e);
+
+                if (e.event === 'collision') {
+                    pendingCollisionPair = { runnerId: e.runnerId, otherRunnerId: e.otherRunnerId };
+                }
+                if (e.event === 'step_collision') {
+                    sawStepCollision = true;
+                }
+
+                // Детекция ДО handleSequenceItem (см. докстринг у
+                // pendingDeathRunnerIds выше) — порядок важен: если очередь
+                // анимаций у этого бегуна сейчас пуста, acid/burn стартует
+                // СИНХРОННО прямо внутри вызова ниже (advanceQueue зовёт
+                // onStart сразу же), и deathOnStart уже успеет убрать runnerId
+                // из этого Set к моменту, когда управление сюда вернётся —
+                // если добавлять ПОСЛЕ вызова, эта ранняя отписка произошла
+                // бы РАНЬШЕ подписки, и флаг завис бы навсегда.
+                if (e.event === 'runner_destroy' && DEATH_KIND_BY_REASON[e.reason]) {
+                    setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
+                }
+                handleSequenceItem(current, e, triggerWithSound, {
+                    onceStepDone: runnerAnim.onceStepDone,
+                    completeWaitStep: runnerAnim.completeWaitStep,
+                    collisionPair: pendingCollisionPair,
+                    forceKnockback: sawStepCollision,
+                });
+                // Лечение возвращает бегуна к healthy — триггерим 'heal'-
+                // анимацию (проигрывается МЕЖДУ damaged_idle и healthy_idle).
+                if (e.event === 'ability_heal' && e.runner?.id != null) {
+                    triggerWithSound(e.runner.id, 'heal', {});
+                }
+                // 'ghost_consumed' — версионное, несёт runnerId/otherRunnerId
+                // явно (см. lib/ghostPairs.js#identifyGhostConsumption).
+                const ghostPass = identifyGhostConsumption(current, e);
+                if (ghostPass) ghostPairs.record(ghostPass.key);
+                // Замораживаем клетку в ЕЁ ЖЕ ВИДЕ ДО вскрытия (см. heldCells
+                // выше) — читаем rawType из `current` (это ещё PRE-update
+                // снимок ЭТОГО шага цепочки, сам редьюсер применится строкой
+                // ниже). cellId — тот же формат, что и BoardGrid/lib/board.
+                if (e.event === 'game_cell_updated' && e.cell) {
+                    const { segment, row: positionX, column: positionY } = e.cell;
+                    const cellId = cellKey({ segment, positionX, positionY });
+                    // См. minePendingRef ниже — если непосредственно ПЕРЕД
+                    // этим вскрытием (в ЭТОЙ ЖЕ цепочке) пришёл транзиент
+                    // danger==='mine', именно ЭТА клетка и есть место взрыва.
+                    if (minePendingRef.current) {
+                        minePendingRef.current = false;
+                        if (activatedCellKeysRef.current.has(cellId)) {
+                            mineBlasts.trigger(cellId);
+                        } else {
+                            pendingMineCellIdsRef.current.add(cellId);
+                            setTimeout(() => {
+                                if (pendingMineCellIdsRef.current.delete(cellId)) mineBlasts.trigger(cellId);
+                            }, MINE_TRIGGER_SAFETY_TIMEOUT_MS);
+                        }
+                    }
+                    if (!activatedCellKeysRef.current.has(cellId)) {
+                        const oldRawType = [current?.trackBegin, current?.trackMiddle, current?.trackEnd][segment]
+                            ?.grid?.[positionX]?.[positionY] ?? null;
+                        const oldType = resolveCellVisual(oldRawType);
+                        setHeldCells((prev) => ({
+                            ...prev,
+                            [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
+                        }));
+                        setTimeout(() => {
+                            setHeldCells((prev) => {
+                                if (!(cellId in prev)) return prev;
+                                const next = { ...prev };
+                                delete next[cellId];
+                                return next;
+                            });
+                        }, HELD_CELL_TIMEOUT_MS);
+                    }
+                }
+
+                const nextState = runnerGameReducer(current, e);
+                // Игрок выбыл (player_out) — играет у ВСЕХ клиентов партии,
+                // КРОМЕ случая, когда это выбывание ПОСЛЕДНЕГО соперника и
+                // партия тут же завершилась победой оставшегося. Считаем
+                // активных игроков ПОСЛЕ применения патча: если остался
+                // РОВНО 1 — это терминальный случай, иначе игра продолжается,
+                // звук нужен.
+                if (e.event === 'player_out') {
+                    const activeCount = (nextState.gamePlayers ?? []).filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
+                    if (activeCount !== 1) playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
+                }
+                // Voice-реплика — когда для бегуна РЕАЛЬНО появляются зелёные
+                // клетки хода, т.е. шаг игрока становится MOVE. Диффим
+                // player.step ДО/ПОСЛЕ применения ЭТОГО шага цепочки. Играем
+                // для ЛЮБОГО игрока — все клиенты партии слышат один и тот
+                // же выбор.
+                for (const player of nextState.gamePlayers ?? []) {
+                    const prevPlayer = current.gamePlayers?.find((p) => p.id === player.id);
+                    if (player.step === PLAYER_STEP.MOVE && prevPlayer?.step !== PLAYER_STEP.MOVE && player.activeRunner != null) {
+                        const runner = nextState.runners?.find((r) => String(r.id) === String(player.activeRunner));
+                        if (runner) playOneShot(voiceSound, pickActiveSoundSource(runner.type, runner.status));
+                    }
+                }
+
+                // Транзиентные, не про анимацию — те же side-effects, что
+                // раньше жили в отдельном onTransient (звук/баннер), теперь
+                // тут же, по ходу той же единой цепочки.
+                if (e.event === 'danger' && e.danger === 'mine') {
+                    minePendingRef.current = true;
+                }
+                if (e.event === 'collision') {
+                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
+                    if (!collisionCommentPlayedRef.current) {
+                        collisionCommentPlayedRef.current = true;
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+                    }
+                }
+                if (e.event === 'anomaly') {
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
+                }
+                if (e.event === 'ricochet') {
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                }
+                if (e.event === 'attack' && e.hit === false) {
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                }
+
+                current = nextState;
             }
-            if (e.event === 'collision') {
-                setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
-                if (!collisionCommentPlayedRef.current) {
-                    collisionCommentPlayedRef.current = true;
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+            return current;
+        },
+        [
+            pushLog, triggerWithSound, playOneShot, voiceSound, commentSound, mineBlasts.trigger,
+            ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
+        ],
+    );
+
+    // 2026-09-27 — бэк-без-version бандл (чисто транзиентная цепочка, ни
+    // один её шаг не менял персистентное состояние — например одиночный
+    // промах выстрела без каскада) идёт сюда, а не в reduceAndLog (см.
+    // useMercure.js#handleEvent — версия/её отсутствие смотрит на БАНДЛ
+    // целиком). На практике почти всегда пусто — 'collision' и большинство
+    // остальных транзиентов реально едут ВМЕСТЕ с версионным `game_turn_changed`
+    // /`runner_save` в ОДНОМ бандле (значит бандл versioned, идёт в
+    // reduceAndLog) — здесь тот же цикл по `bundle.sequence`, но БЕЗ фолда
+    // в `runnerGameReducer` (нечего фолдить) и БЕЗ pairing-контекста для
+    // коллизии (в version-less бандле её процессионного `runner_save` не
+    // бывает по определению — см. докстринг reduceAndLog). `gameRef.current`
+    // — единственный источник "текущего состояния" для чтения (нет `state`
+    // параметра, в отличие от reduce()).
+    const onTransient = useCallback(
+        (bundle) => {
+            for (const item of bundle.sequence ?? [bundle]) {
+                const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
+                pushLog(e);
+                handleSequenceItem(gameRef.current, e, triggerWithSound, {});
+                if (e.event === 'danger' && e.danger === 'mine') {
+                    minePendingRef.current = true;
+                }
+                if (e.event === 'collision') {
+                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
+                    if (!collisionCommentPlayedRef.current) {
+                        collisionCommentPlayedRef.current = true;
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+                    }
+                }
+                if (e.event === 'anomaly') {
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
+                }
+                if (e.event === 'ricochet') {
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                }
+                if (e.event === 'attack' && e.hit === false) {
+                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
                 }
             }
-            // Опасная клетка вскрылась как Аномалия (чёрная дыра, см.
-            // handleTransientRunnerAnimEvent#case 'anomaly' выше — тот же
-            // транзиент уже триггерит визуальный 'fly', тут только звук).
-            if (e.event === 'anomaly') {
-                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
-            }
-            // Опасная клетка вскрылась как Рикошет — тот же класс транзиента,
-            // что и Аномалия выше, просто своей визуальной анимации не имеет.
-            if (e.event === 'ricochet') {
-                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
-            }
-            // Выстрел не попал (AttackResolutionService::resolve() на бэке
-            // вернул false) — бэк ВСЕГДА шлёт этот транзиент на КАЖДЫЙ
-            // выстрел (обычный и атаку Жнеца при размещении), hit:false
-            // значит урона не будет и каскад повреждений не начнётся.
-            if (e.event === 'attack' && e.hit === false) {
-                playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
-            }
         },
-        [pushLog, triggerWithSound, runnerDamageTokens.notePendingType, playOneShot, commentSound],
+        [pushLog, triggerWithSound, playOneShot, commentSound],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -1088,17 +1003,9 @@ export default function GameBoardScreen({ route, navigation }) {
                 // roadBonusValue ниже).
                 step: p.step,
                 activeRunnerId: p.activeRunner ?? null,
-                // damageTokens — с бэка НЕ приходит (см. hooks/useRunnerDamageTokens),
-                // подставляем из локального стора по String(id); дефолт [null,null]
-                // на случай, если локально ещё ничего не накопилось (свежий коннект).
-                runners: runners
-                    .filter((r) => r.playerId === p.id)
-                    .map((r) => ({
-                        ...r,
-                        damageTokens: runnerDamageTokens.tokensByRunner[String(r.id)] ?? r.damageTokens ?? [null, null],
-                    })),
+                runners: runners.filter((r) => r.playerId === p.id),
             })),
-        [gamePlayers, runners, runnerDamageTokens.tokensByRunner],
+        [gamePlayers, runners],
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
@@ -2031,6 +1938,33 @@ export default function GameBoardScreen({ route, navigation }) {
         }
     }, [collisionSound]);
 
+    // Декоративная рамка баннера хода (2026-09-28, по прямому запросу
+    // пользователя — "оберни панель Ход игрока в рамку по аналогии с
+    // панелями бегунов") — `FramePanel`, не `PersonPanel`: тот же фон/уголки
+    // (PERSON_PANEL_BACKGROUND/_CORNER — дефолт FramePanel, см. её докстринг,
+    // "тот же самый фон, что рисует PersonPanel у самой карточки-плитки"),
+    // но с НАСТРАИВАЕМОЙ толщиной угла (`targetCornerSize`) — сам баннер
+    // тонкий (TURN_BANNER_MIN_HEIGHT 64-78px), родной угол PersonPanel
+    // (~34px, FRAME_SCALE=1.3) на такой высоте почти касался бы сам себя
+    // сверху/снизу (два угла = ~68px). `targetCornerSize=10` — та же логика
+    // выбора толщины, что и у DiceTray (её `FramePanel targetCornerSize={8}`
+    // чуть выше в этом файле), под собственную высоту баннера. Размер — ЖИВОЙ
+    // onLayout самого баннера (обычный flow-элемент, НЕ абсолютно
+    // спозиционированный — тот же путь измерения, что у RunnerCard#cardSize,
+    // не нужен measureInWindow-обход, см. её докстринг).
+    // **ВАЖНО (найдено живым крашем "Rendered more hooks than during the
+    // previous render", 2026-09-28)**: этот хук ОБЯЗАН стоять ДО обоих ранних
+    // `return` ниже (`!game`/`WAITING`) — если объявить его глубже в теле
+    // компонента (как было изначально), на рендерах, где рано срабатывает
+    // один из этих `return`, React вызывает МЕНЬШЕ хуков, чем на рендере
+    // активной партии — нарушение "Rules of Hooks" (хуки должны звонить
+    // ОДИНАКОВОЕ число раз на каждый рендер), краш всего экрана.
+    const [turnBannerSize, setTurnBannerSize] = useState(null);
+    const onTurnBannerLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setTurnBannerSize({ width, height });
+    }, []);
+
     if (!game) {
         return (
             <View style={styles.wrapper}>
@@ -2397,7 +2331,12 @@ export default function GameBoardScreen({ route, navigation }) {
                     onRunnerCardDoubleTap={handleRunnerCardDoubleTap}
                     width={leftPanelW}
                     switcherHeight={switcherH}
-                    headerContent={<View style={styles.turnBanner}>{turnBannerInner}</View>}
+                    headerContent={(
+                        <View style={styles.turnBanner} onLayout={onTurnBannerLayout}>
+                            <FramePanel size={turnBannerSize} targetCornerSize={10} />
+                            {turnBannerInner}
+                        </View>
+                    )}
                     roadBonusValue={game.trackGain}
                 />
             )}
@@ -2508,7 +2447,12 @@ export default function GameBoardScreen({ route, navigation }) {
                         switcherHeight={switcherH}
                         switcherAtBottom
                         compactColumns
-                        headerContent={<View style={styles.turnBanner}>{turnBannerInner}</View>}
+                        headerContent={(
+                            <View style={styles.turnBanner} onLayout={onTurnBannerLayout}>
+                                <FramePanel size={turnBannerSize} targetCornerSize={10} />
+                                {turnBannerInner}
+                            </View>
+                        )}
                         roadBonusValue={game.trackGain}
                     />
                     {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
@@ -2641,8 +2585,12 @@ const styles = StyleSheet.create({
     // не "прыгает" по высоте между "Твой ход"/подсказкой/коллизией/сдвигом
     // трассы — контент короче трёх строк просто центрируется внутри, а не
     // растягивает контейнер.
+    // 2026-09-28 — плоская заливка (backgroundColor/borderRadius) убрана:
+    // фон и скруглённые уголки теперь рисует `FramePanel` (см. её рендер
+    // рядом с onTurnBannerLayout выше, position:'absolute' поверх ЭТОГО же
+    // View — сам `turnBanner` остаётся обычным flow-контейнером с паддингом,
+    // FramePanel не участвует в раскладке).
     turnBanner: {
-        backgroundColor: colors.bgLight, borderRadius: radius.md,
         paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
         marginTop: spacing.xs,
         minHeight: TURN_BANNER_MIN_HEIGHT, justifyContent: 'center',

@@ -2,51 +2,16 @@
 import { statusWorsened } from '../constants/runnerAnimHelpers';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
 import { RUNNER_TYPES } from '../constants/GameConstants';
-import { ghostPairKey } from './ghostPairs';
 
 /**
  * 2026-09-18: бэк добавил явное поле `reason` к `runner_destroy`
  * (RunnerDestroyEvent — `wall`, `edge`, `fire`, `acid`, `damage`, `reaper`,
  * `track_shift`, `unclaimed`, см. README backend'а) — терминальная поза
  * гибели на клетке fire/acid теперь берётся НАПРЯМУЮ из него, а не гадается
- * по типу клетки под последней известной позицией (старый pickDeathVariant/
- * cellTypeAt, оба удалены). Экспортируется — GameBoardScreen.js использует
- * ТУ ЖЕ проверку для гейта pendingDeathRunnerIds (см. там).
+ * по типу клетки под последней известной позицией. Экспортируется —
+ * GameBoardScreen.js использует ТУ ЖЕ проверку для гейта pendingDeathRunnerIds.
  */
 export const DEATH_KIND_BY_REASON = { fire: 'burn', acid: 'acid' };
-
-/**
- * Версионное событие (runner_damage/runner_destroy) → `{runnerId, prevStatus}`
- * при РЕАЛЬНОМ ухудшении статуса (та же проверка `statusWorsened`, что
- * handleVersionedRunnerAnimEvent уже делает внутри себя ниже, чтобы решить
- * gotShot/destroyed/acid/burn) — вынесена отдельно, т.к. вызывающему коду
- * (GameBoardScreen.js#reduceAndLog, см. heldRunnerStatuses) нужен САМ ФАКТ
- * и СТАРЫЙ статус ДО применения патча реducer'ом, а не только побочный
- * эффект trigger() изнутри handleVersionedRunnerAnimEvent. `null`, если
- * событие не про ухудшение (другой тип события, лечение, дубль).
- */
-export function identifyStatusWorsening(prevGame, e) {
-    if (e.event !== 'runner_damage' && e.event !== 'runner_destroy') return null;
-    const patch = e.runnerId;
-    const prev = prevGame?.runners?.find((r) => r.id === patch.id);
-    if (!prev || !statusWorsened(prev.status, patch.status)) return null;
-    return { runnerId: patch.id, prevStatus: prev.status };
-}
-
-// Сколько мс держим "недавно получил выстрел" по runnerId (2026-09-07, живой
-// прогон — "вместо fly отработала move при отбросе выстрелом"). Эвристика
-// move/fly для runner_save (см. ниже) считает knockback по расстоянию —
-// forwardNeighbors(prev).find(...) — но случайное направление отброса от
-// выстрела иногда СОВПАДАЕТ с одним из 3 forward-соседей старой позиции,
-// и тогда знакомая эвристика ошибочно классифицирует явный отброс как
-// обычный шаг (move). Раз мы точно знаем, что этого бегуна только что
-// подстрелили (runner_damage с ухудшением статуса, см. ниже), последующее
-// перемещение того же бегуна форсируем как 'fly', не полагаясь на эвристику
-// расстояния. TTL — на случай, если urner_damage без последующего
-// перемещения (просто урон без отброса) никогда не "заберёт" метку сам —
-// не должна протухать бесконечно.
-const RECENTLY_SHOT_TTL_MS = 4000;
-const recentlyShotRunners = new Map(); // runnerId -> timestamp
 
 // Ловушка Жнеца (см. 'bomb' ниже) — жертва проигрывает 'destroyed' ТОЛЬКО
 // ПОСЛЕ того, как Жнец доиграет СВОЮ 'bomb'-анимацию (по прямому запросу
@@ -56,281 +21,165 @@ const recentlyShotRunners = new Map(); // runnerId -> timestamp
 // SLIDE_DURATION_MS).
 const REAPER_BOMB_TO_DESTROYED_DELAY_MS = 1800;
 
-function markRecentlyShot(runnerId) {
-    // Заодно чистим протухшие записи — карта живёт весь сеанс модуля,
-    // не хотим копить мусор за долгую партию.
-    for (const [id, ts] of recentlyShotRunners) {
-        if (Date.now() - ts > RECENTLY_SHOT_TTL_MS) recentlyShotRunners.delete(id);
-    }
-    recentlyShotRunners.set(runnerId, Date.now());
-}
-
-function consumeRecentlyShot(runnerId) {
-    const ts = recentlyShotRunners.get(runnerId);
-    if (ts == null) return false;
-    recentlyShotRunners.delete(runnerId);
-    return Date.now() - ts <= RECENTLY_SHOT_TTL_MS;
-}
-
 /**
- * Смотрит на versioned-событие ДО того, как его применит runnerGameReducer
- * (нужно старое состояние бегуна для сравнения), и решает, нужно ли завести
- * транзиентную анимацию (move/fly/gotShot/destroyed). Чистая функция —
- * единственный побочный эффект через переданный trigger(runnerId, kind, extra)
- * (см. hooks/useRunnerAnimations), сам стейт не трогает.
+ * 2026-09-27 — ПЕРЕПИСАНО под бандлинг Mercure-событий (`action_result` +
+ * `sequence`, см. `1_pitch_for_backend_dev.md`/`2_backend_todo.md` в
+ * scratchpad сессии, отправлены и реализованы бэкендером). Раньше это были
+ * ДВЕ функции (`handleVersionedRunnerAnimEvent`/`handleTransientRunnerAnimEvent`)
+ * — разделены потому, что версионные и транзиентные события раньше шли
+ * РАЗНЫМИ путями (`reduce` vs `onTransient` в useMercure). С новым конвертом
+ * оба вида перемешаны в одном `sequence` одного бандла — разделение по
+ * "версионное/транзиентное" больше не соответствует реальности, слиты в один
+ * диспетчер с `switch` по `e.event`.
  *
- * 'runner_save' → сравниваем старую и новую позицию бегуна:
- *   - бегун только что вышел из резерва (prev.segment был null) → БЕЗ
- *     анимации вообще (по прямому запросу пользователя, 2026-09-01) — до
- *     этого момента он нигде не был нарисован, скользить неоткуда, просто
- *     появляется в клетке в позе idle.
- *   - не изменилась → ничего (событие не про перемещение).
- *   - новая клетка — один из 3 forwardNeighbors старой → обычный шаг вперёд
- *     (move, с РЕАЛЬНЫМ направлением этого шага — важно и для самого первого
- *     step_move, и для КАЖДОГО последующего "схлопнутого" шага multi-hop
- *     движения, см. CLAUDE.md про то, что один /move может дать несколько
- *     Action::TYPE_MOVE подряд — у каждого своя пара старая/новая позиция,
- *     каждая тут своя forwardNeighbors-проверка). Вместе с направлением —
- *     depthChanged/targetLaneShifted, нужны constants/runnerAnimations
- *     #resolveMoveAssetDirection, чтобы отличить чисто боковой шаг на
- *     "отставшую" (смещённую на пол-сегмента назад) дорожку от диагонали
- *     вперёд — первое визуально идёт south-*, не north-*.
- *   - иначе (не сосед) → отскок/телепорт (столкновение, аномалия, ракета и
- *     т.п.) — бэк НЕ шлёт отдельного сигнала "это был knockback" (см.
- *     обсуждение в CLAUDE.md), это осознанно принятая эвристика по
- *     расстоянию, а не точный сигнал. Исключение — аномалия: та шлёт СВОЙ
- *     явный транзиентный сигнал (см. handleTransientRunnerAnimEvent ниже),
- *     который форсит 'fly' через pending-мерж независимо от этой эвристики.
+ * **Главное следствие бандлинга + обогащения полей** — вся эвристика
+ * "move или fly" (была нужна ТОЛЬКО потому, что бэк раньше не говорил
+ * "почему" бегун переместился) ЗАМЕНЕНА на прямое чтение `runner_save.reason`
+ * (backend, `Action::$reason`/`RunnerSaveService::run($runner, $reason)`,
+ * см. `2_backend_todo.md`): `'step'` — обычный добровольный ход (move),
+ * что угодно ещё (`'collision'`/`'anomaly'`/`'rocket'`/`'stupor'`) — отскок
+ * (fly). Раньше здесь была эвристика по расстоянию (`forwardNeighbors`) +
+ * `RECENTLY_SHOT_TTL_MS`-метка "недавно подстрелен" + `pushedFrom`-проверка
+ * "старая клетка была занята кем-то другим" (с ручными исключениями для
+ * Жнеца/Призрака, оба НИКОГДА не толкают) — ВСЁ ЭТО убрано целиком, явный
+ * `reason` уже недвусмысленно говорит то же самое, без всяких совпадений.
+ * `forwardNeighbors` НЕ удалён полностью — остаётся нужным ТОЛЬКО чтобы
+ * выбрать visual-вариант направления (юг/север/восток/запад) для 'move',
+ * не для решения "это шаг или отброс".
  *
- * 'runner_damage'/'runner_destroy' → сравниваем статус: стало ХУЖЕ (не
- * лечение) → gotShot, а если конечный статус — destroyed → сразу terminal
- * 'destroyed' (с fromStatus = статус ДО удара, для выбора healthy/damaged
- * набора анимации, см. constants/runnerAnimations#getRunnerAnimationImage).
+ * **Известный пробел бэка (НЕ наша ошибка, сообщено бэкендеру отдельно)**:
+ * ветка "Использовать" при столкновении разных размеров
+ * (`StepCollisionService::run()`, `accept:true`) строит `Action::TYPE_MOVE`
+ * БЕЗ `reason` — единственное место во всём бэке, где отброс-движение не
+ * помечено. Раз `step_collision`-транзиент (`StepCollisionEvent`) ВСЕГДА
+ * приходит раньше в ТОМ ЖЕ бандле для этой конкретной ветки — используем
+ * его присутствие как резервный сигнал "это всё равно отброс" (см.
+ * `animHelpers.forceKnockback`, простановка — GameBoardScreen.js), а не
+ * геометрию по расстоянию (та самая эвристика, которую отменяем везде
+ * остальном, тут её возвращать не нужно — есть более надёжный сигнал).
  *
- * Каждый trigger() тут передаёт `toPosition` (кроме damage/destroy — они
- * позицию не меняют) — useRunnerAnimations ставит шаг в очередь ЭТОГО
- * бегуна и проигрывает по одному, а не перезаписывает предыдущий (2026-08-31,
- * второй заход) — иначе каскад из нескольких runner_save подряд (отскок от
- * столкновения → аномалия → отлёт из неё) схлопывался бы в одну финальную
- * анимацию, минуя промежуточные шаги (см. подробности в useRunnerAnimations).
+ * **Пара при коллизии (кто "победитель", кого ждать перед fly)** — раньше
+ * реконструировалась эвристикой `pushedFromCandidate` (кто ещё стоял на
+ * старой клетке). Теперь `CollisionEvent` несёт `runnerId`/`otherRunnerId`
+ * явно (см. `2_backend_todo.md`, п.2.3) — GameBoardScreen.js передаёт их
+ * сюда через `animHelpers.collisionPair` (сохраняется на 'collision'-item,
+ * потребляется на следующем `runner_save` с `reason:'collision'` В ТОМ ЖЕ
+ * бандле). "Победитель" (кого ждать через `onceStepDone`) — просто ДРУГОЙ
+ * участник пары (не тот, кого сейчас двигает этот `runner_save`), не нужно
+ * даже разбирать LOWER/TOP самим — обе стороны пары уже названы явно.
+ *
+ * **2026-09-28, реальный живой баг**: `reason` — поле ВЕРХНЕГО уровня самого
+ * события (`RunnerSaveEvent.php`: `'reason' => $reason` — сосед `runnerId`,
+ * не его свойство), а этот файл читал его как `patch.reason` (`patch =
+ * e.runnerId`) — там такого поля никогда не было, значит `patch.reason` был
+ * ВСЕГДА `undefined`. `isVoluntaryStep` из-за этого всегда считал ЛЮБОЙ
+ * `runner_save` (в т.ч. настоящий отброс при коллизии) обычным шагом —
+ * `patch.reason == null` слепо давало `true` — живая жалоба: при коллизии
+ * бегун-жертва вместо 'wait'+'fly' проигрывал обычный 'move' прямо в
+ * результирующую клетку, позы столкновения не было вовсе. Поправлено на
+ * `e.reason` во всех проверках ниже.
  */
-export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers) {
+export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
     if (e.event === 'runner_save') {
         const patch = e.runnerId;
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
         const toPosition = { segment: patch.segment, positionX: patch.positionX, positionY: patch.positionY };
 
         if (!prev) {
-            // Бегун вообще не найден в ПРЕДЫДУЩЕМ состоянии. Для обычных
-            // бегунов (и Жнеца) это значит "мы просто не видели предыдущего
-            // состояния" (холодный коннект/resync) — не можем отличить
-            // "только что появился" от "давно там стоит", молчим, как и
-            // раньше, просто idle. НО "мяч" (RUNNER_TYPES.BALL,
-            // RunnerBallInitService на бэке) — принципиально другой случай:
-            // это НАСТОЯЩАЯ первая персистентная запись, он физически не мог
-            // существовать раньше этого события (создаётся заново на каждой
-            // danger-коллизии) — !prev тут ВСЕГДА означает "только что
-            // появился", а не "мы его просто не видели". Играем его 'start'
-            // безусловно.
-            // runnerType в extra — чисто для звуковой системы
-            // (lib/runnerSoundTriggers.js): в момент этого триггера бегуна
-            // ещё нет ни в prevGame, ни (пока) в применённом game-стейте, по
-            // id его тип не найти — событие несёт его напрямую.
+            // Бегун вообще не найден в ПРЕДЫДУЩЕМ состоянии — для обычных
+            // бегунов/Жнеца это "мы просто не видели предыдущего состояния"
+            // (холодный коннект/resync), молчим, просто idle. "Мяч" —
+            // принципиально другой случай, см. старый докстринг: создаётся
+            // заново на каждой danger-коллизии, !prev тут ВСЕГДА "только что
+            // появился".
             if (patch.type === 'ball') trigger(patch.id, 'start', { toPosition, runnerType: patch.type });
             return;
         }
-        if (prev.segment == null) {
-            // Первый выход на трассу (из резерва) — ЗНАЛИ бегуна раньше (был
-            // в резерве, segment==null), теперь у него реальный segment.
-            // Бегуна ещё нигде не было нарисовано на доске, скользить
-            // неоткуда (RunnerTokenSlide на первом рендере и так не анимирует
-            // позицию). ДО 2026-09-03 тут вообще не было анимации (по
-            // прямому запросу пользователя, 2026-09-01) — теперь добавлен
-            // отдельный gif "start" именно под этот момент (установка на
-            // стартовую клетку), играем его ОДИН раз на месте (toPosition —
-            // чтобы токен сразу отрисовался в правильной клетке, без слайда).
+        // 'start' — первый выход из резерва (RunnerStartMoveService,
+        // reason явно 'start') — БЕЗ анимации вообще (по прямому запросу
+        // пользователя, 2026-09-01): бегуна до этого момента нигде не было
+        // нарисовано, скользить неоткуда. `prev.segment==null` оставлен
+        // защитным фолбэком на случай рассинхрона reason/фактического
+        // состояния — обе проверки должны совпадать всегда.
+        if (e.reason === 'start' || prev.segment == null) {
             trigger(patch.id, 'start', { toPosition });
             return;
         }
-        if (patch.segment == null) return; // снят с трассы — не наш случай сейчас
+        if (patch.segment == null) return; // снят с трассы — не наш случай
         if (prev.segment === patch.segment && prev.positionX === patch.positionX && prev.positionY === patch.positionY) {
-            return; // позиция не изменилась — событие не про перемещение (очки/статус и т.п.)
+            // Позиция не изменилась — это либо 'danger' (Danger::mud()/mine(),
+            // повторный save на ТОЙ ЖЕ клетке после смены dice), либо 'roll'
+            // (RunnerRollService — чистая бухгалтерия rollDice/rollMoves, без
+            // движения), либо сегментная перенумерация при сдвиге трассы
+            // (см. ниже) — ни одно не требует анимации.
+            return;
         }
-        // Чистая перенумерация сегмента при сдвиге фрагментов трассы
-        // (TrackService::shift(), бэк, read-only — при удалении фрагмента 1
-        // ВСЕ выжившие на middle/end получают segment-1 и свой runner_save,
-        // хотя физически не сдвинулись ни на клетку) — X и Y те же, поменялся
-        // ТОЛЬКО номер фрагмента. Обычный игровой ход/отброс ВСЕГДА меняет
-        // positionX и/или positionY (это единственный способ сменить segment
-        // по правилам движения) — значит "оба неизменны, а segment другой"
-        // однозначно опознаёт именно этот случай, не совпадение. Без этой
-        // проверки ветка ниже классифицировала бы такое как "не сосед" →
-        // отброс → 'fly' через полдоски, хотя бегун на самом деле стоял на
-        // месте (живая жалоба пользователя, 2026-09-12: во время исчезновения
-        // старого фрагмента 1 на нём оказывались и жители фрагмента 2 —
-        // именно эта паразитная 'fly'-анимация их туда "переносила").
-        if (prev.positionX === patch.positionX && prev.positionY === patch.positionY) return;
+        if (prev.positionX === patch.positionX && prev.positionY === patch.positionY) {
+            // Чистая перенумерация сегмента при сдвиге фрагментов трассы
+            // (TrackService::shift(), read-only — X/Y те же, поменялся
+            // ТОЛЬКО номер фрагмента) — не идёт через Move::handle()/reason
+            // вообще, оставлен тем же позиционным чеком, что и раньше.
+            return;
+        }
 
         const neighbor = forwardNeighbors(prev).find(
             (n) => n.segment === patch.segment && n.positionX === patch.positionX && n.positionY === patch.positionY,
         );
-        // Если бегуна только что подстрелили (см. RECENTLY_SHOT_TTL_MS выше),
-        // это ВСЕГДА отброс, даже если он случайно приземлился на клетку,
-        // которая формально является forward-соседом старой позиции —
-        // эвристика расстояния тут заведомо ошибается (жалоба пользователя,
-        // 2026-09-07: "вместо fly отработала move при отбросе выстрелом").
-        const wasJustShot = consumeRecentlyShot(patch.id);
-        // Столкновение — та же ошибка эвристики расстояния, найдена ПОВТОРНО
-        // живьём (жалоба пользователя, 2026-09-08: "коллизия одинаковых по
-        // размеру персонажей — того, кого подвинули, просто прошагал в
-        // другую клетку"). Причина: `Collision::collision()` на бэке (read-
-        // only) бросает НАПРАВЛЕНИЕ отброса ПОЛНОСТЬЮ случайно, всеми 6
-        // направлениями (DirectionDiceRoller), не только тремя "вперёд" —
-        // когда случайно выпадает ОДНО ИЗ ЭТИХ ТРЁХ, итоговая клетка
-        // формально совпадает с forward-соседом старой позиции, и эвристика
-        // (см. `neighbor` выше) ошибочно классифицирует явный отброс как
-        // обычный шаг игрока. Надёжный сигнал уже был в коде НИЖЕ (см.
-        // `occupant`), но проверялся только ПОСЛЕ того, как `neighbor` уже
-        // решил "это шаг" — теперь проверяем ПЕРВЫМ: если СТАРАЯ клетка
-        // этого бегуна (которую он сейчас покидает) в prevGame была занята
-        // ДРУГИМ бегуном, это НЕ МОЖЕТ быть обычным добровольным ходом
-        // игрока (тот никогда не начинается с клетки, где кто-то уже стоит,
-        // столкновение всегда резолвится синхронно на бэке ДО следующего
-        // добровольного хода) — значит это отброс, вне зависимости от того,
-        // куда именно СЛУЧАЙНО улетел бегун.
-        const pushedFromCandidate = prevGame?.runners?.find(
-            (r) => r.id !== patch.id
-                && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
-        );
-        // 2026-09-26, живая жалоба: "переход С клетки, где стояли двое (у
-        // активного бегуна выбран Призрак), был fly, хотя должен быть
-        // обычный move". Причина — pushedFrom (см. выше) считает ЛЮБОЕ
-        // совпадение "старая клетка уже занята кем-то другим" отбросом, но
-        // Призрак специально позволяет двум бегунам мирно стоять на одной
-        // клетке БЕЗ какого-либо столкновения (см. lib/ghostPairs.js) — уход
-        // с такой клетки обычным вперёд-шагом должен остаться 'move', а не
-        // ложно триггерить весь wait/onceStepDone-каскад, придуманный для
-        // РЕАЛЬНЫХ столкновений. `animHelpers.ghostPairs` — тот же Set,
-        // что уже передаётся в BoardGrid (см. GameBoardScreen.js) — если
-        // текущая пара УЖЕ записана как ghost-сосуществование на ЭТОЙ
-        // клетке, pushedFrom для целей классификации не считается вообще.
-        //
-        // 2026-09-26 (та же сессия, найдено на Android живьём) — ТА ЖЕ дыра,
-        // другой источник совпадения: Жнец (RUNNER_TYPES.REAPER) на бэке
-        // (Collision::reaperCollision(), read-only) НИКОГДА не толкает
-        // бегуна, который делит с ним клетку мимоходом — либо вообще ничего
-        // не происходит (если у бегуна ещё остались очки хода, читан код —
-        // пустой Result), либо бегун уничтожается на месте (если это была
-        // последняя клетка хода, см. 'bomb'-ловушка выше), но НИКОГДА не
-        // отбрасывается в сторону. Значит "старая клетка была занята Жнецом"
-        // тоже не может быть причиной knockback — исключаем её из pushedFrom
-        // ТАК ЖЕ, как ghost-пары, без привязки к ghostPairs (тут не нужен
-        // отдельный Set — тип "Жнец" сам по себе уже достаточный признак,
-        // не завязан на конкретную клетку/событие, в отличие от Ghost).
-        const pushedFrom = pushedFromCandidate && (
-            pushedFromCandidate.type === RUNNER_TYPES.REAPER
-            || animHelpers?.ghostPairs?.has(
-                ghostPairKey(patch.id, pushedFromCandidate.id, prev.segment, prev.positionX, prev.positionY),
-            )
-        ) ? null : pushedFromCandidate;
-        if (neighbor && !wasJustShot && !pushedFrom) {
-            // depthChanged/targetLaneShifted — для resolveMoveAssetDirection
-            // (constants/runnerAnimations): чисто боковой шаг (глубина не
-            // изменилась) на дорожку со сдвигом "назад" (чётный индекс, см.
-            // BoardGrid — 2026-09-02, сдвиг переключён с нечётных дорожек на
-            // чётные) визуально идёт south-*, не north-*, см. комментарий там же.
+        const isVoluntaryStep = e.reason === 'step'
+            || (e.reason == null && !animHelpers?.forceKnockback);
+
+        if (isVoluntaryStep) {
+            // depthChanged/targetLaneShifted — ТОЛЬКО для выбора visual-
+            // варианта направления (юг/север/восток/запад), см. докстринг
+            // модуля выше — geometрия тут больше не решает move-или-fly.
             trigger(patch.id, 'move', {
-                direction: neighbor.direction,
-                depthChanged: patch.positionX !== prev.positionX,
-                targetLaneShifted: patch.positionY % 2 === 0,
+                direction: neighbor?.direction ?? 'UP',
+                depthChanged: neighbor ? patch.positionX !== prev.positionX : false,
+                targetLaneShifted: neighbor ? patch.positionY % 2 === 0 : false,
                 toPosition,
             });
-        } else {
-            // Отскок/телепорт (столкновение, выстрел, аномалия, ракета…).
-            // Коллизионный частный случай (жалоба пользователя, 2026-09-07,
-            // "скаут-vs-скаут"/"скаут наступил на danger с Мячом внутри" —
-            // коллизионная поза ни разу не показалась, сразу finalное
-            // состояние): если СТАРАЯ клетка ЭТОГО бегуна (та, что он сейчас
-            // покидает) в prevGame уже занята ДРУГИМ бегуном (см. pushedFrom
-            // выше) — значит именно ОН только что туда заехал и вытолкнул
-            // текущего. Раз оба события (заезд победителя + отброс
-            // проигравшего) почти всегда приходят одним и тем же тиком
-            // (React 18/19 авто-батчинг — см. разбор в CLAUDE.md), сам факт
-            // "оба на одной клетке" мог бы никогда не отрендериться, и
-            // BoardGrid#pushPair (коллизионная поза) не успевала сработать.
-            // Фикс — НЕ телепортируем сразу: сперва проигрываем синтетический
-            // шаг 'wait' (тихо стоим на СТАРОЙ, уже общей клетке —
-            // resolveSpriteRef откатывается на idle для незнакомого kind),
-            // ждём, пока ПОБЕДИТЕЛЬ реально доиграет СВОЙ текущий шаг
-            // (обычно move/fly-заезд на эту клетку) — оба settled на одной
-            // клетке хотя бы один рендер, ровно момент, когда пара покажется.
-            // Только ПОТОМ реальный 'fly' уводит проигравшего.
-            //
-            // **2026-09-25, по прямому и повторному запросу пользователя —
-            // "перестань привязываться к угадыванию тайминга"**: раньше
-            // "подождать, пока победитель осядет" решалось угаданной
-            // длительностью (KNOCKBACK_WAIT_MS, с запасом больше
-            // ANIM_DURATION_MS.move) — тот же класс костыля, каким были и
-            // ANIM_DURATION_MS-таймеры для собственных поз ДО переделки
-            // useRunnerAnimations в этом же заходе. Теперь — честный сигнал:
-            // `animHelpers.onceStepDone(pushedFrom.id, callback)` подписывается
-            // РОВНО на момент, когда ТЕКУЩИЙ активный шаг победителя реально
-            // закончится (тот же completeStep/таймаут-страховка, что и у
-            // любого другого шага очереди) — если победитель уже settled
-            // прямо сейчас, колбэк зовётся синхронно, без всякой задержки.
-            // `completeWaitStep` в колбэке принудительно завершает 'wait'
-            // (у него самого нет позы, которая могла бы честно сигналить о
-            // своём конце — см. completeStep в useRunnerAnimations.js) РОВНО
-            // в этот момент, и только тогда стартует 'fly'. KNOCKBACK_WAIT_MS
-            // остался в useRunnerAnimations как страховка на случай, если
-            // победитель почему-то никогда не долетит — не единственный
-            // механизм, как раньше.
-            //
-            // `animHelpers` необязателен (защитный фолбэк для вызывающего
-            // кода, который почему-то не прокинул onceStepDone/completeWaitStep)
-            // — тогда используется старый путь ('wait' держится только
-            // KNOCKBACK_WAIT_MS-таймером, как было ДО этого захода).
-            if (pushedFrom) {
-                trigger(patch.id, 'wait', {
-                    toPosition: { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY },
-                });
-                if (animHelpers?.onceStepDone && animHelpers?.completeWaitStep) {
-                    // 2026-09-25 (живая жалоба: "при столкновении двух
-                    // одинаковых по размеру бегунов не проигрывается
-                    // анимация коллизии") — настоящая причина: при
-                    // авторазрешаемой коллизии (Collision::collision() на
-                    // бэке — читан, вызывается ТОЛЬКО когда размеры равны,
-                    // без extraTurnPlayer/диалога, см. CLAUDE.md) победитель
-                    // почти всегда УЖЕ settled к моменту, когда приходит
-                    // отброс проигравшего (события идут одним и тем же
-                    // тиком/очень близко друг к другу) — `onceStepDone`
-                    // тогда зовёт колбэк СИНХРОННО, и `completeWaitStep` +
-                    // `trigger('fly', …)` уезжают в ТОМ ЖЕ React-батче, что
-                    // и само появление 'wait'. BoardGrid#tokenOverlay
-                    // (isArriving-гейт) физически не успевает отрисовать ни
-                    // одного кадра с обоими бегунами settled на одной
-                    // клетке — пара мгновенно перескакивает из "победитель
-                    // ещё едет" сразу в "проигравший уже улетает", минуя
-                    // кадр, в который вообще может появиться поза
-                    // столкновения. requestAnimationFrame здесь — не
-                    // угаданная длительность (никакого таймера с числом
-                    // мс), а гарантия РОВНО одного лишнего кадра отрисовки
-                    // между "оба settled" и "проигравший начал fly" — этого
-                    // достаточно, чтобы React закоммитил промежуточное
-                    // состояние, tokenOverlay создал pairKey и
-                    // COLLISION_MIN_HOLD_MS (см. BoardGrid.js) сам удержал
-                    // позу минимум секунду дальше.
-                    animHelpers.onceStepDone(pushedFrom.id, () => {
-                        requestAnimationFrame(() => {
-                            animHelpers.completeWaitStep(patch.id);
-                            trigger(patch.id, 'fly', { toPosition });
-                        });
-                    });
-                    return;
-                }
-            }
-            trigger(patch.id, 'fly', { toPosition });
+            return;
         }
+
+        // Отскок/телепорт (collision/anomaly/rocket/stupor/известный
+        // backend-пробел у "Использовать") — 'fly'. Пара "кто победитель,
+        // кого ждать" — ТОЛЬКО для честного reason:'collision' с реально
+        // переданной collisionPair (см. докстринг модуля); во всех
+        // остальных случаях (аномалия/ракета/ступор/backend-пробел) пары
+        // нет и не нужно — просто улетает.
+        const pair = e.reason === 'collision' ? animHelpers?.collisionPair : null;
+        const winnerId = pair ? (pair.runnerId === patch.id ? pair.otherRunnerId : pair.runnerId) : null;
+        if (winnerId != null && animHelpers?.onceStepDone && animHelpers?.completeWaitStep) {
+            // Не телепортируем сразу — сперва синтетический шаг 'wait' (тихо
+            // стоим на СТАРОЙ, уже общей клетке), ждём, пока ПОБЕДИТЕЛЬ
+            // реально доиграет свой текущий шаг (см. docstring модуля и
+            // историю в CLAUDE_DONE_TASKS.md за разбор живых багов, которые
+            // этот механизм чинил) — только потом реальный 'fly'.
+            trigger(patch.id, 'wait', {
+                toPosition: { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY },
+            });
+            animHelpers.onceStepDone(winnerId, () => {
+                // requestAnimationFrame — гарантия РОВНО одного лишнего
+                // кадра отрисовки между "оба settled" и "проигравший начал
+                // fly", не угаданная длительность (см. история в
+                // CLAUDE_DONE_TASKS.md, 2026-09-25).
+                //
+                // 'fly' передаётся ВНУТРЬ completeWaitStep (не отдельным
+                // trigger() следующей строкой, как было раньше) — см. её
+                // докстринг в useRunnerAnimations.js за разбором живого бага
+                // 2026-09-28: терминальная поза каскада (например 'acid' от
+                // приземления на опасную клетку СРАЗУ следом за этим же
+                // отбросом) могла синхронно встать в очередь ПОКА мы ждали
+                // onceStepDone — тогда именно ОНА, а не 'fly', оказывалась
+                // первой в очереди и стартовала до того, как бегун реально
+                // долетел.
+                requestAnimationFrame(() => {
+                    animHelpers.completeWaitStep(patch.id, 'fly', { toPosition });
+                });
+            });
+            return;
+        }
+        trigger(patch.id, 'fly', { toPosition });
         return;
     }
 
@@ -341,62 +190,22 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers
 
         // Последняя известная (ДО события) позиция — нужна как toPosition
         // для 'fly'/'destroyed' ниже: RunnerDestroyService на бэке (read-only)
-        // ВСЕГДА обнуляет position/segment ПЕРЕД публикацией события, так что
-        // сам `patch` их уже не несёт — без явного toPosition BoardGrid
-        // (через effectiveRunners/runnerVisualPositions) увидел бы у бегуна
-        // segment=null РАНЬШЕ, чем анимация успеет доиграть, и он исчезал бы
-        // мгновенно вместо того чтобы визуально "остаться на месте" на время
-        // позы (случайно маскировалось раньше только тем, что почти всегда
-        // на момент destroy уже был АКТУАЛЬНЫЙ leftover toPosition от
-        // предыдущего шага очереди этого же бегуна — ненадёжно, если бегун
-        // перед этим долго стоял на месте).
+        // ВСЕГДА обнуляет position/segment ПЕРЕД публикацией события.
         const lastKnownPosition = prev.segment != null
             ? { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY }
             : null;
 
         // Жнец НИКОГДА не получает статус 'destroyed' от RunnerDestroyService
-        // (см. бэк, read-only — там явное исключение по RunnerType::REAPER) —
-        // событие runner_destroy для НЕГО означает "вернулся в резерв"
-        // (segment/position обнулены, статус НЕ менялся), независимо от
-        // причины (сдвиг трассы при выходе за 3-й фрагмент — см.
-        // TrackService::shift(), или что угодно ещё, что вызовет тот же
-        // сервис). По прямому запросу пользователя, 2026-09-08: "жнец должен
-        // улететь и вернуться в резерв (чтобы можно было дальше его снова
-        // вызвать)" — играем 'fly' НА МЕСТЕ (toPosition = его же последняя
-        // позиция, эффект "улетает" даёт сама gif-анимация fly, не слайд),
-        // после чего он просто перестаёт индексироваться на доске
-        // (indexRunnersByCell пропускает segment==null) — не нужен
-        // hiddenIds/DESTROYED_HIDE_DELAY_MS, как у обычного 'destroyed' (тот
-        // МЕХАНИЗМ специально держит токен видимым ПОСЛЕ того, как реальная
-        // позиция уже null — тут это не нужно, обнуление и так происходит
-        // ровно к концу 'fly'). Ловим ДО statusWorsened-гейта ниже — для
-        // Жнеца статус в этом случае не "ухудшается", гейт бы просто молча
-        // проглотил событие (жалоба пользователя, 2026-09-08: "жнец не
-        // уничтожил персонажа" была ПРО ДРУГОЙ бэковый баг — read-only
-        // находка, Move::handle() не проверяет столкновение на danger/anomaly
-        // клетках, — но раз уж разбирали этот же кусок кода, этот пробел для
-        // возврата САМОГО Жнеца в резерв нашёлся тут же и тоже был пуст).
+        // — событие runner_destroy для НЕГО означает "вернулся в резерв".
+        // По прямому запросу пользователя, 2026-09-08: играем 'fly' НА МЕСТЕ.
         if (e.event === 'runner_destroy' && patch.type === RUNNER_TYPES.REAPER && lastKnownPosition) {
             trigger(patch.id, 'fly', { toPosition: lastKnownPosition });
             return;
         }
 
-        // "Смерть" на клетке типа fire/acid (2026-09-12/13, по прямому
-        // запросу пользователя) — любой бегун, погибающий на такой клетке,
-        // получает терминальную позу 'burn'/'acid' ВМЕСТО обычной 'destroyed'
-        // — по прямому решению пользователя эта поза САМА ПО СЕБЕ служит
-        // финальным кадром, отдельной 'destroyed' после неё не нужно (см.
-        // useRunnerAnimations — оба kind обрабатываются ТЕМ ЖЕ терминальным
-        // путём, что 'destroyed': очередь останавливается, токен прячется
-        // через TERMINAL_HIDE_DELAY_MS). 2026-09-18: раньше тип клетки
-        // ПРИХОДИЛОСЬ угадывать по последней известной позиции (cellTypeAt) —
-        // теперь бэк прямо называет причину смерти в `e.reason`
-        // (DEATH_KIND_BY_REASON выше), совпадение с картинкой самой клетки
-        // гарантировано на уровне бэка (обе стороны берут значение из одного
-        // и того же RoadType), не двумя независимыми клиентскими хэшами.
-        // Проверяем ДО statusWorsened-гейта — тут это не нужно (destroy
-        // всегда "хуже"), но порядок такой же, как у Жнеца выше, для
-        // единообразия.
+        // "Смерть" на клетке типа fire/acid — терминальная поза 'burn'/'acid'
+        // ВМЕСТО обычной 'destroyed', причина смерти уже названа в e.reason
+        // (DEATH_KIND_BY_REASON выше).
         if (e.event === 'runner_destroy' && lastKnownPosition) {
             const deathKind = DEATH_KIND_BY_REASON[e.reason];
             if (deathKind) {
@@ -408,22 +217,11 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers
         if (!statusWorsened(prev.status, patch.status)) return;
 
         if (patch.status === 'destroyed') {
-            // Ловушка Жнеца: "по правилам игры Жнец должен убить того
-            // бегуна, который закончил ход на его клетке" (прямой запрос
-            // пользователя, 2026-09-03). 2026-09-18: бэк теперь ЯВНО помечает
-            // этот случай — reason:'reaper' (Collision::reaperCollision,
-            // читанный бэкенд-код) — раньше сигнала не было вообще, ловушка
-            // определялась ЧИСТО по совпадению позиций (см. историю файла).
-            // Позиционный поиск всё ещё нужен — reason подтверждает САМ ФАКТ
-            // ловушки, но не называет id конкретного Жнеца (тот в событии не
-            // указан), искать всё равно приходится по последней известной
-            // позиции жертвы. Порядок — bomb СНАЧАЛА (у Жнеца), жертва
+            // Ловушка Жнеца: reason:'reaper' подтверждает САМ ФАКТ ловушки,
+            // но не называет id конкретного Жнеца — ищем по последней
+            // известной позиции жертвы. bomb СНАЧАЛА (у Жнеца), жертва
             // получает 'destroyed' только ПОСЛЕ (см.
-            // REAPER_BOMB_TO_DESTROYED_DELAY_MS выше), не одновременно (по
-            // прямому запросу пользователя, 2026-09-08). Не через
-            // useRunnerAnimations-очередь victim'а (та относится к ДРУГОМУ
-            // runnerId — Жнецу — не годится для задержки жертвы), обычный
-            // setTimeout поверх переданного trigger.
+            // REAPER_BOMB_TO_DESTROYED_DELAY_MS выше).
             const reaperHere = e.reason === 'reaper' && prevGame.runners.find(
                 (r) => r.type === RUNNER_TYPES.REAPER
                     && r.segment === prev.segment && r.positionX === prev.positionX && r.positionY === prev.positionY,
@@ -439,107 +237,62 @@ export function handleVersionedRunnerAnimEvent(prevGame, e, trigger, animHelpers
             }
         } else {
             trigger(patch.id, 'gotShot');
-            // Метим — см. RECENTLY_SHOT_TTL_MS/consumeRecentlyShot выше:
-            // следующий runner_save ЭТОГО бегуна (если он ещё придёт) должен
-            // безусловно считаться отбросом (fly), не обычным шагом.
-            markRecentlyShot(patch.id);
         }
         return;
     }
 
     if (e.event === 'ability_reaper') {
-        // Первая (и единственная — бэк не даёт переставлять уже стоящего
-        // Жнеца, см. CLAUDE.md) установка Жнеца на трассу. По прямому
-        // запросу пользователя, 2026-09-03: Жнец не выходит из резерва как
-        // обычный бегун — он "прилетает" сбоку, из-за края трассы, случайно
-        // слева или справа (нет игровой логики, влияющей на сторону —
-        // чистая визуальная монетка). kind остаётся 'start' (тот же общий
-        // механизм отката в idle) — getRunnerAnimationImage сам подставит
-        // bucket.move[side] вместо bucket.start, которого у Жнеца нет
-        // (см. константы). Если игрок сразу выстрелил при размещении
-        // (e.attack — направление n/ne/nw) — вторым шагом очереди играем
-        // 'attack', геометрия направления считается ТАК ЖЕ, как у
-        // step_shoot ниже (Жнец не двигается, целится через ту же
-        // hex-клетку из СВОЕЙ свежепоставленной позиции).
+        // Первая (и единственная) установка Жнеца на трассу — "прилетает"
+        // сбоку, из-за края трассы, случайно слева или справа. Если игрок
+        // сразу выстрелил при размещении (e.attack — направление) — вторым
+        // шагом очереди играем 'attack'.
         const side = Math.random() < 0.5 ? 'east' : 'west';
         const toPosition = { segment: e.reaper.segment, positionX: e.reaper.positionX, positionY: e.reaper.positionY };
-        // runnerType — см. коммент у 'ball' выше, та же причина (звуковой
-        // системе неоткуда иначе узнать тип в момент этого триггера).
         trigger(e.reaper.id, 'start', { side, toPosition, runnerType: RUNNER_TYPES.REAPER });
 
         if (e.attack) {
+            // Жнец не двигается, целится через ту же hex-клетку из СВОЕЙ
+            // свежепоставленной позиции — она уже целиком в e.reaper, не
+            // нужно смотреть в game-стейт (в отличие от step_shoot ниже,
+            // где стрелка нужно ещё найти по id).
             const target = neighborPosition(e.reaper, e.attack);
-            const depthChanged = target ? target.positionX !== e.reaper.positionX : false;
-            const targetLaneShifted = target ? target.positionY % 2 === 0 : false;
-            trigger(e.reaper.id, 'attack', { direction: e.attack, depthChanged, targetLaneShifted });
+            trigger(e.reaper.id, 'attack', {
+                direction: e.attack,
+                depthChanged: target ? target.positionX !== e.reaper.positionX : false,
+                targetLaneShifted: target ? target.positionY % 2 === 0 : false,
+            });
         }
+        return;
     }
-}
 
-/**
- * Транзиентные события (без version, см. onTransient в useMercure) — уже
- * несут нужное направление напрямую в полях события, сравнивать старое/новое
- * состояние не нужно. gameRef — актуальный `game` НА МОМЕНТ события (нужен
- * только для anomaly — у неё нет activeRunner, только direction, см. ниже).
- */
-export function handleTransientRunnerAnimEvent(e, gameRef, trigger) {
-    switch (e.event) {
-        case 'step_move':
-            // pending: true — заготовка, не самостоятельный шаг очереди. Даёт
-            // направление раньше, чем придёт реальная позиция, но описывает
-            // ТУ ЖЕ передвижку, что последующий 'runner_save' — если его не
-            // пометить, очередь (см. useRunnerAnimations) сыграла бы одно и
-            // то же перемещение дважды подряд (двойная длительность на самый
-            // частый случай — обычный шаг без каскада).
-            trigger(e.activeRunner, 'move', { direction: e.direction ?? 'UP', pending: true }); // без direction — первый выход на трассу
-            return;
-        case 'step_shoot': {
-            if (!e.accept) return;
-            // Тот же geometry-нюанс, что и у ходьбы (см. runner_save выше и
-            // constants/runnerAnimations#resolveMoveAssetDirection) — целится
-            // в клетку через ТУ ЖЕ hex-геометрию (canShoot() на бэке проверяет
-            // ровно тех же соседей, что и движение), значит клетка-цель может
-            // ТАК ЖЕ визуально лежать south-* (если бегун стоит на дорожке,
-            // соседняя с которой "смещена вперёд" — цель диагонали в таком
-            // случае лежит south, не north), а не только north-* — жалоба
-            // пользователя, 2026-09-01, четвёртый заход: "стрельба...
-            // неправильная (у солдата по крайней мере), вместо north-west/east
-            // должно быть south-west/east". Раньше (до этого захода) 'attack'
-            // сознательно НЕ получал такую поправку — ошибочно, стрельба стоя
-            // на месте всё равно целится через ту же гекс-клетку, что и шаг.
-            const direction = e.direction ?? 'UP';
-            const game = gameRef.current;
-            const shooter = game?.runners?.find((r) => r.id === e.activeRunner);
-            let depthChanged = false;
-            let targetLaneShifted = false;
-            if (shooter?.segment != null) {
-                const target = neighborPosition(shooter, direction);
-                if (target) {
-                    depthChanged = target.positionX !== shooter.positionX;
-                    targetLaneShifted = target.positionY % 2 === 0;
-                }
+    if (e.event === 'step_shoot') {
+        // Выстрел не двигает стрелка — нет versioned-сигнала о позиции
+        // вообще, единственный источник направления — сам этот транзиент.
+        // Целится через ТУ ЖЕ hex-геометрию, что и шаг (canShoot() на бэке
+        // проверяет ровно тех же соседей, что и движение) — чисто боковой
+        // выстрел на "смещённую" (нечётную) дорожку визуально идёт south-*,
+        // не north-*, та же поправка, что и у обычного шага.
+        if (!e.accept) return;
+        const direction = e.direction ?? 'UP';
+        // String() — `e.activeRunner` приходит от `RunnerPlayer::$activeRunner`
+        // (бэк, `?string`), а `runner.id` в game-стейте — число (`Runner::$id`,
+        // `?int`) — тот же разъезд типов, что уже учтён везде в проекте для
+        // этого поля (GameBoardScreen.js/PlayerInfoPanel.js — все через
+        // String()), но был пропущен именно тут: строгое `===` никогда не
+        // совпадало → `shooter` всегда `undefined` → depthChanged/
+        // targetLaneShifted всегда false → выстрел
+        // на смещённую (нечётную) дорожку визуально всегда шёл "по умолчанию"
+        // (north-вариант спрайта), а не в реальном направлении.
+        const shooter = prevGame?.runners?.find((r) => String(r.id) === String(e.activeRunner));
+        let depthChanged = false;
+        let targetLaneShifted = false;
+        if (shooter?.segment != null) {
+            const target = neighborPosition(shooter, direction);
+            if (target) {
+                depthChanged = target.positionX !== shooter.positionX;
+                targetLaneShifted = target.positionY % 2 === 0;
             }
-            trigger(e.activeRunner, 'attack', { direction, depthChanged, targetLaneShifted });
-            return;
         }
-        case 'anomaly': {
-            // Аномалию всегда переживает бегун, который СЕЙЧАС двигается —
-            // событие направление несёт, а id бегуна — нет, достаём из
-            // activeRunner текущего игрока по ходу (game.playerOrder).
-            // pending: true — та же заготовка-мерж, что у step_move (см.
-            // useRunnerAnimations/trigger): следующий runner_save (реальный
-            // отлёт из аномалии) допишет сюда toPosition НА МЕСТЕ вместо
-            // отдельного шага очереди, и, что важно именно тут (по прямому
-            // запросу пользователя, 2026-09-01), kind ОСТАНЕТСЯ 'fly' —
-            // мерж специально не даёт эвристике forwardNeighbors в
-            // handleVersionedRunnerAnimEvent переопределить его на 'move',
-            // даже если отлёт случайно приземлится на соседнюю клетку.
-            const game = gameRef.current;
-            const mover = game?.gamePlayers?.find((p) => String(p.id) === String(game.playerOrder));
-            if (mover?.activeRunner != null) trigger(mover.activeRunner, 'fly', { pending: true });
-            return;
-        }
-        default:
-            return;
+        trigger(e.activeRunner, 'attack', { direction, depthChanged, targetLaneShifted });
     }
 }

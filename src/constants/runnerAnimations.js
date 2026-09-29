@@ -680,8 +680,8 @@ const tankDamagedYellow = {
 // в lib/runnerAnimTriggers.js — там же решается, с какой стороны). `attack`
 // — только 3 "вперёд" направления (n/ne/nw), Жнец стреляет строго по ходу
 // дороги. `bomb` — ловушка: Жнец играет эту анимацию у СЕБЯ, когда другой
-// бегун заканчивает ход на его клетке (см. getWorsenedDamageRunnerId-подобная
-// эвристика в runnerAnimTriggers.js).
+// бегун заканчивает ход на его клетке (см. reaperHere-эвристику в
+// runnerAnimTriggers.js#handleSequenceItem).
 const droneRed = {
     attack: {
         northEast: require('../assets/images/runners/drone/drone_attack_north-east_red.gif'),
@@ -878,12 +878,6 @@ export function resolveMoveAssetDirection(direction, depthChanged, targetLaneShi
 /** RUNNER_STATUS → какая из 2 папок ассетов (healthy/damaged) используется. */
 function statusFolder(status) {
     return status === RUNNER_STATUS.HEALTHY ? 'healthy' : 'damaged';
-}
-
-/** Порядок "тяжести" статуса — чтобы отличить "стало хуже" (гот-шот/уничтожен) от улучшения (лечение). */
-const STATUS_ORDER = [RUNNER_STATUS.HEALTHY, RUNNER_STATUS.DAMAGED, RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
-export function statusWorsened(prevStatus, nextStatus) {
-    return STATUS_ORDER.indexOf(nextStatus) > STATUS_ORDER.indexOf(prevStatus);
 }
 
 /**

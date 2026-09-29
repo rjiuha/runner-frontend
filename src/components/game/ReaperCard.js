@@ -1,5 +1,5 @@
 // src/components/game/ReaperCard.js
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import PersonPanel, { NOTCH_RADIUS } from '../ui/PersonPanel';
@@ -43,26 +43,42 @@ const AVATAR_FRAME_SIZE = { width: AVATAR_SIZE, height: AVATAR_SIZE };
  * него ~30 дочерних `<Image>` этой плитки заново реконсилировались бы на
  * КАЖДЫЙ ре-рендер панели, даже когда сам Жнец не менялся.
  */
-function ReaperCard({ reaper, color, active }) {
+// sizeScale (2026-09-26, авто-РОСТ compact-колонки, см. RunnerCard.js#
+// maxAvatarSizeScale/PlayerInfoPanel.js#leftGrow за полным разбором) — тут
+// БЕЗ клэмпа по ширине: аватар — фиксированного размера слева, но текст
+// СПРАВА (`styles.text`, `flex:1`) сам подстраивается/ужимается под ЛЮБОЙ
+// остаток ширины, поэтому рост аватара тут структурно безопасен без проверки.
+function ReaperCard({ reaper, color, active, sizeScale = 1 }) {
     const cardRef = useRef(null);
-    // Размер КОРПУСА плитки (для PersonPanel) — measureInWindow, НЕ
-    // собственный onLayout PersonPanel — та же причина/фикс, что в
-    // RunnerCard.js (на Android onLayout абсолютно спозиционированного
-    // ребёнка с auto-height родителем стабильно ловит height=0).
+    const avatarSize = Math.round(AVATAR_SIZE * sizeScale);
+    const avatarFrameSize = useMemo(
+        () => (sizeScale === 1 ? AVATAR_FRAME_SIZE : { width: avatarSize, height: avatarSize }),
+        [sizeScale, avatarSize],
+    );
+    // Размер КОРПУСА плитки (для PersonPanel) — НЕ через собственный onLayout
+    // PersonPanel (та же причина/фикс, что в RunnerCard.js — на Android
+    // onLayout абсолютно спозиционированного ребёнка с auto-height родителем
+    // стабильно ловит height=0), а через onLayout САМОЙ плитки (`cardRef`,
+    // обычный flow-элемент).
+    //
+    // **`onLayout`, НЕ `measureInWindow`** (2026-09-26, тот же симметричный
+    // фикс, что и в RunnerCard.js/AbilityZone.js/PlayerInfoPanel.js — живая
+    // жалоба "рамки висят в воздухе" после введения авто-масштабирования
+    // колонок leftScale/rightScale). У этой карточки нет своего хит-теста
+    // (Жнец не участвует в drag-n-drop дропа кубика хода так же, как обычные
+    // бегуны), поэтому измерение тут можно переключить на onLayout целиком,
+    // без разделения на два потребителя, как в RunnerCard.js/AbilityZone.js.
     const [cardSize, setCardSize] = useState(null);
 
-    const measure = useCallback(() => {
-        requestAnimationFrame(() => {
-            cardRef.current?.measureInWindow((x, y, width, height) => {
-                setCardSize({ width, height });
-            });
-        });
+    const onLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setCardSize({ width, height });
     }, []);
 
     const onField = reaper.segment != null;
 
     return (
-        <View ref={cardRef} onLayout={measure} style={styles.card}>
+        <View ref={cardRef} onLayout={onLayout} style={styles.card}>
             <PersonPanel size={cardSize} />
             {/* borderRadius — та же величина, что у PersonPanel.js#styles.wrap
                 (тот же фикс "рамка острым углом поверх скруглённой дуги",
@@ -70,7 +86,7 @@ function ReaperCard({ reaper, color, active }) {
             {active && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.activeRing, { borderColor: color }]} />}
 
             <View style={styles.row}>
-                <View style={styles.avatarBox}>
+                <View style={[styles.avatarBox, sizeScale !== 1 && { width: avatarSize, height: avatarSize }]}>
                     {/* targetCornerSize=6 (половина дефолта FramePanel, 12) —
                         держит толщину декоративной дуги ПРОПОРЦИОНАЛЬНОЙ
                         уменьшенному вдвое боксу (иначе тот же абсолютный
@@ -78,7 +94,7 @@ function ReaperCard({ reaper, color, active }) {
                         чем у RunnerCard.js — там 12px на 64px бокс, тут было
                         бы 12px на 32px). */}
                     <FramePanel
-                        size={AVATAR_FRAME_SIZE}
+                        size={avatarFrameSize}
                         targetCornerSize={6}
                         backgroundSource={FRAME_PANEL_BACKGROUND}
                         backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
@@ -89,7 +105,7 @@ function ReaperCard({ reaper, color, active }) {
                         status={reaper.status}
                         avatar
                         color={color}
-                        size={AVATAR_SIZE}
+                        size={avatarSize}
                         imageScale={0.85}
                         selected={active}
                         showRing={false}

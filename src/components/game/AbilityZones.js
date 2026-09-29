@@ -24,6 +24,7 @@ export default function AbilityZones({
     compact = false,
     color,
     pulseKeys = null,
+    sizeScale = 1,
 }) {
     return (
         <View style={styles.grid}>
@@ -42,6 +43,7 @@ export default function AbilityZones({
                     compact={compact}
                     color={color}
                     pulseHighlight={!!pulseKeys?.has(key)}
+                    sizeScale={sizeScale}
                 />
             ))}
         </View>
