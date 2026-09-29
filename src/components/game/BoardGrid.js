@@ -1042,88 +1042,104 @@ export default function BoardGrid({
                         // солист↔пара (см. комментарий у tokenOverlay) — RunnerTokenSlide
                         // хранит Animated.ValueXY во внутреннем ref, переживающем ре-рендеры
                         // ТОЛЬКО если React не пересоздаёт сам компонент.
-                        <RunnerTokenSlide
+                        //
+                        // Opacity колонки сдвига — ОТДЕЛЬНОЙ внешней classic-Animated.View-
+                        // обёрткой, НЕ внутри style у самого RunnerTokenSlide (2026-09-30,
+                        // краш на Android, живой репорт пользователя: "ReadableNativeMap
+                        // cannot be cast to java.lang.Double" на opacity ровно в момент
+                        // поблочного появления нового фрагмента). Причина — RunnerTokenSlide
+                        // рендерит `Animated.View` из react-native-reanimated (см. её файл),
+                        // а `columnOpacities[item.col]` — classic `Animated.Value` из
+                        // 'react-native' (см. GameBoardScreen#trackShiftWipeOpacitiesRef/
+                        // trackShiftRevealOpacitiesRef). Смешивание classic Animated.Value
+                        // внутрь style реанимированной Animated.View на Android/Fabric падает
+                        // именно так — на вебе те же данные резолвятся терпимее, поэтому баг
+                        // не был виден там (сообщение пользователя: "на вебе отработало как
+                        // надо"). Вынос opacity на classic Animated.View-обёртку СНАРУЖИ
+                        // держит оба Animated-мира разделёнными: classic отвечает за opacity
+                        // здесь, reanimated — только за transform/left/top внутри самого
+                        // RunnerTokenSlide, как и раньше.
+                        <Animated.View
                             key={item.runnerId}
-                            x={item.x}
-                            y={item.y}
-                            width={item.boxW}
-                            height={item.boxH}
-                            style={[
-                                item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer,
-                                item.onTop && styles.tokenOnTop,
-                                // Токен затухает/материализуется СО СВОЕЙ колонкой во
-                                // время хореографии сдвига фрагментов (2026-09-10) —
-                                // иначе Жнец на удаляемом фрагменте снова не исчезнет
-                                // (см. докстринг у pushSolo выше).
-                                columnOpacities && { opacity: columnOpacities[item.col] ?? 1 },
-                            ]}
-                            windowStart={windowStart}
-                            enterFrom={item.enterFrom}
-                            duration={item.slideDurationMs}
-                            // onSlideEnd — см. onAnimStepEnd выше. `item.anim`
-                            // у синтетических коллизионных пар/призраков —
-                            // {kind:'collision',...} БЕЗ nonce (производное
-                            // состояние, не шаг очереди useRunnerAnimations) —
-                            // onAnimStepEnd сам игнорирует вызов с nonce==null
-                            // (см. completeStep), здесь достаточно передать
-                            // что есть, без дополнительных проверок.
-                            // RunnerTokenSlide НЕ мемоизирован (в отличие от
-                            // RunnerToken ниже) — инлайн-замыкание тут ничего
-                            // не портит.
-                            onSlideEnd={() => onAnimStepEnd?.(item.runnerId, item.anim?.nonce)}
+                            style={columnOpacities ? { opacity: columnOpacities[item.col] ?? 1 } : undefined}
                         >
-                            <RunnerToken
-                                runnerId={item.runnerId}
-                                type={item.runner.type}
-                                status={item.runner.status}
-                                color={playerColorById[item.runner.playerId]}
-                                size={item.tokenSize}
-                                imageScale={item.runner.type === RUNNER_TYPES.SPRINTER ? SPRINTER_ANDROID_IMAGE_SCALE : BOARD_TOKEN_IMAGE_SCALE}
-                                showRing={false}
-                                imageAlign={item.anchorBottom ? 'bottom' : 'center'}
-                                selected={item.runnerId === selectedRunnerId}
-                                anim={item.anim}
-                                style={
-                                    // Скаут (SPRINTER) — на 10% высоты сегмента ниже, чем
-                                    // остальные типы, ТОЛЬКО на Android (2026-09-25, прямой
-                                    // запрос пользователя, потом РАСШИРЕН на коллизию тоже —
-                                    // применяется ВЕЗДЕ, включая пару; затем уточнено, что
-                                    // сдвиг нужен только на Android, как и SPRINTER_ANDROID_
-                                    // IMAGE_SCALE выше — веб не трогаем). ОДИН объект style
-                                    // с ОДНИМ массивом transform — если писать innerOffsetX
-                                    // и этот сдвиг двумя РАЗНЫМИ объектами в style-массиве,
-                                    // RN не мёрджит их transform, а берёт последний целиком
-                                    // (потерялся бы горизонтальный разъезд пары у скаута в
-                                    // коллизии) — оба транслейта собираются в ОДИН массив,
-                                    // filter(Boolean) убирает неприменимые.
-                                    (item.innerOffsetX || (item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android')) && {
-                                        transform: [
-                                            item.innerOffsetX && { translateX: item.innerOffsetX },
-                                            item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android'
-                                                && { translateY: Math.round(segmentH * 0.1) },
-                                        ].filter(Boolean),
+                            <RunnerTokenSlide
+                                x={item.x}
+                                y={item.y}
+                                width={item.boxW}
+                                height={item.boxH}
+                                style={[
+                                    item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer,
+                                    item.onTop && styles.tokenOnTop,
+                                ]}
+                                windowStart={windowStart}
+                                enterFrom={item.enterFrom}
+                                duration={item.slideDurationMs}
+                                // onSlideEnd — см. onAnimStepEnd выше. `item.anim`
+                                // у синтетических коллизионных пар/призраков —
+                                // {kind:'collision',...} БЕЗ nonce (производное
+                                // состояние, не шаг очереди useRunnerAnimations) —
+                                // onAnimStepEnd сам игнорирует вызов с nonce==null
+                                // (см. completeStep), здесь достаточно передать
+                                // что есть, без дополнительных проверок.
+                                // RunnerTokenSlide НЕ мемоизирован (в отличие от
+                                // RunnerToken ниже) — инлайн-замыкание тут ничего
+                                // не портит.
+                                onSlideEnd={() => onAnimStepEnd?.(item.runnerId, item.anim?.nonce)}
+                            >
+                                <RunnerToken
+                                    runnerId={item.runnerId}
+                                    type={item.runner.type}
+                                    status={item.runner.status}
+                                    color={playerColorById[item.runner.playerId]}
+                                    size={item.tokenSize}
+                                    imageScale={item.runner.type === RUNNER_TYPES.SPRINTER ? SPRINTER_ANDROID_IMAGE_SCALE : BOARD_TOKEN_IMAGE_SCALE}
+                                    showRing={false}
+                                    imageAlign={item.anchorBottom ? 'bottom' : 'center'}
+                                    selected={item.runnerId === selectedRunnerId}
+                                    anim={item.anim}
+                                    style={
+                                        // Скаут (SPRINTER) — на 10% высоты сегмента ниже, чем
+                                        // остальные типы, ТОЛЬКО на Android (2026-09-25, прямой
+                                        // запрос пользователя, потом РАСШИРЕН на коллизию тоже —
+                                        // применяется ВЕЗДЕ, включая пару; затем уточнено, что
+                                        // сдвиг нужен только на Android, как и SPRINTER_ANDROID_
+                                        // IMAGE_SCALE выше — веб не трогаем). ОДИН объект style
+                                        // с ОДНИМ массивом transform — если писать innerOffsetX
+                                        // и этот сдвиг двумя РАЗНЫМИ объектами в style-массиве,
+                                        // RN не мёрджит их transform, а берёт последний целиком
+                                        // (потерялся бы горизонтальный разъезд пары у скаута в
+                                        // коллизии) — оба транслейта собираются в ОДИН массив,
+                                        // filter(Boolean) убирает неприменимые.
+                                        (item.innerOffsetX || (item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android')) && {
+                                            transform: [
+                                                item.innerOffsetX && { translateX: item.innerOffsetX },
+                                                item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android'
+                                                    && { translateY: Math.round(segmentH * 0.1) },
+                                            ].filter(Boolean),
+                                        }
                                     }
-                                }
-                                // ПРОСТО onAnimStepEnd (стабильная ссылка из
-                                // props, см. GameBoardScreen#runnerAnim.completeStep),
-                                // НЕ инлайн-замыкание — RunnerToken, в отличие
-                                // от RunnerTokenSlide выше, обёрнут в
-                                // React.memo (см. докстринг у экспорта, живой
-                                // 2026-09-24 перф-фикс: для idle-бегунов пропсы
-                                // должны оставаться СТАБИЛЬНЫМИ между рендерами,
-                                // иначе memo перестаёт отсекать лишнюю работу
-                                // ИМЕННО для самого частого случая — "все
-                                // стоят"). Сам финальный колбэк с
-                                // runnerId/anim.nonce строится УЖЕ ВНУТРИ
-                                // RunnerToken.
-                                onAnimStepEnd={onAnimStepEnd}
-                            />
-                            {item.badgeCount > 1 && (
-                                <View style={styles.stackBadge}>
-                                    <Text style={styles.stackBadgeText} noGlobalTint>+{item.badgeCount - 1}</Text>
-                                </View>
-                            )}
-                        </RunnerTokenSlide>
+                                    // ПРОСТО onAnimStepEnd (стабильная ссылка из
+                                    // props, см. GameBoardScreen#runnerAnim.completeStep),
+                                    // НЕ инлайн-замыкание — RunnerToken, в отличие
+                                    // от RunnerTokenSlide выше, обёрнут в
+                                    // React.memo (см. докстринг у экспорта, живой
+                                    // 2026-09-24 перф-фикс: для idle-бегунов пропсы
+                                    // должны оставаться СТАБИЛЬНЫМИ между рендерами,
+                                    // иначе memo перестаёт отсекать лишнюю работу
+                                    // ИМЕННО для самого частого случая — "все
+                                    // стоят"). Сам финальный колбэк с
+                                    // runnerId/anim.nonce строится УЖЕ ВНУТРИ
+                                    // RunnerToken.
+                                    onAnimStepEnd={onAnimStepEnd}
+                                />
+                                {item.badgeCount > 1 && (
+                                    <View style={styles.stackBadge}>
+                                        <Text style={styles.stackBadgeText} noGlobalTint>+{item.badgeCount - 1}</Text>
+                                    </View>
+                                )}
+                            </RunnerTokenSlide>
+                        </Animated.View>
                     ))}
                     {reaperPreviewItem && (
                         <RunnerTokenSlide

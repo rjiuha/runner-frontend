@@ -21,6 +21,14 @@ export const DEATH_KIND_BY_REASON = { fire: 'burn', acid: 'acid' };
 // SLIDE_DURATION_MS).
 const REAPER_BOMB_TO_DESTROYED_DELAY_MS = 1800;
 
+// "Улёт за предел карты" Жнеца, брошенного на сдвигаемом фрагменте
+// (reason:'track_shift', см. ниже) — на сколько клеток вглубь (по
+// positionX) отодвигается toPosition, чтобы слайд гарантированно вынес
+// токен за нижний видимый край доски независимо от текущего вьюпорта
+// (BOARD_LAYOUT.COLS=8 — с запасом больше самого широкого возможного
+// вьюпорта).
+const REAPER_TRACK_SHIFT_FLY_OFF_ROWS = 10;
+
 /**
  * 2026-09-27 — ПЕРЕПИСАНО под бандлинг Mercure-событий (`action_result` +
  * `sequence`, см. `1_pitch_for_backend_dev.md`/`2_backend_todo.md` в
@@ -198,8 +206,26 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
         // Жнец НИКОГДА не получает статус 'destroyed' от RunnerDestroyService
         // — событие runner_destroy для НЕГО означает "вернулся в резерв".
         // По прямому запросу пользователя, 2026-09-08: играем 'fly' НА МЕСТЕ.
+        //
+        // Исключение — reason:'track_shift' (2026-09-30, живой запрос
+        // пользователя после теста сдвига фрагментов: "хотелось бы, чтобы
+        // жнецы улетали за предел карты, сейчас просто исчез"). Единственный
+        // ДРУГОЙ реальный reason для Жнеца — 'reaper' (сам исчерпал кубик
+        // после столкновения, `Collision::reaperCollision()` на бэке,
+        // read-only) — это штатное самопотребление, не "мир исчез из-под
+        // ног", там fly-на-месте остаётся как было. Только для track_shift
+        // toPosition сдвинут далеко НАЗАД по глубине (positionX), в ту же
+        // клетку по дорожке — `cellPixelPos` (см. BoardGrid.js) не клэмпит
+        // positionX (в отличие от боковой positionY, см. её докстринг про
+        // клэмп "на одну дорожку за край") — RunnerTokenSlide просто
+        // честно доскользит туда же, как обычный слайд, визуально улетая
+        // за нижний край видимой доски, откуда сам фрагмент трассы уже
+        // пропадает волной (см. GameBoardScreen#trackShiftWipeOpacitiesRef).
         if (e.event === 'runner_destroy' && patch.type === RUNNER_TYPES.REAPER && lastKnownPosition) {
-            trigger(patch.id, 'fly', { toPosition: lastKnownPosition });
+            const toPosition = e.reason === 'track_shift'
+                ? { ...lastKnownPosition, positionX: lastKnownPosition.positionX - REAPER_TRACK_SHIFT_FLY_OFF_ROWS }
+                : lastKnownPosition;
+            trigger(patch.id, 'fly', { toPosition });
             return;
         }
 
@@ -236,7 +262,18 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
                 trigger(patch.id, 'destroyed', { fromStatus: prev.status, toPosition: lastKnownPosition });
             }
         } else {
-            trigger(patch.id, 'gotShot');
+            // fromStatus — 2026-09-30, живая жалоба пользователя: танк на
+            // danger-клетке (мина) мгновенно выглядел 'damaged' ещё ВО ВРЕМЯ
+            // взрыва/gotShot-позы, а не только после того, как она доиграла.
+            // Причина — RunnerToken выбирает спрайт по ЖИВОМУ runner.status
+            // (см. её докстринг), который реducer уже обновил на 'damaged' к
+            // этому моменту; сама 'destroyed'-ветка та же дыру уже закрывала
+            // через fromStatus (см. выше) — 'gotShot' тогда была пропущена.
+            // Потребитель — GameBoardScreen#displayRunners (BoardGrid И
+            // PlayerInfoPanel читают ОДИН и тот же подменённый статус, пока
+            // gotShot не доиграет — жетоны урона на карточке тоже не должны
+            // мигать раньше анимации на доске).
+            trigger(patch.id, 'gotShot', { fromStatus: prev.status });
         }
         return;
     }

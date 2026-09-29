@@ -66,7 +66,7 @@ export const font = {
 // не обязательна использовать напрямую в компонентах, но экспортирована на
 // случай точечного переопределения (например, если где-то понадобится ЯВНО
 // откатиться на системный шрифт).
-export const fontFamily = 'SpaceRanger';
+export const fontFamily = 'Xolonium';
 
 /** Тень одинаково на iOS/Android/web */
 export const shadow = {

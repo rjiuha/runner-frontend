@@ -5,7 +5,7 @@ import ReanimatedAnimated, { useSharedValue, useAnimatedStyle } from 'react-nati
 import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
 import AbilityZones from './AbilityZones';
-import RunnerCard, { RUNNER_CARD_COMPACT_PADDING_H, maxAvatarSizeScale } from './RunnerCard';
+import RunnerCard from './RunnerCard';
 import ReaperCard from './ReaperCard';
 import PulseText from '../ui/PulseText';
 import PulseHighlight from '../ui/PulseHighlight';
@@ -95,211 +95,36 @@ export default function PlayerInfoPanel({
     // для PAINT-ONLY смещений (scroll/scale), где сам `zoneKey` не меняется,
     // только экранная позиция того же бегуна.
 
-    // Авто-масштабирование колонок в compactColumns (2026-09-26, по прямому
-    // запросу пользователя — "не подрезай константы, сделай масштабирование
-    // панелей, чтобы структура никогда не перекрывала друг друга"). Раньше
-    // при нехватке высоты columns (см. useBoardLayout — panelH тесный на
-    // некоторых реальных экранах, headerContent/switcher забирают
-    // фиксированную часть) правая колонка (кубики+усиления) либо обрезалась,
-    // либо скроллилась — оба варианта пользователь отверг явно. Вместо
-    // угадывания констант под конкретный экран — измеряем РЕАЛЬНО доступную
-    // высоту (`columnsH`, onLayout на строке columns — той же высоты у
-    // ОБЕИХ колонок, т.к. `columns` не задаёт alignItems и обе они по
-    // умолчанию растягиваются на всю её высоту через cross-axis stretch) и
-    // РЕАЛЬНУЮ природную высоту контента каждой колонки БЕЗ трансформации
-    // (`leftContentH`/`rightContentH`, onLayout меряет ДО-transform layout-
-    // бокс — transform на paint не влияет на layout, поэтому эти onLayout
-    // продолжают честно отдавать натуральный размер, даже когда сам transform
-    // уже применён на той же вьюхе). Если контент выше, чем реально доступно
-    // — весь блок (не отдельные константы внутри) сжимается transform:scale
-    // ровно настолько, чтобы поместиться целиком; если места достаточно —
-    // scale=1, ничего визуально не меняется.
-    const [columnsH, setColumnsH] = useState(null);
-    const [leftContentH, setLeftContentH] = useState(null);
-    const [rightContentH, setRightContentH] = useState(null);
-    // Ширина — нужна ТОЛЬКО для leftGrow ниже (клэмп безопасного роста
-    // карточек бегунов по ширине, см. maxAvatarSizeScale). rightContentW не
-    // используется (правая колонка растёт без клэмпа, см. её докстринг ниже).
-    // Ширина колонки НЕ зависит от sizeScale (растянута родителем-колонкой,
-    // а не природным размером контента) — в отличие от высоты, ей не нужна
-    // заморозка ниже, безопасно живая.
-    const [leftContentW, setLeftContentW] = useState(null);
-    const onColumnsLayout = useCallback((e) => setColumnsH(e.nativeEvent.layout.height), []);
-    // **Заморозка натурального (sizeScale=1) замера высоты — 2026-09-26,
-    // живой краш "Maximum update depth exceeded" + "плитки то растут, то
-    // уменьшаются циклично".** Причина: рост (sizeScale, см. leftGrow ниже)
-    // — это РЕАЛЬНОЕ изменение размера детей (не paint-эффект, как
-    // transform:scale у сжатия) — оно меняет их фактическую высоту, значит
-    // ЗАНОВО вызывает onLayout уже ПОСЛЕ роста. Если бы `leftGrow`
-    // пересчитывался от этого НОВОГО (уже выросшего) значения — получался бы
-    // бесконечный цикл "измерили → выросли → измерили увеличенное → выросли
-    // ещё/меньше → ...", никогда не сходящийся (высота меняется на дробные
-    // пиксели туда-сюда из-за элементов, не участвующих в sizeScale —
-    // текст/паддинги/gap — рост НЕ строго линеен относительно scale).
-    // `leftBaselineHRef`/`rightBaselineHRef` — натуральная высота, захваченная
-    // РОВНО ОДИН раз (при sizeScale===1, т.е. ДО первого применения роста) и
-    // замороженная — `leftGrow`/`rightGrow` считаются ТОЛЬКО от неё, больше
-    // никогда не обновляемой уже выросшим значением. `appliedLeftGrowRef`/
-    // `appliedRightGrowRef` — какой sizeScale был передан детям на ТЕКУЩЕМ
-    // (только что закоммиченном) рендере — мутируются ПРЯМО в теле функции
-    // компонента (не в эффекте), тот же приём, что и `collisionHoldsRef` в
-    // BoardGrid.js (см. её докстринг) — к моменту, когда сработает onLayout
-    // (строго ПОСЛЕ коммита/лейаута этого рендера), ref уже содержит верное
-    // для сравнения значение. `leftContentH`/`rightContentH` (state) при этом
-    // ОСТАЮТСЯ живыми (обновляются на КАЖДЫЙ onLayout, включая уже выросшие) —
-    // это безопасно и НУЖНО для сжатия (`leftScale` ниже): если рост случайно
-    // чуть переполнил доступную высоту (округление), transform:scale (paint-
-    // эффект, НЕ триггерит повторный onLayout) просто аккуратно скомпенсирует
-    // остаток — без риска зацикливания, в отличие от sizeScale.
-    const leftBaselineHRef = useRef(null);
-    const rightBaselineHRef = useRef(null);
-    const appliedLeftGrowRef = useRef(1);
-    const appliedRightGrowRef = useRef(1);
-    // 2026-09-28 — ПЕРЕСМОТРЕНО по прямому запросу пользователя: `activePlayerId`
-    // убран из зависимостей сброса. История вопроса: сначала (до 2026-09-26)
-    // сброс был только на `columnsH` — общий масштаб на всех игроков, но
-    // разная natural-высота контента (жетоны повреждений/бонус хода не у
-    // всех одинаковы) давала видимую разницу масштаба между игроками ("на
-    // test чуть меньше, на test1 чуть больше"). 2026-09-26 добавили
-    // `activePlayerId` — каждое переключение таба пересчитывало baseline
-    // ИМЕННО под нового игрока, разница пропала, НО ценой этого стал видимый
-    // двухфазный "прыжок" размера карточек при КАЖДОМ переключении (сброс →
-    // временно натуральный размер → замер → рост обратно) — живая жалоба
-    // 2026-09-28, "переключение таба не должно перерисовывать панели, пусть
-    // обновляется только контент". Пользователь явно выбрал вернуться к
-    // ОБЩЕМУ масштабу (посчитанному один раз на партию, не per-игрок) —
-    // разницу между игроками с разным natural-контентом теперь целиком
-    // берёт на себя УЖЕ существующий "живой" `leftScale`/`rightScale` ниже
-    // (paint-only `transform:scale`, читает ЖИВОЙ `leftContentH`/
-    // `rightContentH`, НЕ триггерит повторный `onLayout` — то есть сжатие
-    // для "более высокого" игрока применяется БЕЗ каскада ре-лейаутов,
-    // визуально гладко, без прыжка). Единственный компромисс: если контент
-    // РАЗНЫХ игроков заметно отличается по высоте, у кого-то из них итоговый
-    // масштаб будет чуть точнее заполнять доступную высоту, чем у другого —
-    // осознанно принято как меньшее зло по сравнению с прыжком размера.
-    // **2026-09-28 — РЕАЛЬНЫЙ баг, найден живым прогоном на Android (не
-    // связан с правкой выше про activePlayerId — был здесь и раньше, просто
-    // маскировался частыми сбросами по activePlayerId, из-за которых рост
-    // иногда случайно "проскакивал" в окне между сбросами).** Гонка двух
-    // НЕЗАВИСИМЫХ `onLayout` (`onColumnsLayout`/`onLeftContentLayout`) —
-    // при первом монтировании `columnsH` идёт `null → реальное число` РОВНО
-    // ОДИН раз, и этот эффект (раньше зависел от одного `columnsH`) читал
-    // это как "измени размер экрана — сбрось baseline", хотя это не ресайз,
-    // а ПЕРВОЕ измерение. Если `onLeftContentLayout` успевал сработать и
-    // захватить baseline РАНЬШЕ, чем коммитится этот `null→число` переход —
-    // эффект сбрасывал baseline ОБРАТНО в null сразу после того, как он был
-    // корректно захвачен (порядок двух независимых async onLayout не
-    // гарантирован) — рост после этого не применялся НИКОГДА (baseline
-    // оставался null навсегда, `leftGrow` жёстко застревал на 1). Живой лог
-    // (`adb logcat`) подтвердил ровно эту последовательность: `applied:1,
-    // baselineBefore:null` → успешный захват → на следующей же строке рендера
-    // baseline снова `null`. Фикс — сравнивать с ПРЕДЫДУЩИМ реальным
-    // значением (`prevColumnsHRef`), сбрасывать ТОЛЬКО когда оно было уже
-    // ненулевым и ДЕЙСТВИТЕЛЬНО изменилось (настоящий ресайз/поворот
-    // экрана) — первое измерение (`null → X`) для сброса не считается.
-    const prevColumnsHRef = useRef(null);
-    useEffect(() => {
-        if (prevColumnsHRef.current != null && prevColumnsHRef.current !== columnsH) {
-            leftBaselineHRef.current = null;
-            rightBaselineHRef.current = null;
-        }
-        prevColumnsHRef.current = columnsH;
-    }, [columnsH]);
-    const onLeftContentLayout = useCallback((e) => {
-        const { width, height } = e.nativeEvent.layout;
-        setLeftContentH(height);
-        setLeftContentW(width);
-        // Принимаем как natural-baseline ТОЛЬКО пока рост ещё не применён
-        // (см. докстринг выше) — иначе это уже ИСКАЖЁННОЕ (выросшее) значение.
-        if (appliedLeftGrowRef.current === 1) leftBaselineHRef.current = height;
-    }, []);
-    const onRightContentLayout = useCallback((e) => {
-        const height = e.nativeEvent.layout.height;
-        setRightContentH(height);
-        if (appliedRightGrowRef.current === 1) rightBaselineHRef.current = height;
-    }, []);
-    // Сжатие (transform:scale, контента БОЛЬШЕ доступной высоты) — БЕЗ
-    // изменений, тот же механизм, что и раньше: масштаб <1 никогда не
-    // переполняет границы колонки (paint-эффект уменьшает и без того
-    // умещавшийся контент), overflow:hidden — чистая страховка, а не
-    // рабочий механизм. Читает ЖИВОЙ leftContentH/rightContentH (см. докстринг
-    // выше — это безопасно и корректно, в отличие от роста).
-    const leftScale = (columnsH && leftContentH && leftContentH > columnsH) ? columnsH / leftContentH : 1;
-    const rightScale = (columnsH && rightContentH && rightContentH > columnsH) ? columnsH / rightContentH : 1;
-    // Рост (natural-высота МЕНЬШЕ доступной, 2026-09-26, по прямому запросу
-    // пользователя — "растянуть контент крупнее", а не просто прижать к низу)
-    // — НЕ transform:scale (тот же uniform-scale, применённый >1, растянул бы
-    // ШИРИНУ настолько же, насколько и высоту, а ширина колонки УЖЕ занята
-    // контентом на 100% — переполнение/обрезание по бокам, см. разбор в чате).
-    // Вместо paint-трансформации — РЕАЛЬНЫЙ размер элементов (sizeScale проп,
-    // см. RunnerCard.js/ReaperCard.js/DiceTray.js/AbilityZone.js): растёт
-    // только высота контента (иконки/аватары становятся крупнее, раздвигая
-    // СВОЙ собственный auto-height контейнер), ширина остаётся в рамках
-    // родителя, т.к. каждый компонент либо не имеет запаса по ширине вообще
-    // (зона усилений — 48% родителя, не меняется), либо клэмпится явно
-    // (карточки бегунов — единственное место, где 3 элемента стоят плотно в
-    // ряд БЕЗ запаса, см. maxAvatarSizeScale/leftGrow ниже). Считается от
-    // ЗАМОРОЖЕННОГО baseline (см. докстринг рефов выше), НЕ от живого
-    // leftContentH/rightContentH — иначе см. тот же докстринг за разбором
-    // бесконечного цикла.
-    const leftGrowRaw = (columnsH && leftBaselineHRef.current && leftBaselineHRef.current < columnsH)
-        ? columnsH / leftBaselineHRef.current
-        : 1;
-    const rightGrowRaw = (columnsH && rightBaselineHRef.current && rightBaselineHRef.current < columnsH)
-        ? columnsH / rightBaselineHRef.current
-        : 1;
-    // Клэмп по ширине — ТОЛЬКО для левой колонки (3 карточки бегунов плотно в
-    // ряд, avatarBoxCompact фиксированного пикс. размера без запаса). Правая
-    // колонка (кубики 2×2 + зоны усилений 48%) структурно безопасна без
-    // клэмпа — см. докстринги AbilityZone.js#sizeScale/DiceTray.js, у обоих
-    // естественный запас по ширине заведомо больше разумного роста от
-    // нехватки высоты.
-    //
-    // leftContentW — ширина ВСЕЙ leftColumnContent (реаper+ряд бегунов), уже
-    // за вычетом её собственного paddingHorizontal (см. styles.
-    // leftColumnContent — onLayout возвращает border-box САМОЙ leftContentW,
-    // которая уже учитывает её padding как часть общего бокса — т.е. ряд
-    // бегунов (runnerRow) реально доступен на leftContentW МИНУС paddingHorizontal
-    // самой leftColumnContent, дважды (левая+правая сторона)).
-    const RUNNER_ROW_GAP = spacing.xs; // styles.runnerRow#gap
-    const runnerCount = RUNNER_ORDER.length;
-    const maxLeftGrowByWidth = (() => {
-        if (!leftContentW) return 1;
-        const rowWidth = leftContentW - 2 * spacing.xs; // leftColumnContent#paddingHorizontal
-        const totalGap = (runnerCount - 1) * RUNNER_ROW_GAP;
-        const cardOuterWidth = (rowWidth - totalGap) / runnerCount;
-        const cardContentWidth = cardOuterWidth - 2 * RUNNER_CARD_COMPACT_PADDING_H;
-        return maxAvatarSizeScale(cardContentWidth);
-    })();
-    // Небольшой безопасный потолок роста (2026-09-26) — независимо от
-    // клэмпа по ширине, не даём панели раздуться до абсурдных размеров на
-    // экстремально низком/широком экране (контент почти пустой относительно
-    // доступной высоты) — визуально это выглядело бы страннее, чем
-    // умеренный остаточный зазор снизу.
-    const GROW_HARD_CAP = 1.6;
-    const leftGrow = Math.min(leftGrowRaw, maxLeftGrowByWidth, GROW_HARD_CAP);
-    const rightGrow = Math.min(rightGrowRaw, GROW_HARD_CAP);
-    // Мутация ПРЯМО в теле рендера (не в эффекте) — см. докстринг рефов выше:
-    // к моменту, когда onLayout сработает для ЭТОГО же рендера (строго после
-    // коммита), ref уже должен содержать sizeScale, который реально уйдёт
-    // детям в JSX ниже.
-    appliedLeftGrowRef.current = leftGrow;
-    appliedRightGrowRef.current = rightGrow;
-    // Зоны дропа (RunnerCard/AbilityZone) сами кэшируют оконные координаты
-    // через measureInWindow — та же болезнь, что и с прокруткой (см.
-    // докстринг remeasureTick выше): применение НОВОГО transform:scale само
-    // по себе НЕ вызывает onLayout у детей (transform — чисто paint-эффект),
-    // значит без явного пинка их кэш остался бы от ПРЕДЫДУЩЕГО масштаба.
-    // Раз scale меняется — форсируем тот же remeasure, что и раньше делали
-    // скролл/флик. sizeScale (рост) — РЕАЛЬНОЕ изменение размера, оно и без
-    // этого будит onLayout у детей естественным образом (см. handleLayout в
-    // RunnerCard.js/AbilityZone.js) — но remeasureTick тут не помешает,
-    // оставлен в тех же зависимостях для единообразия/на случай гонки между
-    // двумя источниками ре-layout'а.
-    useEffect(() => {
-        if (compactColumns) bumpRemeasure();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [leftScale, rightScale, leftGrow, rightGrow, compactColumns]);
+    // Авто-масштабирование колонок в compactColumns — **2026-09-30, ПОЛНОСТЬЮ
+    // УБРАНО по прямому запросу пользователя.** Хронология этого захода: рост
+    // сначала был реальным resize детей (`sizeScale`, до сегодня) с
+    // заморозкой baseline — баг оказался в том, что баланс замораживался под
+    // натуральную высоту ОДНОГО конкретного игрока и не подходил остальным
+    // (живая жалоба "высота плиток отличается между игроками"). Первая
+    // попытка фикса — перевести рост на paint-only `transform:scale`, единой
+    // формулой со сжатием — пользователь ЯВНО отверг: "масштабирование во
+    // все стороны, не только в высоту" (uniform scale растягивал и ширину) и
+    // подтвердил, что даже после этого масштаб между игроками расходился
+    // (клэмпы по ширине резались по-разному для разного контента — тот же
+    // класс проблемы в новом месте). На прямой вопрос "resize элементов или
+    // transform по Y" пользователь ответил ТРЕТьим вариантом, отвергающим
+    // оба: **"меняться должна только высота самой панели, а не элементов
+    // внутри"** — и отдельно потребовал вернуть ширину плиток бегунов "как
+    // было до правок". Итог — никакого масштабирования контента (карточек
+    // бегунов/Жнеца/кубиков/усилений) больше нет ВООБЩЕ, ни через resize, ни
+    // через transform: RunnerCard/ReaperCard/DiceTray/AbilityZone рендерятся
+    // ВСЕГДА в свой натуральный константный размер (`sizeScale` им больше не
+    // передаётся, дефолт 1 — сам проп и вся связанная с ним арифметика в
+    // этих файлах пока оставлены нетронутыми, просто никогда не используются
+    // отсюда). Это заодно и тривиально решает исходную жалобу — раз ничего
+    // не вычисляется от натуральной высоты контента, у разных игроков просто
+    // физически нечему отличаться, карточки одного константного размера у
+    // всех. `overflow:hidden` на колонках (styles.scaleClip) оставлен чистой
+    // страховкой на случай, если натуральный контент когда-нибудь не
+    // поместится по высоте (не рабочий механизм, просто не даёт вылезти за
+    // пределы соседних блоков) — активного скролла пользователь тоже отверг
+    // ранее, так что это осознанный компромисс на редкий крайний случай, не
+    // возврат к старой проблеме "обрезает/скроллит".
 
     // Ghost-превью перетаскиваемого кубика — ТОЛЬКО веб. Жалоба пользователя:
     // в веб-версии сам кубик во время драга рисуется ЗА карточкой бегуна
@@ -614,7 +439,6 @@ export default function PlayerInfoPanel({
             reaper={reaper}
             color={activePlayer.color}
             active={String(reaper.id) === String(activePlayer.activeRunnerId)}
-            sizeScale={leftGrow}
         />
     );
 
@@ -670,7 +494,6 @@ export default function PlayerInfoPanel({
                 onMoveDiceMeasured={handleMeasured}
                 compact={compactColumns}
                 remeasureTick={remeasureTick}
-                sizeScale={leftGrow}
             />
         );
     });
@@ -691,7 +514,6 @@ export default function PlayerInfoPanel({
             compact={compactColumns}
             color={activePlayer.color}
             pulseKeys={abilityPulseKeys}
-            sizeScale={rightGrow}
         />
     );
 
@@ -708,12 +530,12 @@ export default function PlayerInfoPanel({
     // тут стоял measureInWindow+RAF+setTimeout(150) (нужен был, чтобы поймать
     // финальную ширину плитки, растянутой по родителю — Android иногда
     // досчитывает flex-ширину не с первого прохода layout'а, см. старый
-    // комментарий ниже). Но measureInWindow ОТРАЖАЕТ уже применённый
-    // `transform:scale` колонки (см. leftScale/rightScale выше) — а
-    // FramePanel рисуется ВНУТРИ той же самой масштабируемой колонки, значит
-    // получал УЖЕ уменьшенный размер и ужимался transform'ом ЕЩЁ РАЗ поверх
-    // этого — рамка становилась вдвое меньше контента. `onLayout` (тот же
-    // принцип, что уже используют leftContentH/rightContentH выше) отдаёт
+    // комментарий ниже). Но measureInWindow тогда отражал уже применённый
+    // `transform:scale` колонки (авто-масштабирование, с 2026-09-30 убрано
+    // целиком, см. докстринг у styles.columns/`compactColumns` ниже) — а
+    // FramePanel рисуется ВНУТРИ той же самой колонки, значит получал УЖЕ
+    // уменьшенный размер и ужимался transform'ом ЕЩЁ РАЗ поверх этого —
+    // рамка становилась вдвое меньше контента. `onLayout` отдаёт
     // НАТУРАЛЬНЫЙ, не зависящий от transform размер — плюс он и без ручного
     // RAF/setTimeout сам перевызывается на каждое реальное изменение
     // layout'а (в т.ч. тот самый "лишний проход" на Android), это даже
@@ -795,20 +617,10 @@ export default function PlayerInfoPanel({
                     // Размер кубика в compactColumns — 28→40 (2026-09-20, по
                     // прямому запросу пользователя "сделай кубики побольше",
                     // сразу после того, как они переехали в 2×2-сетку внутри
-                    // общей рамки, см. DiceTray.js). 2026-09-26: точечная
-                    // попытка уменьшить (40→34) под нехватку высоты columns
-                    // ОТКАЧЕНА по прямому запросу пользователя — вместо
-                    // подрезания конкретных размеров вся колонка теперь сама
-                    // масштабируется целиком под реально доступную высоту
-                    // (см. leftScale/rightScale и columns/leftColumn/
-                    // rightColumn в рендере ниже) — константа тут снова
-                    // "как задумано", масштаб уменьшает её только когда
-                    // реально не хватает места. 2026-09-26: при РОСТЕ (rightGrow>1,
-                    // содержимого меньше доступной высоты) — растим кубик
-                    // РЕАЛЬНЫМ размером по той же причине, что и в
-                    // AbilityZone.js/RunnerCard.js (transform:scale>1 переполнил
-                    // бы ширину, см. докстринг leftGrow/rightGrow выше).
-                    {...(compactColumns ? { size: Math.round(40 * rightGrow) } : {})}
+                    // общей рамки, см. DiceTray.js) — константа "как задумано",
+                    // никакого масштабирования под доступную высоту больше нет
+                    // (см. докстринг у styles.columns/`compactColumns` ниже).
+                    {...(compactColumns ? { size: 40 } : {})}
                 />
             </View>
             <View style={styles.abilitiesWrap}>{abilitiesNode}</View>
@@ -843,42 +655,28 @@ export default function PlayerInfoPanel({
                     (RunnerCard#compact, см. её докстринг) — 2026-09-20, по
                     прямому запросу пользователя: высота ряда теперь равна
                     высоте ОДНОЙ плитки, а не трёх стопкой, чтобы все 4 плитки
-                    (Жнец+3) помещались без прокрутки. 2026-09-26: сама
-                    подстраховка на случай нехватки места сменилась со
-                    скролла на масштабирование (см. leftScale/columns выше) —
-                    колонка теперь ВСЕГДА показывает весь контент целиком,
-                    просто может стать компактнее. Зона дропа кубика хода —
-                    вся карточка целиком (см. RunnerCard, сама меряет и
-                    репортит себя) — remeasureTick форсирует у неё повторный
-                    measureInWindow не только после скролла (тут скролла
-                    больше нет), но и после каждого изменения leftScale/
-                    rightScale (новый transform не меняет layout сам по себе,
-                    значит и не будит onLayout ребёнка). */}
+                    (Жнец+3) помещались без прокрутки. **2026-09-30 — авто-
+                    масштабирование (и до него, resize-версия роста) убрано
+                    целиком по прямому запросу пользователя** (см. докстринг
+                    выше, где раньше стояли onColumnsLayout/leftScale/
+                    rightScale) — карточки всегда своего натурального
+                    константного размера, никакого transform/resize. Зона
+                    дропа кубика хода — вся карточка целиком (см. RunnerCard,
+                    сама меряет и репортит себя). */}
                 {compactColumns ? (
-                    <View style={styles.columns} onLayout={onColumnsLayout}>
-                        {/* Раньше — ScrollView (скроллить лишнее, если контент не
-                            помещался). По прямому запросу пользователя, 2026-09-26,
-                            заменено на transform:scale под реально измеренную
-                            доступную высоту (см. leftScale выше) — панель ВСЕГДА
-                            влезает целиком, без скролла и без обрезки, просто
-                            становится компактнее на тесных экранах. overflow:hidden
-                            — страховка на первый рендер, пока scale ещё не посчитан
-                            (natural-размер контента на миг может быть больше
-                            columnsH, ДО того как onLayout вернёт реальные цифры). */}
+                    <View style={styles.columns}>
+                        {/* overflow:hidden (styles.scaleClip) — чистая страховка
+                            на случай, если натуральный контент когда-нибудь не
+                            поместится по высоте столбца, не рабочий механизм
+                            (масштабирования, подгоняющего под неё, больше нет). */}
                         <View style={[styles.leftColumn, styles.scaleClip]}>
-                            <View
-                                onLayout={onLeftContentLayout}
-                                style={[styles.leftColumnContent, { transform: [{ scale: leftScale }], transformOrigin: 'top' }]}
-                            >
+                            <View style={styles.leftColumnContent}>
                                 {reaperNode}
                                 <View style={styles.runnerRow}>{runnerCards}</View>
                             </View>
                         </View>
                         <View style={[styles.rightColumn, styles.scaleClip]}>
-                            <View
-                                onLayout={onRightContentLayout}
-                                style={[styles.rightColumnContent, { transform: [{ scale: rightScale }], transformOrigin: 'top' }]}
-                            >
+                            <View style={styles.rightColumnContent}>
                                 {diceAbilitiesTile}
                             </View>
                         </View>
@@ -1071,11 +869,12 @@ const styles = StyleSheet.create({
     //
     // 2026-09-26: leftColumn/rightColumn были ScrollView (скроллили лишнее,
     // если контент не помещался по высоте) — по прямому запросу пользователя
-    // заменены на обычные View с transform:scale на внутреннем контенте (см.
-    // leftScale/rightScale и место рендера) — колонка ВСЕГДА показывает
-    // содержимое целиком, без скролла, просто компактнее, когда реальной
-    // высоты не хватает. `scaleClip` (overflow:hidden) — только страховка на
-    // первый кадр, пока scale ещё не посчитан.
+    // заменены на обычные View, недостаток места компенсировался
+    // transform:scale контента. **2026-09-30 — само масштабирование убрано
+    // целиком** (см. докстринг у compactColumns-ветки рендера выше) —
+    // карточки всегда натурального размера, `scaleClip` (overflow:hidden)
+    // остался чистой страховкой на случай нехватки места, не рабочим
+    // механизмом.
     //
     // **Настоящая причина "не помещается имя бегуна на Android"
     // (2026-09-19)** — НЕ размер самой карточки (RunnerCard тут не трогали),
@@ -1121,7 +920,25 @@ const styles = StyleSheet.create({
     // впритык к границам своей колонки (по прямому запросу пользователя
     // "уменьшить ширину" обеих зон) — видимый отступ с обеих сторон, сама
     // ширина колонок (2:1) не меняется.
-    leftColumnContent: { paddingBottom: spacing.sm, paddingHorizontal: spacing.xs },
+    //
+    // `flex: 1` + `justifyContent: 'space-between'` — 2026-09-30, по прямому
+    // запросу пользователя ("сделать высоту плиток бегунов статично длинной
+    // в высоту до кнопок табов, аналогично плитке с усилениями"). `leftColumn`
+    // (родитель) уже растянут на всю высоту `columns` через cross-axis
+    // stretch (см. её докстринг) — раньше этим пользовался только сам бокс,
+    // а `leftColumnContent` внутри был только настолько высоким, насколько
+    // требовал его натуральный контент, оставляя пустоту снизу. `flex:1`
+    // заставляет ЕГО заполнить весь этот уже-полный бокс, `space-between`
+    // разводит Жнеца и ряд бегунов к противоположным краям — так колонка
+    // визуально доходит до низа (до кнопок табов), БЕЗ изменения размера
+    // самих карточек (см. ROAD_BONUS_SIZE_COMPACT в RunnerCard.js — теперь их
+    // натуральная высота одинакова у любого игрока, растягивать точно под
+    // неё больше не нужно). paddingBottom — sm→xs, тем же заходом, что
+    // marginTop-цепочка в RunnerCard.js#cardCompact — после того, как
+    // roadBonus-квадрат вырос до размера кубика хода, натуральная высота
+    // стопки (Жнец+ряд бегунов) перестала помещаться в доступную высоту
+    // колонки без этого зазора, роадBonus-квадрат обрезался снизу.
+    leftColumnContent: { flex: 1, justifyContent: 'space-between', paddingBottom: spacing.xs, paddingHorizontal: spacing.xs },
     // Ряд из 3 вертикальных плиток бегунов, ПОД Жнецом (2026-09-20, см.
     // RunnerCard.js#compact) — gap, тот же приём, что уже используют columns/
     // DiceTray/turnBtnRow в этом файле/проекте.

@@ -1,8 +1,14 @@
 // src/components/ui/LoadingCard.js
 import React from 'react';
-import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
+import { Image, StyleSheet, Text, View } from 'react-native';
 import LoadingTip from './LoadingTip';
 import { colors, spacing, font, radius } from '../../theme';
+
+// Спиннер — тот же ассет чёрной дыры, что у клетки-аномалии на доске
+// (assets/images/road/black_hole_1.gif), по прямому запросу пользователя
+// вместо системного ActivityIndicator — тематически подходит игре про
+// звёздных бегунов.
+const SPINNER_SOURCE = require('../../assets/images/road/black_hole_1.gif');
 
 /**
  * Плашка под спиннер + подпись + подсказку (LoadingTip) — по прямому
@@ -23,7 +29,7 @@ import { colors, spacing, font, radius } from '../../theme';
 export default function LoadingCard({ label, children, style }) {
     return (
         <View style={[styles.card, style]}>
-            <ActivityIndicator size="large" color={colors.primary} />
+            <Image source={SPINNER_SOURCE} style={styles.spinner} />
             {!!label && <Text style={styles.label} noGlobalTint>{label}</Text>}
             <LoadingTip />
             {children}
@@ -32,6 +38,10 @@ export default function LoadingCard({ label, children, style }) {
 }
 
 const styles = StyleSheet.create({
+    spinner: {
+        width: 64,
+        height: 64,
+    },
     card: {
         backgroundColor: colors.overlayPlate,
         borderRadius: radius.lg,

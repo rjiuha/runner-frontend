@@ -133,7 +133,11 @@ const styles = StyleSheet.create({
     // именно по ВЫСОТЕ, см. AVATAR_SIZE выше, не по ширине). padding —
     // spacing.xs (было spacing.sm, как у RunnerCard) — половина, даёт ровно
     // вдвое меньшую итоговую высоту плитки.
-    card: { width: '100%', padding: spacing.xs, marginBottom: spacing.xs },
+    // marginBottom — xs→2 (2026-09-30): тем же заходом, что в
+    // RunnerCard.js#cardCompact — roadBonus-квадрат у соседнего ряда
+    // бегунов вырос до размера кубика хода, суммарная высота (Жнец+ряд)
+    // перестала помещаться в доступную высоту колонки без этого зазора.
+    card: { width: '100%', padding: spacing.xs, marginBottom: 2 },
     // borderRadius — та же величина, что у PersonPanel.js#styles.wrap
     // (NOTCH_RADIUS, тот же фикс, что и в RunnerCard.js#activeRing, 2026-09-26).
     activeRing: { borderWidth: 3, borderRadius: NOTCH_RADIUS },

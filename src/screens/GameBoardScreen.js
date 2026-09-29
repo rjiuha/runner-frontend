@@ -848,6 +848,31 @@ export default function GameBoardScreen({ route, navigation }) {
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
 
+    // **2026-09-30, по прямому запросу пользователя** — жетоны урона на
+    // карточке (PlayerInfoPanel/RunnerCard) и спрайт бегуна на доске
+    // (BoardGrid/RunnerToken) читают `runner.status` НАПРЯМУЮ из game-стейта,
+    // который реducer обновляет мгновенно, синхронно с версионным событием —
+    // раньше, чем успевает доиграть анимация, которую этот же статус
+    // запустил (взрыв мины → gotShot; см. lib/runnerAnimTriggers.js#fromStatus).
+    // Живая жалоба: "танк на danger сразу стал damaged, а не после взрыва и
+    // got_shot". `displayRunners` — ОДНА подмена статуса на оба потребителя
+    // (доска и панель читают её ОДИНАКОВО, не рассинхронизируются): пока у
+    // бегуна активен шаг очереди со своим `fromStatus` (сейчас — только
+    // 'gotShot'/'destroyed', см. триггеры), рендерится СТАРЫЙ статус; как
+    // только шаг доигрывает и `anims[id]` очищается — `displayRunners`
+    // автоматически возвращает живой (уже актуальный) статус, без доп.
+    // таймеров/подписок. `runners` (без подмены) НЕ ТРОГАЕМ — вся игровая
+    // ЛОГИКА (легальные ходы, activeRunner и т.п.) должна видеть РЕАЛЬНЫЙ
+    // статус в любой момент, подмена нужна ТОЛЬКО для рендера. НЕ подтверждено
+    // живьём.
+    const displayRunners = useMemo(
+        () => runners.map((r) => {
+            const fromStatus = runnerAnim.anims[r.id]?.fromStatus;
+            return fromStatus != null && fromStatus !== r.status ? { ...r, status: fromStatus } : r;
+        }),
+        [runners, runnerAnim.anims],
+    );
+
     const [activePlayerId, setActivePlayerId] = useState(null);
     // { ability: 'heal'|'reaper', diceIndex } — ждём второй тап (карточка/клетка), см. шапку файла
     const [pendingAbility, setPendingAbility] = useState(null);
@@ -1003,9 +1028,11 @@ export default function GameBoardScreen({ route, navigation }) {
                 // roadBonusValue ниже).
                 step: p.step,
                 activeRunnerId: p.activeRunner ?? null,
-                runners: runners.filter((r) => r.playerId === p.id),
+                // displayRunners, не runners — см. её докстринг (жетоны урона
+                // не должны мигать раньше анимации на доске).
+                runners: displayRunners.filter((r) => r.playerId === p.id),
             })),
-        [gamePlayers, runners],
+        [gamePlayers, displayRunners],
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
@@ -1284,11 +1311,15 @@ export default function GameBoardScreen({ route, navigation }) {
             // на доске вместо кнопок ↖/↑/↗ (единообразно с MOVE, по прямому
             // запросу пользователя, 2026-09-07). Появляется только ПОСЛЕ
             // того, как "прилёт" Жнеца успел доиграть (см. reaperPreviewReady
-            // выше) — до этого highlightedCells пуст, тапать некуда. СТРОГО
-            // вперёд (UP) — по прямому уточнению пользователя, 2026-09-08:
-            // "стрелять строго по прямой должен только Жнец", остальные типы
-            // (см. SHOOT-ветку ниже) стреляют по всем 3 направлениям, как
-            // обычный MOVE.
+            // выше) — до этого highlightedCells пуст, тапать некуда. Все 3
+            // направления вперёд, как у обычного MOVE/SHOOT (2026-09-30, по
+            // прямому запросу пользователя — реверс прежнего решения
+            // 2026-09-08 "стрелять строго по прямой должен только Жнец").
+            // Бэк это уже поддерживал всегда: `ReaperService::run()`
+            // (read-only) прогоняет `direction` через ТОТ ЖЕ DirectionService,
+            // что и обычный ход, `ReaperDTO`/`DetailsReaperDTO` не
+            // ограничивают направление одним UP — ограничение было чисто
+            // фронтовым (см. историю коммита).
             //
             // Раньше клетка подсвечивалась БЕЗ проверки раунда/занятости —
             // жалоба пользователя, 2026-09-08: диалог "выстрелить?" появлялся,
@@ -1305,7 +1336,7 @@ export default function GameBoardScreen({ route, navigation }) {
             // остаётся только «Без выстрела» (см. stepInstruction/canReaperShoot).
             const cells = game.round > 0
                 ? forwardNeighbors(pendingReaperPlacement)
-                    .filter((pos) => pos.direction === 'UP' && findRunnerAt(runners, pos))
+                    .filter((pos) => findRunnerAt(runners, pos))
                     .map(cellKey)
                 : [];
             return { highlightedCells: new Set(cells), tapMode: 'reaperShoot' };
@@ -1621,17 +1652,72 @@ export default function GameBoardScreen({ route, navigation }) {
     // увеличивает его на 1 СТРОГО при завершении каждого наката — на
     // момент SELECT следующего наката это уже другое число, коллизия
     // невозможна независимо от того, какой кубик перетащил игрок.
+    // **2026-09-30, живая жалоба пользователя** — на вебе после наката
+    // иногда виден тост "Не удалось выполнить действие (не твой ход)",
+    // хотя сам накат фактически прошёл. Причина, воспроизведённая чтением
+    // кода: `autoRollMoveKeyRef` СБРАСЫВАЛСЯ в `null` в любой момент, когда
+    // `isRollMove` временно читался как false — а бандл событий (см.
+    // 2026-09-27 в CLAUDE.md) применяется реducer'ом ПО ОДНОМУ событию за
+    // рендер, значит между применением событий бандла возможен промежуточный
+    // рендер, где `activeRunner` УЖЕ отражает какое-то более позднее событие
+    // накат-хода (напр. коллизию, обнулившую dice/rollDice), но ЕЩЁ не то,
+    // что реально сдвинуло `rollMoves`/шаг игрока дальше. Если на ЭТОМ
+    // промежуточном рендере guard успевал сброситься в null, а СЛЕДУЮЩИЙ
+    // (после полного применения бандла) рендер почему-то снова видел
+    // isRollMove===true с ТЕМ ЖЕ `rollMoves` (не исключено при повторной
+    // синхронизации/reconnect) — эффект стрелял ПОВТОРНО тем же накатом,
+    // хотя бэк его уже обработал → "не твой ход"/"Wrong step". Фикс —
+    // guard больше НЕ сбрасывается в null вообще, ключ монотонен
+    // (`rollMoves` только растёт за партию) — раз конкретный `rollMoves` уже
+    // обработан, он никогда не запустит накат повторно, независимо от того,
+    // сколько раз isRollMove промелькнёт false/true между рендерами.
+    // НЕ подтверждено живьём отдельно от изначальной жалобы — рассуждение по
+    // чтению кода бандлинга, живого лога с меткой конкретно этого случая не
+    // было.
+    // Накат НЕ должен предлагать доп. выстрел — по прямому запросу
+    // пользователя, 2026-09-30: "накат может привести к коллизии и другим
+    // событиям, связанным с расположением на доске, но дополнительных
+    // выстрелов давать не должен". Бэк предлагает SHOOT после ЛЮБОГО
+    // перемещения (в т.ч. накат-хода), если рядом оказался легальный
+    // прицел — та же логика, что и у обычного ручного MOVE (см.
+    // PLAYER_STEP.SHOOT ниже) — отличать накат от обычного хода умеет
+    // только фронт. `pendingRollShootSkipRef` взводится ПРЯМО перед
+    // авто-накатом (см. следующий эффект) и держится, пока шаг игрока не
+    // определится — как только он СТАНОВИТСЯ известен: SHOOT → авто-отказ
+    // (`shoot(false)`, тот же вызов, что делает игрок кнопкой "Пропустить
+    // выстрел"), любой ДРУГОЙ шаг (ROAD_BONUS/новый SELECT/конец хода) →
+    // просто гасим флаг без действия — эти шаги (в т.ч. диалог коллизии,
+    // управляемый ОТДЕЛЬНЫМ `game.extraTurnPlayer`, не `myStep`) должны
+    // остаться штатными, интерактивными. НЕ подтверждено живьём.
+    const pendingRollShootSkipRef = useRef(false);
+    useEffect(() => {
+        if (!pendingRollShootSkipRef.current || busy) return;
+        if (!myTurn) {
+            pendingRollShootSkipRef.current = false;
+            return;
+        }
+        if (myStep === PLAYER_STEP.SHOOT) {
+            pendingRollShootSkipRef.current = false;
+            runAction(() => runnerGameApi.shoot(false), { skipStuckWatch: true });
+            return;
+        }
+        if (myStep === PLAYER_STEP.SELECT) {
+            pendingRollShootSkipRef.current = false;
+        }
+    }, [myStep, myTurn, busy, runAction]);
+
     const autoRollMoveKeyRef = useRef(null);
     useEffect(() => {
         if (!myTurn || busy || myStep !== PLAYER_STEP.MOVE || !activeRunner) return;
         const isRollMove = activeRunner.dice === 0 && activeRunner.rollDice != null;
-        if (!isRollMove) {
-            autoRollMoveKeyRef.current = null;
-            return;
-        }
+        if (!isRollMove) return;
         const key = `${activeRunner.id}:${activeRunner.rollMoves}`;
         if (autoRollMoveKeyRef.current === key) return;
         autoRollMoveKeyRef.current = key;
+        // Накат сам решает не давать доп. выстрел (см. эффект выше) —
+        // коллизия и другие события от расположения на доске по-прежнему
+        // обрабатываются как обычно, глушится только SHOOT.
+        pendingRollShootSkipRef.current = true;
         runAction(() => runnerGameApi.move(null, 'UP'), { skipStuckWatch: true });
     }, [myTurn, busy, myStep, activeRunner, runAction]);
 
@@ -2235,7 +2321,7 @@ export default function GameBoardScreen({ route, navigation }) {
             runners={
                 (trackShiftPhase === 'settling' || trackShiftPhase === 'wiping')
                     ? trackShiftRunners
-                    : runners
+                    : displayRunners
             }
             playerColorById={playerColorById}
             selectedRunnerId={activeRunner?.id ?? null}

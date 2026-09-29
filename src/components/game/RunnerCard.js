@@ -83,6 +83,18 @@ const DAMAGE_ICON_SIZE = 22;
 const AVATAR_SIZE_COMPACT = 44;
 const DICE_SIZE_COMPACT = 30;
 const DAMAGE_ICON_SIZE_COMPACT = 14;
+// Бонус хода — 2026-09-30, по прямому запросу пользователя: раньше это была
+// голая строка "+N", рендерившаяся ТОЛЬКО когда roadBonus не null — та самая
+// причина, почему натуральная высота карточки различалась между бегунами
+// (нашёл сам пользователь, живьём: "вижу, что это связано с наличием у test
+// скаута бонуса дороги"). Теперь — такой же ВСЕГДА видимый квадрат-фрейм,
+// как у слота кубика хода (diceBoxCompact/DICE_SIZE_COMPACT), с прочерком
+// вместо числа, когда бонуса нет — карточка занимает одну и ту же высоту
+// независимо от того, есть сейчас бонус или нет. Размер — ТОТ ЖЕ, что и у
+// фрейма кубика хода (2026-09-30, по прямому запросу пользователя), не своя
+// отдельная константа — оба слота визуально одного веса.
+const ROAD_BONUS_SIZE_COMPACT = DICE_SIZE_COMPACT;
+const ROAD_BONUS_FRAME_SIZE_COMPACT = { width: ROAD_BONUS_SIZE_COMPACT, height: ROAD_BONUS_SIZE_COMPACT };
 // Platform.OS не меняется в течение жизни приложения — модульная константа,
 // не пересчитывается на каждый рендер. См. isAndroid ниже (имя бегуна
 // скрыто, кружки урона вертикально — по прямому запросу пользователя,
@@ -457,20 +469,29 @@ function RunnerCard({
                             />
                         ))}
                     </View>
+                    {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой НАД слотом кубика
+                        хода (2026-09-20, по прямому запросу пользователя "не
+                        кружочком рядом с фреймом кубика, а отдельно" — раньше
+                        был уголком-бейджем ПОВЕРХ diceBoxCompact; 2026-09-30,
+                        по прямому запросу пользователя, переставлен ВЫШЕ
+                        самого фрейма, было под ним). "Накаты:N" вместо "×N" —
+                        тоже 2026-09-30, для ясности подписи. */}
+                    <Text style={styles.rollCountCompact} noGlobalTint>Накаты:{rollsAvailable}</Text>
                     <View style={[styles.diceBoxCompact, sizeScale !== 1 && { width: diceSizeCompact, height: diceSizeCompact }]}>
                         <FramePanel size={diceFrameSizeCompact} />
                         <Text style={styles.diceValueCompact} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
                     </View>
-                    {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой ПОД слотом кубика
-                        (2026-09-20, по прямому запросу пользователя "не
-                        кружочком рядом с фреймом кубика, а отдельно") —
-                        раньше был уголком-бейджем ПОВЕРХ diceBoxCompact. */}
-                    <Text style={styles.rollCountCompact} noGlobalTint>×{rollsAvailable}</Text>
-                    {/* Бонус хода — см. roadBonus проп/докстринг файла — ТОЛЬКО
-                        когда данные реально пришли с бэка, иначе пусто. */}
-                    {roadBonus != null && (
-                        <Text style={styles.roadBonusCompact} noGlobalTint>+{roadBonus}</Text>
-                    )}
+                    {/* Бонус хода — см. roadBonus проп/докстринг файла и
+                        ROAD_BONUS_SIZE_COMPACT выше — ВСЕГДА видимый квадрат-
+                        фрейм (аналогично слоту кубика хода), не голая строка:
+                        прочерк вместо значения, когда бонуса сейчас нет,
+                        чтобы карточка не меняла высоту от его наличия. */}
+                    <View style={styles.roadBonusBoxCompact}>
+                        <FramePanel size={ROAD_BONUS_FRAME_SIZE_COMPACT} />
+                        <Text style={styles.roadBonusValueCompact} noGlobalTint>
+                            {roadBonus != null ? `+${roadBonus}` : '—'}
+                        </Text>
+                    </View>
                 </View>
             ) : (
                 // Горизонтальная раскладка (альбомная) — аватар слева, имя+
@@ -626,12 +647,22 @@ const styles = StyleSheet.create({
     // --- Вертикальная раскладка (compact) ---
     colInner: { alignItems: 'center', width: '100%' },
     avatarBoxCompact: { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT, alignItems: 'center', justifyContent: 'flex-end' },
-    nameCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 11, marginTop: 3, maxWidth: '100%' },
-    damageRowCompact: { flexDirection: 'row', marginTop: 3 },
+    // marginTop у всей цепочки ниже (name/damageRow/diceBox/roadBonusBox) —
+    // ужата 2026-09-30 (см. докстринг у cardCompact#paddingVertical выше) под
+    // выросший на весь размер кубика roadBonus-квадрат.
+    nameCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 11, marginTop: 0, maxWidth: '100%' },
+    damageRowCompact: { flexDirection: 'row', marginTop: 1 },
     damageIconCompact: { width: DAMAGE_ICON_SIZE_COMPACT, height: DAMAGE_ICON_SIZE_COMPACT },
     damageIconCompactGap: { marginLeft: 4 },
-    diceBoxCompact: { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT, alignItems: 'center', justifyContent: 'center', marginTop: 4 },
+    diceBoxCompact: { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
     diceValueCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 12 },
-    rollCountCompact: { color: colors.textOnDarkSecondary, fontWeight: 'bold', fontSize: 10, marginTop: 2 },
-    roadBonusCompact: { color: colors.success, fontWeight: 'bold', fontSize: 10, marginTop: 1 },
+    rollCountCompact: { color: colors.textOnDarkSecondary, fontWeight: 'bold', fontSize: 9, marginTop: 0 },
+    roadBonusBoxCompact: {
+        width: ROAD_BONUS_SIZE_COMPACT,
+        height: ROAD_BONUS_SIZE_COMPACT,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: 0,
+    },
+    roadBonusValueCompact: { color: colors.success, fontWeight: 'bold', fontSize: 10 },
 });

@@ -33,13 +33,19 @@ const TRANSPARENT_NAV_THEME = {
 };
 
 /**
- * Кастомный шрифт (spaceranger-rus.otf, 2026-09-13, по прямому запросу
- * пользователя — "шрифт в игре как assets/fonts") — применяется ГЛОБАЛЬНО,
- * не точечно по экранам: приложение почти везде использует голый `Text`/
- * `TextInput` из react-native (не общий UI-компонент), а заводить свою
- * обёртку и менять импорт на каждом из десятков экранов — избыточно много
- * правок ради одной константы. Ключ 'SpaceRanger' в useFonts должен
- * СОВПАДАТЬ с theme#fontFamily.
+ * Кастомный шрифт — применяется ГЛОБАЛЬНО, не точечно по экранам:
+ * приложение почти везде использует голый `Text`/`TextInput` из
+ * react-native (не общий UI-компонент), а заводить свою обёртку и менять
+ * импорт на каждом из десятков экранов — избыточно много правок ради одной
+ * константы. Ключ в useFonts должен СОВПАДАТЬ с theme#fontFamily.
+ *
+ * 2026-09-13, по прямому запросу пользователя — "шрифт в игре как
+ * assets/fonts" (изначально spaceranger-rus.otf). **2026-09-30 — несколько
+ * заходов подряд, пользователь пробует варианты**: JeuDePixel-Regular.otf →
+ * Robofan.ttf → Xolonium-Regular.otf (файлы заранее положены в assets/fonts,
+ * подключаются по очереди, менять тут только require+ключ+theme#fontFamily).
+ * Один файл, БЕЗ отдельного bold-начертания — тот же повод для
+ * `fontWeight: 'normal'`-форсинга ниже, что и раньше.
  *
  * `Text.defaultProps`/`TextInput.defaultProps` тут НЕ РАБОТАЮТ — в этой
  * версии RN (0.85) оба компонента функциональные, а не классовые
@@ -170,7 +176,7 @@ TextInput.defaultProps.style = [TextInput.defaultProps.style, { fontFamily: CUST
  */
 export default function App() {
   const [fontsLoaded] = useFonts({
-    SpaceRanger: require('./src/assets/fonts/spaceranger-rus.otf'),
+    Xolonium: require('./src/assets/fonts/Xolonium-Regular.otf'),
   });
 
   // Имя текущего роута — для музыки меню/лобби (hooks/useMenuMusic.js).
