@@ -39,6 +39,7 @@ import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import { ROUTES } from '../navigation/routes';
 import {
+    BACKEND_TO_FRONTEND_PLAYER_COLOR,
     BOARD_LAYOUT, GAME_STATUS, MOBILE_FRAME_BLEED, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STATUS, PLAYER_STEP,
     RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
 } from '../constants/GameConstants';
@@ -239,7 +240,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // MobileFrameOverlay ниже), та же болячка, что была у EventLogPanel
     // (см. его комментарий).
     const insets = useSafeAreaInsets();
-    const { user } = useAuth();
+    const { user, isLoading: authLoading } = useAuth();
     const gameId = route?.params?.gameId ?? null;
     // См. LobbyScreen.js — true, только если сюда попали ПРЯМО из
     // "лобби только что создало игру" (единственный надёжный сигнал для
@@ -911,11 +912,13 @@ export default function GameBoardScreen({ route, navigation }) {
     }, [pendingReaperPlacement]);
 
     // По умолчанию — свой игрок, как только придут данные. Один раз (пока не выбран вручную).
+    // Ждём authLoading===false: иначе, если gamePlayers приходят раньше, чем догрузится user,
+    // "себя" не находим и НАВСЕГДА фиксируем чужого gamePlayers[0] (см. CLAUDE.md TODO, 2026-09-28).
     useEffect(() => {
-        if (activePlayerId != null || gamePlayers.length === 0) return;
+        if (activePlayerId != null || gamePlayers.length === 0 || authLoading) return;
         const me = gamePlayers.find((p) => p.user?.id === user?.id);
         setActivePlayerId(me?.id ?? gamePlayers[0].id);
-    }, [gamePlayers, user, activePlayerId]);
+    }, [gamePlayers, user, activePlayerId, authLoading]);
 
     const myPlayer = useMemo(() => gamePlayers.find((p) => p.user?.id === user?.id) ?? null, [gamePlayers, user]);
     const myTurn = !!myPlayer && game != null && String(game.playerOrder) === String(myPlayer.id);
@@ -1019,7 +1022,13 @@ export default function GameBoardScreen({ route, navigation }) {
                 // Цвет — с бэка (RunnerPlayer.color, случайно и без повторов
                 // назначается при создании партии). Индекс — фолбэк на случай
                 // партий, созданных до появления этого поля.
-                color: PLAYER_COLOR_HEX[p.color] ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
+                // BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color —
+                // 2026-10-01, см. её докстринг в GameConstants.js: ЕДИНСТВЕННАЯ
+                // точка перевода "green" (бэк) → "purple" (фронт), дальше по
+                // коду (PlayerInfoPanel.js и т.д.) "green" уже нигде не
+                // встречается, только готовый hex.
+                color: PLAYER_COLOR_HEX[BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color]
+                    ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 ability: p.ability,
                 // step — 2026-09-20, нужен PlayerInfoPanel/RunnerCard, чтобы
@@ -2424,6 +2433,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         </View>
                     )}
                     roadBonusValue={game.trackGain}
+                    gameRound={game.round}
                 />
             )}
 
@@ -2540,6 +2550,7 @@ export default function GameBoardScreen({ route, navigation }) {
                             </View>
                         )}
                         roadBonusValue={game.trackGain}
+                        gameRound={game.round}
                     />
                     {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
                         (шов с дорогой, см. комментарий у неё выше) — рамки просто

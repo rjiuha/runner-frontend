@@ -1,11 +1,12 @@
 // src/components/game/ReaperCard.js
 import React, { useCallback, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 import RunnerToken from './RunnerToken';
 import PersonPanel, { NOTCH_RADIUS } from '../ui/PersonPanel';
 import FramePanel from '../ui/FramePanel';
+import PulseHighlight from '../ui/PulseHighlight';
 import { FRAME_PANEL_BACKGROUND, FRAME_PANEL_BACKGROUND_CORNER, RUNNER_TYPES } from '../../constants/GameConstants';
-import { colors, font, spacing } from '../../theme';
+import { spacing } from '../../theme';
 
 // ВДВОЕ меньше, чем у обычных бегунов (RunnerCard.js#AVATAR_SIZE=64) — по
 // прямому запросу пользователя "плитку для жнеца вдвое уже [по высоте], чем
@@ -14,7 +15,11 @@ import { colors, font, spacing } from '../../theme';
 // высоте). padding у card ниже тоже уменьшен (spacing.xs вместо spacing.sm) —
 // итоговая высота плитки (padding*2 + AVATAR_SIZE) ровно вдвое меньше
 // RunnerCard.js#styles.card (было 8*2+64=80, теперь 4*2+32=40).
-const AVATAR_SIZE = 32;
+// Экспортирован (2026-10-01) — PlayerInfoPanel.js считает от него sizeScale,
+// чтобы вырастить аватар Жнеца до размера кубика бонуса дороги (см. её
+// докстринг и место передачи sizeScale ниже) без дублирования магического
+// числа 32 в двух файлах.
+export const AVATAR_SIZE = 32;
 // Стабильный объект (создан ОДИН раз, не на каждый рендер) — тот же приём,
 // что и AVATAR_FRAME_SIZE в RunnerCard.js: FramePanel обёрнут в React.memo,
 // который сравнивает пропсы по ссылке, инлайн-объект каждый раз "менялся" бы.
@@ -43,11 +48,16 @@ const AVATAR_FRAME_SIZE = { width: AVATAR_SIZE, height: AVATAR_SIZE };
  * него ~30 дочерних `<Image>` этой плитки заново реконсилировались бы на
  * КАЖДЫЙ ре-рендер панели, даже когда сам Жнец не менялся.
  */
-// sizeScale (2026-09-26, авто-РОСТ compact-колонки, см. RunnerCard.js#
-// maxAvatarSizeScale/PlayerInfoPanel.js#leftGrow за полным разбором) — тут
-// БЕЗ клэмпа по ширине: аватар — фиксированного размера слева, но текст
-// СПРАВА (`styles.text`, `flex:1`) сам подстраивается/ужимается под ЛЮБОЙ
-// остаток ширины, поэтому рост аватара тут структурно безопасен без проверки.
+// sizeScale — изначально (2026-09-26) был частью авто-РОСТА compact-колонки
+// (leftGrow, механизм убран НАВСЕГДА 2026-09-30, см. CLAUDE.md), но сам проп
+// остался и переиспользован 2026-10-01: PlayerInfoPanel.js теперь передаёт
+// его явно (`roadBonusDieSize / AVATAR_SIZE`), чтобы аватар Жнеца визуально
+// вырос вместе с картой — прямой запрос пользователя "забыл увеличить
+// аватарку Жнеца" после того, как выросла сама карточка/кубик бонуса дороги
+// рядом. БЕЗ клэмпа по ширине: аватар — фиксированного размера слева, но
+// текст СПРАВА (`styles.text`, `flex:1`) сам подстраивается/ужимается под
+// ЛЮБОЙ остаток ширины, поэтому рост аватара тут структурно безопасен без
+// проверки.
 function ReaperCard({ reaper, color, active, sizeScale = 1 }) {
     const cardRef = useRef(null);
     const avatarSize = Math.round(AVATAR_SIZE * sizeScale);
@@ -55,6 +65,17 @@ function ReaperCard({ reaper, color, active, sizeScale = 1 }) {
         () => (sizeScale === 1 ? AVATAR_FRAME_SIZE : { width: avatarSize, height: avatarSize }),
         [sizeScale, avatarSize],
     );
+    // Отступ вокруг аватара и толщина декоративной дуги — ОБА масштабируются
+    // вместе с sizeScale (2026-10-01, живая жалоба "рамка аватарки налезает
+    // на рамку панели слева"). `card`#padding был константным `spacing.xs`
+    // (4px) — рассчитан на СТАРЫЙ 32px аватар; выросший до ~50px аватар с тем
+    // же 4px зазором визуально упирается в декоративную дугу корпуса
+    // (PersonPanel) слева. `cornerSize` — та же пропорция, что и раньше
+    // (6/32, см. её докстринг ниже) — держит толщину дуги аватара
+    // ПРОПОРЦИОНАЛЬНОЙ новому размеру, а не оставшейся тонкой относительно
+    // выросшего бокса.
+    const cardPadding = Math.round(spacing.xs * sizeScale);
+    const cornerSize = Math.round(6 * sizeScale);
     // Размер КОРПУСА плитки (для PersonPanel) — НЕ через собственный onLayout
     // PersonPanel (та же причина/фикс, что в RunnerCard.js — на Android
     // onLayout абсолютно спозиционированного ребёнка с auto-height родителем
@@ -78,24 +99,46 @@ function ReaperCard({ reaper, color, active, sizeScale = 1 }) {
     const onField = reaper.segment != null;
 
     return (
-        <View ref={cardRef} onLayout={onLayout} style={styles.card}>
+        <View ref={cardRef} onLayout={onLayout} style={[styles.card, { padding: cardPadding }]}>
             <PersonPanel size={cardSize} />
             {/* borderRadius — та же величина, что у PersonPanel.js#styles.wrap
                 (тот же фикс "рамка острым углом поверх скруглённой дуги",
                 что уже применён в RunnerCard.js/AbilityZone.js). */}
             {active && <View pointerEvents="none" style={[StyleSheet.absoluteFill, styles.activeRing, { borderColor: color }]} />}
+            {/* Мигание всей плитки, пока Жнец на поле — 2026-10-01, прямой
+                запрос пользователя ("если жнец на поле, пусть панель жнеца
+                мигает, а если он в руке, то пусть как обычно просто").
+                PulseHighlight — тот же компонент, что уже "дышит" зелёным на
+                зонах усилений/панели кубиков (см. её докстринг), borderRadius
+                — тот же NOTCH_RADIUS, что и у activeRing выше (тот же фикс
+                "рамка острым углом поверх скруглённой дуги корпуса"). НЕ
+                гейтится `active` (чей сейчас ход) — это отдельный, всегда
+                видимый статус-сигнал "Жнец физически на поле", а не "сейчас
+                мой выбор", оба индикатора могут быть включены одновременно. */}
+            <PulseHighlight active={onField} borderRadius={NOTCH_RADIUS} showBorder showBackground />
 
+            {/* Текст "В руке"/"На поле" убран целиком — 2026-10-01, прямой
+                запрос пользователя ("убери текст из панели жнеца, а
+                аватарку отцентрируй"), тем же заходом, что и сузил плитку
+                до ширины одной карточки бегуна (см. reaperCardWidth в
+                PlayerInfoPanel.js) — статус "на поле" теперь читается через
+                мигание (PulseHighlight выше), отдельный текст стал не нужен
+                и физически не помещался бы в заметно более узкой плитке.
+                `styles.row` заменена на центрирование одного avatarBox —
+                раньше это был flex-ряд из двух элементов (аватар+текст),
+                теперь единственный ребёнок центрируется по обеим осям. */}
             <View style={styles.row}>
                 <View style={[styles.avatarBox, sizeScale !== 1 && { width: avatarSize, height: avatarSize }]}>
-                    {/* targetCornerSize=6 (половина дефолта FramePanel, 12) —
-                        держит толщину декоративной дуги ПРОПОРЦИОНАЛЬНОЙ
-                        уменьшенному вдвое боксу (иначе тот же абсолютный
-                        12px выглядел бы вдвое толще относительно AVATAR_SIZE,
-                        чем у RunnerCard.js — там 12px на 64px бокс, тут было
-                        бы 12px на 32px). */}
+                    {/* targetCornerSize — 6 у СТАРОГО 32px аватара (половина
+                        дефолта FramePanel, 12 — держит толщину декоративной
+                        дуги ПРОПОРЦИОНАЛЬНОЙ боксу, та же пропорция, что и у
+                        RunnerCard.js — 12px на 64px), теперь `cornerSize`
+                        масштабируется вместе с sizeScale (см. её докстринг
+                        выше), сохраняя ту же пропорцию при любом размере
+                        аватара. */}
                     <FramePanel
                         size={avatarFrameSize}
-                        targetCornerSize={6}
+                        targetCornerSize={cornerSize}
                         backgroundSource={FRAME_PANEL_BACKGROUND}
                         backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
                         backgroundTileSize={60}
@@ -111,16 +154,6 @@ function ReaperCard({ reaper, color, active, sizeScale = 1 }) {
                         showRing={false}
                     />
                 </View>
-                {/* Зелёный НАВСЕГДА, пока Жнец стоит на поле — по прямому
-                    запросу пользователя, БЕЗ пульсации (не привязано к тому,
-                    чей сейчас ход, см. CLAUDE.md, 2026-09-14). */}
-                <Text
-                    style={[styles.text, onField && styles.textOnField]}
-                    numberOfLines={1}
-                    noGlobalTint
-                >
-                    {onField ? 'Жнец — на поле' : 'Жнец — в резерве'}
-                </Text>
             </View>
         </View>
     );
@@ -129,20 +162,38 @@ function ReaperCard({ reaper, color, active, sizeScale = 1 }) {
 export default React.memo(ReaperCard);
 
 const styles = StyleSheet.create({
-    // width:'100%' — та же ширина, что RunnerCard.js#styles.card (короче
-    // именно по ВЫСОТЕ, см. AVATAR_SIZE выше, не по ширине). padding —
-    // spacing.xs (было spacing.sm, как у RunnerCard) — половина, даёт ровно
-    // вдвое меньшую итоговую высоту плитки.
-    // marginBottom — xs→2 (2026-09-30): тем же заходом, что в
-    // RunnerCard.js#cardCompact — roadBonus-квадрат у соседнего ряда
-    // бегунов вырос до размера кубика хода, суммарная высота (Жнец+ряд)
-    // перестала помещаться в доступную высоту колонки без этого зазора.
-    card: { width: '100%', padding: spacing.xs, marginBottom: 2 },
+    // width:'100%' — заполняет свою обёртку в общем ряду с RoadBonusPanel
+    // (см. PlayerInfoPanel#reaperNode, `reaperCardWrap` там). padding —
+    // задаётся ИНЛАЙН (`cardPadding`, см. её докстринг у места объявления) —
+    // базовое значение тут (`spacing.xs`) используется только пока
+    // sizeScale===1 (нет проп-инстанса — практически недостижимо, единственный
+    // вызов всегда передаёт sizeScale), оставлено как безопасный дефолт.
+    // height:'100%' (2026-10-01, "сопряжение по высоте", прямой запрос
+    // пользователя) — `reaperCardWrap` теперь передаёт ЯВНУЮ высоту, равную
+    // высоте соседней RoadBonusPanel (`roadBonusPanelHeight()`, см.
+    // PlayerInfoPanel.js), а не полагается на неявный row-stretch (та же
+    // ненадёжность на RN Web, что уже нашлась и была исправлена для
+    // leftColumn) — эта карточка должна ЗАПОЛНИТЬ явно заданную обёртку, не
+    // остаться на своей меньшей натуральной высоте. Внутренний ряд
+    // (`styles.row` — `alignItems:'center'`) сам центрирует аватар+текст в
+    // получившемся, теперь чуть более высоком боксе.
+    // marginBottom переехал на сам ряд (`reaperRow` в PlayerInfoPanel.js).
+    card: { width: '100%', height: '100%', padding: spacing.xs },
     // borderRadius — та же величина, что у PersonPanel.js#styles.wrap
     // (NOTCH_RADIUS, тот же фикс, что и в RunnerCard.js#activeRing, 2026-09-26).
     activeRing: { borderWidth: 3, borderRadius: NOTCH_RADIUS },
-    row: { flexDirection: 'row', alignItems: 'center' },
+    // height:'100%' (2026-10-01, по прямому запросу пользователя) — та же
+    // причина, что и у `card` выше: без явного числа `row` полагался бы на
+    // неявный stretch от `card` (default alignItems), чтобы дотянуться до
+    // полной высоты — та же категория ненадёжности на RN Web, что уже
+    // нашлась для leftColumn/reaperCardWrap. `justifyContent:'center'` (было
+    // 'flex-start'-по-умолчанию, т.к. `flexDirection:'row'` раньше держал
+    // ДВА элемента — аватар+текст, см. историю) — 2026-10-01, тот же заход,
+    // что убрал текст целиком ("убери текст из панели жнеца, а аватарку
+    // отцентрируй"): единственный оставшийся ребёнок (avatarBox) теперь
+    // центрируется по ОБЕИМ осям в уже узкой (ширина одной карточки бегуна)
+    // плитке, а не жмётся к левому краю, как было нужно для соседства с
+    // текстом.
+    row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', height: '100%' },
     avatarBox: { width: AVATAR_SIZE, height: AVATAR_SIZE, alignItems: 'center', justifyContent: 'flex-end' },
-    text: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small, marginLeft: spacing.sm, flex: 1 },
-    textOnField: { color: colors.success },
 });

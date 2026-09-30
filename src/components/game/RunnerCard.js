@@ -83,6 +83,28 @@ const DAMAGE_ICON_SIZE = 22;
 const AVATAR_SIZE_COMPACT = 44;
 const DICE_SIZE_COMPACT = 30;
 const DAMAGE_ICON_SIZE_COMPACT = 14;
+// Натуральная высота контента компактной карточки ПРИ sizeScale=1 — 2026-10-01.
+// Разбор живой жалобы "содержимое выпирает за пределы панели": ПЕРВЫЙ заход
+// (тем же вечером) был `Math.max(runnerRowH, MIN_CARD_HEIGHT_COMPACT)` —
+// НЕ давать коробке стать меньше контента. Пользователь это явно отверг:
+// "ты вернул большой размер панелей, ровно то, что я просил убрать — размер
+// панели был правильный, туда просто не масштабировался контент". Т.е.
+// ПРАВИЛЬНОЕ направление — наоборот: коробку (cardHeight, из реально
+// измеренного runnerRowH) не трогать вообще, а КОНТЕНТ ужимать под неё через
+// уже существующий (но не запитанный) проп `sizeScale` (см. avatarSizeCompact
+// и т.д. ниже — вся арифметика под sizeScale там уже была). PlayerInfoPanel.js
+// считает `sizeScale = Math.min(1, (cardHeight - паддинг) / NATURAL_CONTENT_
+// HEIGHT_COMPACT)` — НИКОГДА не увеличивает контент сверх натурального
+// размера (растягивать контент крупнее уже отдельно и явно отвергалось
+// пользователем 2026-09-30), только уменьшает, когда коробка теснее.
+// Сумма реальных констант при sizeScale=1: 44(аватар)+1+14(жетоны)+
+// 12(текст наката)+1+30(кубик)+30(бонус дороги) = 132.
+export const NATURAL_CONTENT_HEIGHT_COMPACT = 132;
+// paddingVertical у cardCompact (см. её стиль ниже) — тоже нужен снаружи,
+// чтобы PlayerInfoPanel.js могла вычесть его из cardHeight и получить
+// реально доступную контенту высоту (colInner#height:'100%' — это высота
+// content-box, УЖЕ без паддинга родителя).
+export const RUNNER_CARD_COMPACT_PADDING_V = spacing.sm;
 // Бонус хода — 2026-09-30, по прямому запросу пользователя: раньше это была
 // голая строка "+N", рендерившаяся ТОЛЬКО когда roadBonus не null — та самая
 // причина, почему натуральная высота карточки различалась между бегунами
@@ -94,7 +116,6 @@ const DAMAGE_ICON_SIZE_COMPACT = 14;
 // фрейма кубика хода (2026-09-30, по прямому запросу пользователя), не своя
 // отдельная константа — оба слота визуально одного веса.
 const ROAD_BONUS_SIZE_COMPACT = DICE_SIZE_COMPACT;
-const ROAD_BONUS_FRAME_SIZE_COMPACT = { width: ROAD_BONUS_SIZE_COMPACT, height: ROAD_BONUS_SIZE_COMPACT };
 // Platform.OS не меняется в течение жизни приложения — модульная константа,
 // не пересчитывается на каждый рендер. См. isAndroid ниже (имя бегуна
 // скрыто, кружки урона вертикально — по прямому запросу пользователя,
@@ -180,6 +201,11 @@ function RunnerCard({
     compact = false,
     remeasureTick = 0,
     roadBonus = null,
+    // Явная высота карточки в compactColumns (2026-10-01, число, а не
+    // '100%' — см. докстринг у cardHeight в PlayerInfoPanel.js, "живая
+    // жалоба СРАЗУ после" про Android) — null/undefined на других
+    // раскладках, тогда карточка остаётся натуральной высоты как раньше.
+    cardHeight = null,
     // Авто-РОСТ compact-колонки (2026-09-26, см. maxAvatarSizeScale выше и
     // PlayerInfoPanel.js#leftGrow) — >1, когда контента МЕНЬШЕ, чем реально
     // доступная высота колонки, уже прошедший клэмп по безопасной ширине.
@@ -401,7 +427,11 @@ function RunnerCard({
         <TouchableOpacity
             ref={cardRef}
             onLayout={handleLayout}
-            style={[compact ? styles.cardCompact : styles.card, destroyed && styles.cardDestroyed]}
+            style={[
+                compact ? styles.cardCompact : styles.card,
+                compact && cardHeight != null && { height: cardHeight },
+                destroyed && styles.cardDestroyed,
+            ]}
             onPress={handlePress}
             activeOpacity={0.8}
             // hitSlop — ТОЛЬКО вертикальная раскладка (2026-09-20, живая
@@ -450,11 +480,13 @@ function RunnerCard({
                             showRing={false}
                         />
                     </View>
-                    {!isAndroid && (
-                        <Text style={[styles.nameCompact, turnActive && styles.nameTurnActive]} numberOfLines={1} noGlobalTint>
-                            {display?.label ?? runner.type}
-                        </Text>
-                    )}
+                    {/* Имя убрано из compact-раскладки ЦЕЛИКОМ (2026-10-01) —
+                        раньше пряталось только `!isAndroid`, из-за чего веб на
+                        УЗКОМ окне (та же compactColumns-раскладка, что и на
+                        Android) всё равно показывал имя — расхождение зависело
+                        от платформы, а не от реально доступного места, живая
+                        жалоба пользователя. compact сам по себе уже означает
+                        "тесно", независимо от платформы. */}
                     <View style={styles.damageRowCompact}>
                         {[0, 1].map((i) => (
                             <Image
@@ -476,7 +508,9 @@ function RunnerCard({
                         по прямому запросу пользователя, переставлен ВЫШЕ
                         самого фрейма, было под ним). "Накаты:N" вместо "×N" —
                         тоже 2026-09-30, для ясности подписи. */}
-                    <Text style={styles.rollCountCompact} noGlobalTint>Накаты:{rollsAvailable}</Text>
+                    {/* "Н:N" вместо "Накаты:N" (2026-10-01, живая жалоба —
+                        не помещалось в одну строку на сжатом sizeScale). */}
+                    <Text style={styles.rollCountCompact} noGlobalTint>Н:{rollsAvailable}</Text>
                     <View style={[styles.diceBoxCompact, sizeScale !== 1 && { width: diceSizeCompact, height: diceSizeCompact }]}>
                         <FramePanel size={diceFrameSizeCompact} />
                         <Text style={styles.diceValueCompact} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
@@ -485,9 +519,15 @@ function RunnerCard({
                         ROAD_BONUS_SIZE_COMPACT выше — ВСЕГДА видимый квадрат-
                         фрейм (аналогично слоту кубика хода), не голая строка:
                         прочерк вместо значения, когда бонуса сейчас нет,
-                        чтобы карточка не меняла высоту от его наличия. */}
-                    <View style={styles.roadBonusBoxCompact}>
-                        <FramePanel size={ROAD_BONUS_FRAME_SIZE_COMPACT} />
+                        чтобы карточка не меняла высоту от его наличия.
+                        sizeScale — тот же diceSizeCompact/diceFrameSizeCompact
+                        (2026-10-01, ROAD_BONUS_SIZE_COMPACT === DICE_SIZE_COMPACT,
+                        та же база, тот же масштаб) — без этого при сжатии
+                        контента (см. NATURAL_CONTENT_HEIGHT_COMPACT) кубик
+                        уменьшался бы, а бонус дороги рядом — нет, визуально
+                        расходились бы в размере. */}
+                    <View style={[styles.roadBonusBoxCompact, sizeScale !== 1 && { width: diceSizeCompact, height: diceSizeCompact }]}>
+                        <FramePanel size={diceFrameSizeCompact} />
                         <Text style={styles.roadBonusValueCompact} noGlobalTint>
                             {roadBonus != null ? `+${roadBonus}` : '—'}
                         </Text>
@@ -607,9 +647,26 @@ const styles = StyleSheet.create({
     // меньше "естественного" размера контента).
     cardCompact: {
         flex: 1,
+        // height — БЫЛ '100%' (2026-10-01, прямой запрос пользователя:
+        // "плитки растянуты, содержимое центрировано"), ЗАМЕНЁН на явное
+        // число (`cardHeight` проп, инлайн в style-массиве у места рендера)
+        // — живая жалоба СРАЗУ после: "в вебе сработало, в Android нет".
+        // Процент от РОДИТЕЛЯ, чья ВЫСОТА САМА вычислена через flex:1 (не
+        // задана явно), а не через explicit height — именно та комбинация,
+        // где Yoga на native менее надёжен, чем полноценный CSS-движок на
+        // RN Web (та же категория, что уже дважды ловилась в этой сессии —
+        // leftColumn/switcherHeight). Число (`cardHeight`) работает
+        // одинаково на обеих платформах. minWidth:0 — та же классическая
+        // ловушка flexbox, что и у infoCol ниже.
         minWidth: 0,
         paddingVertical: spacing.sm,
         paddingHorizontal: spacing.xs,
+        // Страховка (2026-10-01, тот же заход, что и MIN_CARD_HEIGHT_COMPACT
+        // выше) — если высота ВСЁ РАВНО окажется теснее содержимого (порог
+        // не абсолютная гарантия, а разумная оценка), контент лучше обрежется
+        // по границе карточки, чем будет визуально расползаться на соседние
+        // элементы панели.
+        overflow: 'hidden',
     },
     cardDestroyed: { opacity: 0.45 },
     // borderRadius — та же величина, что у PersonPanel.js#styles.wrap
@@ -645,12 +702,19 @@ const styles = StyleSheet.create({
     roadBonus: { color: colors.success, fontWeight: 'bold', fontSize: 11, marginTop: 1 },
 
     // --- Вертикальная раскладка (compact) ---
-    colInner: { alignItems: 'center', width: '100%' },
+    // height:'100%'+justifyContent:'center' (2026-10-01) — та же пара, что
+    // уже даёт центрирование у ReaperCard.js#styles.row: карточка теперь
+    // может быть выше своего натурального контента (см. cardCompact#
+    // height:'100%' выше) — сам стек (аватар→жетоны→кубик→бонус дороги)
+    // остаётся натурального размера и центрируется по вертикали в
+    // получившемся боксе, а не липнет к верху с пустотой снизу.
+    colInner: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
     avatarBoxCompact: { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT, alignItems: 'center', justifyContent: 'flex-end' },
-    // marginTop у всей цепочки ниже (name/damageRow/diceBox/roadBonusBox) —
-    // ужата 2026-09-30 (см. докстринг у cardCompact#paddingVertical выше) под
-    // выросший на весь размер кубика roadBonus-квадрат.
-    nameCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 11, marginTop: 0, maxWidth: '100%' },
+    // marginTop у всей цепочки ниже (damageRow/diceBox/roadBonusBox) — ужата
+    // 2026-09-30 (см. докстринг у cardCompact#paddingVertical выше) под
+    // выросший на весь размер кубика roadBonus-квадрат. `nameCompact` (имя
+    // бегуна) убран как стиль вместе с текстом, который его использовал —
+    // см. 2026-10-01 в месте рендера.
     damageRowCompact: { flexDirection: 'row', marginTop: 1 },
     damageIconCompact: { width: DAMAGE_ICON_SIZE_COMPACT, height: DAMAGE_ICON_SIZE_COMPACT },
     damageIconCompactGap: { marginLeft: 4 },

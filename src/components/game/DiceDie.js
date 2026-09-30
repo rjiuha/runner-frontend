@@ -1,9 +1,9 @@
 // src/components/game/DiceDie.js
 import React, { useCallback, useRef } from 'react';
-import { Image, Platform, StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
-import { DICE_FACE_IMAGES } from '../../constants/GameConstants';
+import DicePips from './DicePips';
 import { colors } from '../../theme';
 
 // Веб vs native — разные стратегии позиционирования во время драга, см.
@@ -67,7 +67,7 @@ const IS_WEB = Platform.OS === 'web';
  */
 export default function DiceDie({
     value, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size = 44,
-    ghostX, ghostY, panelOriginX, panelOriginY,
+    ghostX, ghostY, panelOriginX, panelOriginY, color,
 }) {
     const originX = useSharedValue(0);
     const originY = useSharedValue(0);
@@ -172,11 +172,18 @@ export default function DiceDie({
     return (
         <GestureDetector gesture={pan}>
             <Animated.View ref={dieRef} onLayout={measure} style={[styles.die, { width: size, height: size }, animatedStyle]}>
-                <Image
-                    source={DICE_FACE_IMAGES[value]}
-                    style={{ width: size, height: size }}
-                    resizeMode="contain"
-                />
+                {/* Грань кубика — DicePips (2026-10-01, прямой запрос
+                    пользователя "нахуй эти ассеты", после нескольких неудачных
+                    заходов подогнать resizeMode под не-квадратный исходный
+                    PNG dice_p2_N.png под разные раскладки) — точки рисуются
+                    из View, бокс всегда size×size, конструктивно не может
+                    стать прямоугольником. */}
+                {/* color — 2026-10-01, прямой запрос пользователя, прокинут
+                    из PlayerInfoPanel.js через DiceTray.js (activePlayer.color).
+                    undefined, когда не передан — DicePips сама берёт свой
+                    дефолт (colors.danger), поведение без правки не меняется
+                    там, где color ещё не прокинут. */}
+                <DicePips value={value} size={size} color={color} />
             </Animated.View>
         </GestureDetector>
     );

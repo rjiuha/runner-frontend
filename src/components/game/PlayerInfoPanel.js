@@ -4,28 +4,81 @@ import { Animated, Platform, ScrollView, StyleSheet, Text, View } from 'react-na
 import ReanimatedAnimated, { useSharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import PlayerSwitcher from './PlayerSwitcher';
 import DiceTray from './DiceTray';
+import DicePips from './DicePips';
 import AbilityZones from './AbilityZones';
-import RunnerCard from './RunnerCard';
-import ReaperCard from './ReaperCard';
+import RunnerCard, { NATURAL_CONTENT_HEIGHT_COMPACT, RUNNER_CARD_COMPACT_PADDING_V } from './RunnerCard';
+import RoadBonusPanel from './RoadBonusPanel';
+import RoundPanel from './RoundPanel';
 import PulseText from '../ui/PulseText';
 import PulseHighlight from '../ui/PulseHighlight';
 import PersonPanel from '../ui/PersonPanel';
 import FramePanel, { frameNotchRadius } from '../ui/FramePanel';
 import {
-    DICE_FACE_IMAGES,
     PLAYER_ABILITIES,
+    PLAYER_ABILITY_ORDER,
     PLAYER_STEP,
     RUNNER_ORDER,
-    RUNNER_TYPES,
 } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
+// Подписи reaperRow ("Раунд"/"Ход"/"Бонус хода") — не на Android, см. место
+// использования ниже. Тот же приём/константа, что уже есть в RunnerCard.js.
+const isAndroid = Platform.OS === 'android';
+
+// Кубики хода (DiceTray) — увеличены 2026-10-01 по прямому запросу
+// пользователя ("сделать чуть больше, ничего другого не менять"). Рамка
+// вокруг них (diceTrayWrap/FramePanel) размер НЕ хардкодит — меряет себя от
+// реального контента (`onDiceTrayLayout`/`diceTraySize`, см. место рендера
+// ниже), поэтому увеличение кубиков автоматически "раздвигает" рамку под них
+// же — никакой отдельной подгонки фрейма не требуется.
+const MOVE_DICE_SIZE_NORMAL = 50; // было 44 (дефолт DiceDie.js, раньше явно не передавался)
+const MOVE_DICE_SIZE_COMPACT = 46; // было 40 (2026-09-20) — теперь ПОТОЛОК для compactMoveDiceSize
+// Ширина рамки кубика хода в compactColumns — НЕЗАВИСИМАЯ константа
+// (2026-10-01, прямой запрос пользователя: "почему через процентные штуки не
+// определяешь размер кубиков относительно текущего размера фрейма"). Раньше
+// ширина СЧИТАЛАСЬ от размера кубика (`MOVE_DICE_SIZE_COMPACT + паддинг`) —
+// та формула не "видела" ВТОРОЙ, отдельный паддинг внутри DiceTray.js#column
+// (историческая причина бага "кубики вылезают за рамку", см. git-историю
+// этого файла) — любая новая правка padding в ЛЮБОМ из вложенных компонентов
+// могла молча рассинхронизировать эти две независимо посчитанные величины.
+// Теперь наоборот: эта ширина — ЕДИНСТВЕННЫЙ источник истины (просто число,
+// подобранное под текущий MOVE_DICE_SIZE_COMPACT), а сам размер кубика
+// (`compactMoveDiceSize` ниже) считается ОТ реально измеренного рантайм-
+// размера рамки (`diceTraySize`, `onLayout`) — процентом, не вычитанием
+// конкретных паддингов. Даже если какой-то паддинг внутри изменится, доля
+// просто отъест чуть больше/меньше пустого места — переполнение рамки
+// кубиком структурно невозможно, делиться нечему.
+const DICE_FRAME_WIDTH_COMPACT = 62;
+// Кубиков хода всегда ровно 4 (dice1..dice4, см. GameBoardScreen/бэк) —
+// вынесено в константу, т.к. используется дважды (потолок высоты кубика в
+// compactMoveDiceSize и высота слота в diceSlotHeight, оба ниже).
+const DICE_COUNT = 4;
 // Ghost-превью кубика при драге — веб через legacy `Animated`
 // (dragGhostPos/dragGhostValue ниже), native — через reanimated shared
 // values (nativeGhostX/Y, см. их докстринг), см. `dragGhost`/`nativeDragGhost`
-// за местом рендера обоих.
-const DRAG_GHOST_SIZE_NORMAL = 44;
-const DRAG_GHOST_SIZE_COMPACT = 34;
+// за местом рендера обоих. ДОЛЖЕН совпадать с реальным размером кубика в
+// трее (`dragGhostSize = compactMoveDiceSize`, см. её докстринг ниже) —
+// отдельной константы под ghost больше нет, обе платформы читают ОДНО и то
+// же значение.
+
+// Размер квадрата reaperRow в compactColumns, пока `cardWidth` не измерен
+// (первый кадр до onLayout) — некогда общая формула с landscape-фолбэком
+// (см. REAPER_ROW_SIZE_LANDSCAPE ниже), разъединены 2026-10-01 (продолжение
+// сессии), когда сам ряд перестал быть про Жнеца/кубик дороги конкретно (см.
+// докстринг reaperNode ниже) — имя константы оставлено (единственная
+// оставшаяся точка, где фигурирует размер грани кубика бонуса дороги в
+// compact-раскладке).
+const ROAD_BONUS_DIE_SIZE_COMPACT = 32;
+// Размер ряда "Раунд/Ход/Бонус дороги" в landscape (веб), когда `cardWidth`
+// не измерен (там он не измеряется НИКОГДА — см. докстринг у места
+// использования ниже) — 2026-10-01 (продолжение сессии), прямой запрос
+// пользователя "как высота карточки бегуна" после живой жалобы на
+// непропорционально маленькую панель. Дублирует формулу RunnerCard.js#
+// styles.card (AVATAR_SIZE=64 + padding spacing.sm×2 = 80) — та константа не
+// экспортирована оттуда, пришлось продублировать число явно (тот же
+// компромисс, что уже принят для MOVE_DICE_SIZE_NORMAL выше). Подтверждено
+// живым DOM-замером (строки Танк/Атлет/Скаут в landscape — ровно 80px).
+const REAPER_ROW_SIZE_LANDSCAPE = 80;
 
 /**
  * Левая панель: переключатель игроков, кубики активного игрока, зоны
@@ -71,6 +124,10 @@ export default function PlayerInfoPanel({
     // ниже, hasRoadBonus теперь читает runner.trackGain напрямую, не гейтится
     // шагом/активным бегуном.
     roadBonusValue = null,
+    // gameRound — game.round с GameBoardScreen (2026-10-01, прямой запрос
+    // пользователя "над атлетом сделай новую панель, там покажи номер
+    // раунда") — см. RoundPanel.js за докстрингом этого поля на бэке.
+    gameRound = null,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -85,6 +142,89 @@ export default function PlayerInfoPanel({
     const [remeasureTick, setRemeasureTick] = useState(0);
     const bumpRemeasure = useCallback(() => setRemeasureTick((t) => t + 1), []);
 
+    // Высота columns-ряда (2026-10-01) — измеряется один раз, используется
+    // ОБЕИМИ колонками (leftColumn/rightColumn) как явная `height`, вместо
+    // paint-only `transform:scale`, который тут стоял раньше (сначала для
+    // левой, потом для правой колонки — обе истории привели к одному и тому
+    // же выводу: растягивать саму коробку явным числом надёжнее и проще, чем
+    // растягивать/сжимать её отрисовку трансформом, см. докстринги обеих
+    // колонок в месте рендера ниже).
+    const [columnsH, setColumnsH] = useState(null);
+    const onColumnsLayout = useCallback((e) => setColumnsH(e.nativeEvent.layout.height), []);
+
+    // ЛЕВАЯ колонка (Жнец+кубик бонуса дороги+карточки бегунов) — НЕ
+    // `transform:scale` (был реализован и ОТКАЧЕН в этой же сессии, см. git
+    // history этого файла за 2026-10-01 — сразу выявился реальный конфликт:
+    // каждая из 3 карточек бегунов — `flex:1` по ширине ровно поровну
+    // (RunnerCard.js#cardCompact), натуральная ширина ряда УЖЕ РОВНО равна
+    // ширине колонки без запаса — единый 2D-коэффициент, применённый НА
+    // РОСТ, неизбежно растягивает и ширину настолько же, вылезая за колонку
+    // (`overflow:hidden` тогда бы просто молча обрезал сбоку). Пользователь
+    // прямо уточнил: "плитки бегунов никогда не должны быть откреплены от
+    // нижней части панели" — про ПОЗИЦИЮ/высоту, не про то, что кубики/
+    // аватары должны стать физически КРУПНЕЕ. Финал (по прямому запросу
+    // пользователя): "плитки растянуты, содержимое (аватарки, боксы кол-ва
+    // ходов) центрировано" — ТОЧНО тот же приём, что уже применён к
+    // ReaperCard/RoadBonusPanel этой же сессией (`height:'100%'` на внешнем
+    // боксе + `alignItems:'center'` на внутреннем контенте) — только сама
+    // ВЫСОТА коробки растёт (через flex:1 в родительской колонке
+    // фиксированной высоты), контент внутри остаётся натурального
+    // константного размера и просто центрируется. Ширина этим вообще не
+    // затронута — растёт только высота отдельных боксов, не общий 2D-скейл.
+    // `runnerRow`/`RunnerCard.js#cardCompact` — flex:1 по высоте (см. стили
+    // ниже и в RunnerCard.js).
+    //
+    // **`runnerRowH`/`cardHeight` (2026-10-01, живая жалоба СРАЗУ после:
+    // "в вебе отмасштабировал и расположил как надо, а в Android нет")** —
+    // `cardCompact#height:'100%'` читает высоту от `runnerRow`, а ТА сама
+    // получает свою высоту не явным числом, а через `flex:1` (вычисляется
+    // Yoga на лету) — комбинация "процентная высота ребёнка от РОДИТЕЛЯ,
+    // высота которого САМА вычислена через flex, а не задана явно" — именно
+    // та категория рассинхрона между RN Web (полноценный CSS-движок,
+    // терпимее к процентам) и Yoga на native (историчски менее надёжен
+    // именно в этой комбинации), что уже дважды всплывала в этой сессии
+    // (leftColumn/switcherHeight). Вместо процента — измеряем `runnerRow`
+    // через `onLayout` и прокидываем РЕАЛЬНОЕ число вниз в RunnerCard.js
+    // явным пропом `cardHeight` (та же тактика, что уже успешно сработала
+    // для `columnsH`/`reaperCardWrap#height` этой же сессией) — простое
+    // число как высота работает одинаково надёжно на обеих платформах,
+    // никакого процента в цепочке больше нет.
+    const [runnerRowH, setRunnerRowH] = useState(null);
+    // runnerRowW — 2026-10-01, прямой запрос пользователя (точная геометрия
+    // левой колонки: высота плитки Жнеца = ширина плитки бегуна, плитка
+    // Жнеца впритык к ДВУМ плиткам бегунов, кубик бонуса дороги квадратный
+    // и стоит ровно НАД третьей плиткой). Тот же onLayout, что уже даёт
+    // высоту — width достаётся БЕСПЛАТНО из того же nativeEvent.layout, новый
+    // measure-проход не нужен. См. cardWidth ниже — единственный источник
+    // истины для геометрии ВСЕГО ряда "Жнец+бонус", вместо независимого
+    // flex-приближения (которое и давало "почти так, но не совсем" —
+    // reaperRow/runnerRow считали свои flex-доли раздельно, с РАЗНЫМ числом
+    // gap'ов на строку, поэтому их границы НЕ СОВПАДАЛИ математически точно).
+    const [runnerRowW, setRunnerRowW] = useState(null);
+    const onRunnerRowLayout = useCallback((e) => {
+        setRunnerRowH(e.nativeEvent.layout.height);
+        setRunnerRowW(e.nativeEvent.layout.width);
+    }, []);
+    // cardWidth — ширина ОДНОЙ плитки бегуна, выведенная из РЕАЛЬНО
+    // измеренной ширины runnerRow (3 плитки + 2 зазора spacing.xs, та же
+    // константа, что и в стиле runnerRow ниже — не отдельное магическое
+    // число). null до первого onLayout — reaperNode в этом кадре использует
+    // свой прежний (константный) фолбэк, см. её докстринг.
+    const cardWidth = runnerRowW != null ? Math.floor((runnerRowW - spacing.xs * 2) / 3) : null;
+
+    // sizeScale карточки бегуна в compactColumns — 2026-10-01, см. докстринг
+    // NATURAL_CONTENT_HEIGHT_COMPACT/RUNNER_CARD_COMPACT_PADDING_V в
+    // RunnerCard.js за полным разбором, почему это ПРАВИЛЬНОЕ направление
+    // (ужимать контент, не раздувать коробку). `Math.min(1, ...)` — ТОЛЬКО
+    // уменьшает контент, никогда не увеличивает его сверх натурального
+    // размера (растягивание контента крупнее уже отдельно отвергалось
+    // пользователем 2026-09-30, тут этот прецедент намеренно не трогаем).
+    const runnerCardSizeScale = useMemo(() => {
+        if (!compactColumns || !runnerRowH) return 1;
+        const availableContentHeight = runnerRowH - RUNNER_CARD_COMPACT_PADDING_V * 2;
+        return Math.min(1, availableContentHeight / NATURAL_CONTENT_HEIGHT_COMPACT);
+    }, [compactColumns, runnerRowH]);
+
     // 2026-09-28 — точечная заплатка "бампнуть remeasureTick при смене
     // activePlayerId" (была тут) УБРАНА — заменена структурным фиксом в
     // самой RunnerCard.js (`useEffect(() => measure(), [zoneKey, measure])`,
@@ -96,7 +236,14 @@ export default function PlayerInfoPanel({
     // только экранная позиция того же бегуна.
 
     // Авто-масштабирование колонок в compactColumns — **2026-09-30, ПОЛНОСТЬЮ
-    // УБРАНО по прямому запросу пользователя.** Хронология этого захода: рост
+    // УБРАНО по прямому запросу пользователя, ЧАСТИЧНО ВОЗВРАЩЕНО 2026-10-01
+    // (см. leftScale/rightScale выше, конец того же дня) — ДРУГИМ механизмом,
+    // не тем, что отвергнут здесь.** История ниже оставлена целиком — она всё
+    // ещё объясняет, ПОЧЕМУ отвергнуты два конкретных варианта (real-resize
+    // sizeScale и "тянуть только высоту, не ширину"); вернувшийся 2026-10-01
+    // uniform paint-only `transform:scale` — третий вариант, который тут не
+    // рассматривался и не отвергался, см. его докстринг у leftScale/
+    // rightScale. Хронология этого захода (2026-09-30): рост
     // сначала был реальным resize детей (`sizeScale`, до сегодня) с
     // заморозкой baseline — баг оказался в том, что баланс замораживался под
     // натуральную высоту ОДНОГО конкретного игрока и не подходил остальным
@@ -119,12 +266,13 @@ export default function PlayerInfoPanel({
     // отсюда). Это заодно и тривиально решает исходную жалобу — раз ничего
     // не вычисляется от натуральной высоты контента, у разных игроков просто
     // физически нечему отличаться, карточки одного константного размера у
-    // всех. `overflow:hidden` на колонках (styles.scaleClip) оставлен чистой
-    // страховкой на случай, если натуральный контент когда-нибудь не
-    // поместится по высоте (не рабочий механизм, просто не даёт вылезти за
-    // пределы соседних блоков) — активного скролла пользователь тоже отверг
-    // ранее, так что это осознанный компромисс на редкий крайний случай, не
-    // возврат к старой проблеме "обрезает/скроллит".
+    // всех — это верно и для нового leftScale (2026-10-01): один и тот же
+    // множитель на весь блок, не независимые расчёты по игроку.
+    // `overflow:hidden` на колонках (styles.scaleClip) — раньше была чистой
+    // страховкой (масштабирования не было вовсе), теперь (после leftScale/
+    // rightScale) действительно может сработать на РОСТЕ, если контент
+    // выйдет за ширину колонки — активного скролла пользователь по-прежнему
+    // не хочет, так что это осознанный компромисс на редкий крайний случай.
 
     // Ghost-превью перетаскиваемого кубика — ТОЛЬКО веб. Жалоба пользователя:
     // в веб-версии сам кубик во время драга рисуется ЗА карточкой бегуна
@@ -159,9 +307,86 @@ export default function PlayerInfoPanel({
     // безопасно, т.к. меняется редко.
     const dragGhostPos = useRef(new Animated.ValueXY({ x: -9999, y: -9999 })).current;
     const [dragGhostValue, setDragGhostValue] = useState(null); // грань кубика | null
-    // Тот же size, что и у DiceTray ниже (compactColumns — 34, иначе 44) —
-    // иначе ghost визуально крупнее/мельче реального кубика в трее.
-    const dragGhostSize = compactColumns ? DRAG_GHOST_SIZE_COMPACT : DRAG_GHOST_SIZE_NORMAL;
+
+    // abilitiesWrapSize — 2026-10-01, живая жалоба "нижняя рамка фрейма
+    // кубиков не вровень с нижней рамкой усиления Призрак": ПЕРВАЯ попытка
+    // фикса вычитала `abilitiesWrap`'s marginTop из dATileRowHeight косвенно
+    // — стало ЕЩЁ ХУЖЕ, и причина нашлась: в compactColumns фактически
+    // применяется `abilitiesWrapCompact` (marginTop:0), а НЕ базовый
+    // `abilitiesWrap` (marginTop:spacing.xs) — я вычитал отступ, которого в
+    // этом режиме вообще нет, искусственно занижая слоты. Вместо того чтобы
+    // в третий раз гадать про margin/flex-арифметику Yoga — просто МЕРЯЕМ
+    // `abilitiesWrap` её СОБСТВЕННЫМ onLayout, тем же приёмом, что уже есть
+    // у `diceTraySize`/`dATileSize` ниже — высота слота считается от
+    // РЕАЛЬНОГО измерения, не от выведенного числа.
+    const [abilitiesWrapSize, setAbilitiesWrapSize] = useState(null);
+    const onAbilitiesWrapLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setAbilitiesWrapSize({ width, height });
+    }, []);
+
+    // Размер трея кубиков (диceTrayWrap) измеряется его СОБСТВЕННЫМ onLayout —
+    // нужен декоративной рамке FramePanel вокруг трея (см. место рендера).
+    const [diceTraySize, setDiceTraySize] = useState(null);
+    const onDiceTrayLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setDiceTraySize({ width, height });
+    }, []);
+
+    // Размер кубика хода в compactColumns — от РЕАЛЬНО измеренной ширины
+    // рамки (2026-10-01, прямой запрос пользователя — см. докстринг
+    // DICE_FRAME_WIDTH_COMPACT выше за разбором, почему раньше было наоборот,
+    // и чем это кончилось). `diceTraySize.width` — border-box самой
+    // diceTrayWrap — ЕДИНСТВЕННЫЙ источник истины о размере рамки.
+    //
+    // Формула в два слоя (2026-10-01, живая жалоба со скрином-зумом СРАЗУ
+    // после первой версии — "кубики всё равно выпирают", но теперь именно у
+    // СКРУГЛЁННОГО УГЛА рамки, не вдоль прямого края): (1) сперва вычитаем
+    // РЕАЛЬНЫЙ паддинг diceTrayWrap (`spacing.sm`, та же константа, что и в
+    // её стиле — не отдельное магическое число, синхронизация гарантирована
+    // тем, что это буквально одна и та же ссылка) — даёт точную ширину
+    // content-box вдоль ПРЯМЫХ краёв; (2) ДОПОЛНИТЕЛЬНО умножаем на
+    // DICE_SIZE_SAFETY (0.85) — декоративный уголок рамки (FramePanel,
+    // targetCornerSize=8) срезает площадь по ДИАГОНАЛИ глубже, чем его
+    // толщина по прямой, и паддинг из шага (1), рассчитанный на прямой край,
+    // не даёт достаточного запаса именно в углу, где начинается/заканчивается
+    // столбик кубиков. Итог — кубик заведомо МЕНЬШЕ, чем "впритык" к
+    // content-box, с полем прямо под этот диагональный случай, а не только
+    // под прямые края. Math.min(..., MOVE_DICE_SIZE_COMPACT) — потолок,
+    // кубик никогда не растёт крупнее задуманного. До первого onLayout
+    // (diceTraySize ещё null) — тот же потолок как временное значение.
+    // 0.85 → 0.92 (2026-10-01, живая жалоба "кубики мелковаты") — ширина
+    // сейчас и есть узкое место (меньше, чем потолок по высоте, см. ниже), её
+    // и поднимаем ощутимее. НЕ 1.0 — запас всё ещё нужен специально под
+    // скруглённый угол декоративной рамки (FramePanel, targetCornerSize=8) —
+    // тот самый диагональный срез, из-за которого эта константа изначально
+    // и появилась (живая жалоба со скрином-зумом, кубик вылезал именно у
+    // угла, не вдоль прямого края) — см. запас до 1.0 как сознательную
+    // страховку, не забытую мелочь.
+    const DICE_SIZE_SAFETY = 0.92;
+    // Потолок ПО ВЫСОТЕ — 2026-10-01, прямой запрос пользователя ("раздели
+    // фрейм на 4 ровных куска, кубик — 90% высоты каждого куска, это же и
+    // есть адаптивное масштабирование?"), процент поднят до 0.95 тем же
+    // заходом, что и DICE_SIZE_SAFETY выше ("кубики мелковаты"). Раньше
+    // кубик считался ТОЛЬКО от ширины рамки — на узкой-но-высокой рамке он
+    // мог остаться маленьким, хотя по высоте слота было куда расти. Теперь
+    // `Math.min` берёт МЕНЬШЕЕ из двух independent пределов (ширина рамки И
+    // высота слота) — кубик никогда не перельётся ни по одной из осей, при
+    // этом использует максимум того, что реально позволяют ОБА измерения.
+    // `DICE_COUNT` — то же самое количество, на которое делится рамка для
+    // слотов (`diceSlotHeight` ниже) — 4 кубика хода всегда, dice1..dice4.
+    const compactMoveDiceSize = !compactColumns
+        ? MOVE_DICE_SIZE_NORMAL
+        : diceTraySize
+            ? Math.min(
+                MOVE_DICE_SIZE_COMPACT,
+                Math.floor((diceTraySize.width - spacing.sm * 2) * DICE_SIZE_SAFETY),
+                Math.floor(((diceTraySize.height - spacing.sm * 2) / DICE_COUNT) * 0.95),
+            )
+            : MOVE_DICE_SIZE_COMPACT;
+
+    // Ghost при драге — ДОЛЖЕН совпадать с реальным размером кубика в трее.
+    const dragGhostSize = compactMoveDiceSize;
 
     // 2026-09-28, третий заход за день — native-версия ghost'а, теперь через
     // REANIMATED shared values, не legacy `Animated`. История: (1) сначала
@@ -414,11 +639,6 @@ export default function PlayerInfoPanel({
         () => RUNNER_ORDER.map((type) => activePlayer.runners.find((r) => r.type === type)).filter(Boolean),
         [activePlayer.runners],
     );
-    const reaper = useMemo(
-        () => activePlayer.runners.find((r) => r.type === RUNNER_TYPES.REAPER),
-        [activePlayer.runners],
-    );
-
     const switcher = (
         <View style={[styles.switcherBox, { height: switcherHeight }]}>
             <PlayerSwitcher
@@ -429,17 +649,59 @@ export default function PlayerInfoPanel({
         </View>
     );
 
-    // Плитка Жнеца — по аналогии с плиткой бегуна (RunnerCard, через новый
-    // ReaperCard.js, см. её докстринг), по прямому запросу пользователя
-    // 2026-09-20: "avatar анимация жнеца во фрейме, рядом просто текст, на
-    // поле он или в резерве". Раньше тут была голая строка (маленький
-    // RunnerToken без рамки + Text) — заменена целиком.
-    const reaperNode = reaper && (
-        <ReaperCard
-            reaper={reaper}
-            color={activePlayer.color}
-            active={String(reaper.id) === String(activePlayer.activeRunnerId)}
-        />
+    // Ряд "Раунд/Ход/Бонус дороги" над карточками бегунов — 2026-10-01
+    // (продолжение сессии), ПОЛНАЯ ПЕРЕДЕЛКА по прямому запросу пользователя:
+    // раньше первый квадрат ряда был плиткой Жнеца (ReaperCard, аватар +
+    // мигание PulseHighlight, пока Жнец на поле — вся эта история, включая
+    // сегодняшний фикс её геометрии, см. CLAUDE_DONE_TASKS.md) — пользователь
+    // явно попросил "вместо жнеца в панели жнеца показать раунд". Токен Жнеца
+    // на самой доске (BoardGrid) никуда не делся, только дубль в этой панели
+    // убран. `ReaperCard.js` больше НИГДЕ в проекте не импортируется —
+    // намеренно НЕ удалён (могла понадобиться правка позже), просто мёртвый
+    // код, оставлен как есть по аналогии с другими неиспользуемыми файлами в
+    // этом проекте (см. CLAUDE.md).
+    // Итоговые три квадрата: [Раунд] [Ход] [Бонус дороги], у каждого подпись
+    // НАД квадратом — та же идея, что подпись типа бегуна у RunnerCard
+    // (`styles.name`, та — сбоку, тут — сверху, по прямому запросу
+    // пользователя "тайтлы пусть будут над панельками ходов и раундов", было
+    // под квадратом первой версией этого же захода). "Ход" временно ВСЕГДА
+    // заглушка
+    // ("—", RoundPanel с round=null) — по признанию самого пользователя,
+    // точного счётчика "X из 3 ходов за раунд" бэк пока не отдаёт (только 4
+    // кубика на раунд, dice1..4, без разметки, сколько из них на движение, а
+    // сколько на усиление, см. запрос бэкендеру в отдельном файле) — как
+    // только бэк пришлёт нужное поле, заменить `round={null}` на реальное
+    // значение (TODO в CLAUDE.md).
+    const roadBonusPanelSize = cardWidth != null
+        ? cardWidth
+        : compactColumns
+            ? Math.min(ROAD_BONUS_DIE_SIZE_COMPACT, MOVE_DICE_SIZE_COMPACT)
+            : REAPER_ROW_SIZE_LANDSCAPE;
+    const reaperNode = (
+        <View style={styles.reaperRow}>
+            <View style={styles.reaperCell}>
+                {/* Подписи — НЕ на Android, по прямому запросу пользователя
+                    2026-10-01 (продолжение сессии, сразу тем же вечером, что
+                    и добавил их) — веб не тронут. */}
+                {!isAndroid && (
+                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Раунд</Text>
+                )}
+                <RoundPanel round={gameRound} panelSize={roadBonusPanelSize} />
+            </View>
+            <View style={styles.reaperCell}>
+                {!isAndroid && (
+                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Ход</Text>
+                )}
+                {/* Заглушка до ответа бэкендера — см. докстринг выше. */}
+                <RoundPanel round={null} panelSize={roadBonusPanelSize} />
+            </View>
+            <View style={styles.reaperCell}>
+                {!isAndroid && (
+                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Бонус хода</Text>
+                )}
+                <RoadBonusPanel value={roadBonusValue} panelSize={roadBonusPanelSize} />
+            </View>
+        </View>
     );
 
     const runnerCards = trackedRunners.map((runner) => {
@@ -493,6 +755,16 @@ export default function PlayerInfoPanel({
                 hoverState={hover.key === zoneKey ? (hover.valid ? 'valid' : 'invalid') : null}
                 onMoveDiceMeasured={handleMeasured}
                 compact={compactColumns}
+                // cardHeight — БЕЗ Math.max/порога (2026-10-01, второй заход
+                // за вечер): первая версия этого фикса форсировала минимум
+                // на КОРОБКУ — пользователь это явно отверг ("ты вернул
+                // большой размер панелей, ровно то, что я просил убрать —
+                // размер панели был правильный, туда просто не масштабировался
+                // контент"). Коробка — РОВНО runnerRowH, как измерено;
+                // контент внутри вместо этого сам ужимается под неё через
+                // `sizeScale` (см. её докстринг ниже).
+                cardHeight={compactColumns ? runnerRowH : null}
+                sizeScale={runnerCardSizeScale}
                 remeasureTick={remeasureTick}
             />
         );
@@ -503,19 +775,10 @@ export default function PlayerInfoPanel({
     // перемещения" (см. diceAbilitiesTile ниже) — обе секции объединены в
     // одну декоративную плитку (PersonPanel, тот же приём, что уже красит
     // корпус RunnerCard), сама плитка даёт визуальную группировку без подписей.
-    const abilitiesNode = (
-        <AbilityZones
-            assignments={abilityAssignments}
-            hoverKey={hover.key}
-            hoverValid={hover.valid}
-            onMeasured={handleMeasured}
-            onPressZone={onPressAbilityZone}
-            remeasureTick={remeasureTick}
-            compact={compactColumns}
-            color={activePlayer.color}
-            pulseKeys={abilityPulseKeys}
-        />
-    );
+    // abilitiesNode — определён НИЖЕ (после dATileSize/abilitiesTrayWidthCompact,
+    // см. их докстринг) не здесь, где раньше стоял: нужна их измеренная
+    // ширина для zoneWidth-пропа, JS-объявления читаются по порядку
+    // выполнения, а не по месту в файле.
 
     // "Кубики" и "Усиления" — теперь ОДНА плитка (декоративная рамка
     // PersonPanel), по прямому запросу пользователя "аналогично плитке
@@ -545,9 +808,27 @@ export default function PlayerInfoPanel({
     // нарисоваться за пределами плитки, даже пока PersonPanel её ещё не
     // "догнал".
     const [dATileSize, setDATileSize] = useState(null);
-    const onDATileLayout = useCallback((e) => {
-        const { width, height } = e.nativeEvent.layout;
-        setDATileSize({ width, height });
+    const dATileRef = useRef(null);
+    // requestAnimationFrame + setTimeout(150) — 2026-10-01, живая жалоба со
+    // скриншотом: "dATile стала уже, фреймы усилений висят в воздухе"
+    // (декоративный фон PersonPanel не доходит до места, где реально стоят
+    // иконки усилений). Гипотеза (подтверждена только логикой, не живым
+    // прогоном): `dATile` только что перешла на `flexDirection:'row'`
+    // (кубики фикс. ширины + усиления `flex:1`, см. `dATileRow`) — на
+    // Android НЕ исключено, что первый проход `onLayout` этого контейнера
+    // ловит размер ДО того, как `flex:1`-ребёнок досчитан (та же болезнь,
+    // что уже explicitly задокументирована в AbilityZone.js#measure для
+    // ОДНОЙ зоны — тут тот же приём, только для всей плитки целиком, раз
+    // плитка сама стала сложнее устроена). Повторный замер безопасен, даже
+    // если первый уже был точным — просто перезапишет тем же значением.
+    const onDATileLayout = useCallback(() => {
+        const measure = () => {
+            dATileRef.current?.measure((x, y, width, height) => {
+                if (width && height) setDATileSize({ width, height });
+            });
+        };
+        requestAnimationFrame(measure);
+        setTimeout(measure, 150);
     }, []);
 
     // Кубики — теперь ТОЖЕ в декоративной рамке (FramePanel, тот же приём,
@@ -555,20 +836,121 @@ export default function PlayerInfoPanel({
     // пользователя "сделай, чтобы кубики тоже были в рамке, как усиления".
     // ОДНА рамка на ВЕСЬ трей (все 4 кубика вместе), не по рамке на кубик —
     // пользователь явно уточнил "все кубики в одной рамке". Тот же `onLayout`
-    // фикс, что и у dATile выше, и по той же причине.
-    const [diceTraySize, setDiceTraySize] = useState(null);
-    const onDiceTrayLayout = useCallback((e) => {
-        const { width, height } = e.nativeEvent.layout;
-        setDiceTraySize({ width, height });
-    }, []);
+    // фикс, что и у dATile выше, и по той же причине. `diceTraySize`/
+    // `onDiceTrayLayout` объявлены ВЫШЕ (см. compactMoveDiceSize) — тому же
+    // измерению теперь нужен и размер FramePanel-рамки тут, и адаптивный
+    // размер кубика, поэтому состояние общее, объявление одно.
+
+    // Ширина рамки кубиков в compactColumns — АДАПТИВНАЯ, не константа
+    // (2026-10-01, живая жалоба с РЕАЛЬНОГО устройства через USB: жёсткая
+    // DICE_FRAME_WIDTH_COMPACT не поместилась в rightColumn — та же ширина,
+    // что была настроена под эмулятор, оказалась шире, чем реально доступно
+    // на другом экране; "усиления тоже вышли за пределы колонки" — тот же
+    // класс бага у ABILITY_ZONE_WIDTH_COMPACT в AbilityZone.js). Вместо двух
+    // независимых констант — считаем ОБЕ ширины от РЕАЛЬНО измеренной ширины
+    // dATile (`dATileSize`, см. выше), тем же приёмом, что уже применён к
+    // размеру кубика ВНУТРИ рамки (compactMoveDiceSize чуть выше) — теперь и
+    // сама рамка встроена в ту же измеренную-от-контейнера цепочку.
+    //
+    // DICE_TRAY_WIDTH_IDEAL — ширина рамки, при которой кубик гарантированно
+    // достигает своего потолка (MOVE_DICE_SIZE_COMPACT) — решение ТОГО ЖЕ
+    // уравнения, что и DICE_SIZE_SAFETY в compactMoveDiceSize выше, просто в
+    // обратную сторону. Пока места достаточно (типичный экран, в т.ч. этот
+    // эмулятор) — кубик всегда МАКСИМАЛЬНОГО задуманного размера, а не
+    // случайно меньше только потому, что рамке не докинули пару dp (живая
+    // жалоба "кубики слишком мелкие, а вокруг полно свободного места").
+    // DICE_COLUMN_MAX_SHARE — страховка на узкий экран: рамка кубиков
+    // никогда не отъедает больше половины ряда, даже если
+    // DICE_TRAY_WIDTH_IDEAL технически просит больше — усиления справа не
+    // должны схлопнуться в ноль.
+    const DICE_TRAY_WIDTH_IDEAL = Math.ceil(MOVE_DICE_SIZE_COMPACT / DICE_SIZE_SAFETY) + spacing.sm * 2;
+    const DICE_COLUMN_MAX_SHARE = 0.5;
+    // dATileCompact#paddingHorizontal (spacing.md) вычитается явно — то, что
+    // измеряет onLayout/measure() — border-box ВСЕЙ плитки, а не content-box,
+    // доступный ряду "кубики+усиления" (dATileRow) внутри нeё.
+    const dATileInnerRowWidth = dATileSize ? dATileSize.width - spacing.md * 2 : null;
+    const diceTrayWidthCompact = dATileInnerRowWidth != null
+        ? Math.min(DICE_TRAY_WIDTH_IDEAL, Math.round(dATileInnerRowWidth * DICE_COLUMN_MAX_SHARE))
+        : DICE_FRAME_WIDTH_COMPACT;
+    // abilitiesTrayWidthCompact — остаток ряда ПОСЛЕ рамки кубиков и зазора
+    // между ними (dATileRow#gap, spacing.sm) — передаётся КАЖДОЙ зоне
+    // усиления явным числом (AbilityZones/AbilityZone.js#zoneWidth), заменяя
+    // их собственную независимую константу ABILITY_ZONE_WIDTH_COMPACT — та
+    // же причина, что и у кубиков: своя фиксированная ширина не знает о
+    // реальном месте в rightColumn на конкретном устройстве.
+    const abilitiesTrayWidthCompact = dATileInnerRowWidth != null
+        ? Math.max(0, Math.round(dATileInnerRowWidth - diceTrayWidthCompact - spacing.sm))
+        : null;
+    // Высота ОДНОГО слота (кубика/зоны усиления) — 2026-10-01, живая жалоба
+    // "кубики/усиления не оптимально распределены по фрейму, усиления НЕ
+    // прижаты друг к другу": `justifyContent:'space-between'` в DiceTray.js#
+    // column/AbilityZones.js#gridVertical (изначально введён, чтобы первый/
+    // последний элемент стабильно касался верха/низа рамки) ПОБОЧНО
+    // распределяет ЛЮБОЙ излишек высоты как зазоры МЕЖДУ элементами. Фикс —
+    // не полагаться на justifyContent вообще, а явно посчитать высоту ОДНОГО
+    // слота от РЕАЛЬНО измеренной высоты СВОЕГО контейнера и отдать её
+    // каждому элементу числом — 4 слота СУММАРНО заполняют высоту без
+    // остатка, зазорам взяться неоткуда.
+    //
+    // Каждый слот считается от ИЗМЕРЕНИЯ СВОЕГО НЕПОСРЕДСТВЕННОГО контейнера
+    // (diceTraySize/abilitiesWrapSize), а НЕ от общей dATileSize с вычетом
+    // предполагаемых паддингов/margin — два подряд захода (сначала не
+    // учли собственный padding diceTrayWrap, потом ошибочно вычли marginTop,
+    // которого в compactColumns на самом деле нет — там побеждает
+    // `abilitiesWrapCompact#marginTop:0`, не базовый `abilitiesWrap`) наглядно
+    // показали, что выводить чужую высоту через margin/padding-арифметику
+    // Yoga — ненадёжно. Прямое измерение снимает вопрос целиком.
+    const diceSlotHeight = diceTraySize
+        ? Math.floor((diceTraySize.height - spacing.sm * 2) / DICE_COUNT)
+        : null;
+    const abilitiesNode = (
+        <AbilityZones
+            assignments={abilityAssignments}
+            hoverKey={hover.key}
+            hoverValid={hover.valid}
+            onMeasured={handleMeasured}
+            onPressZone={onPressAbilityZone}
+            remeasureTick={remeasureTick}
+            compact={compactColumns}
+            vertical={compactColumns}
+            color={activePlayer.color}
+            pulseKeys={abilityPulseKeys}
+            zoneWidth={compactColumns ? abilitiesTrayWidthCompact : null}
+            // columnHeight — ЦЕЛЫЙ измеренный контейнер (НЕ уже поделенный на
+            // 4), 2026-10-01, живая жалоба "нижняя рамка кубиков не вровень с
+            // нижней рамкой усиления Призрак", фикс №4 подряд по этой теме:
+            // первые три (margin-арифметика от dATileRowHeight, минус margin,
+            // прямое измерение) не помогли, потому что ни один не был
+            // причиной — реальная причина в том, что `Math.floor(H/4)`,
+            // применённый одинаково ко всем 4 зонам, каждый раз теряет
+            // дробный остаток (206.857/4=51.714, не 51) — 4 потери
+            // накапливаются в ~2.857dp (~7px), и это пустое место оседает
+            // ПОСЛЕ последней зоны (у неё СВОЯ отдельная декоративная рамка,
+            // в отличие от кубиков, где рамка ОДНА на весь трей — там та же
+            // потеря просто прячется ВНУТРИ уже единой рамки, снаружи не
+            // видна). Раздел на слоты теперь делает AbilityZones.js —
+            // `Math.round(H*(i+1)/4) - Math.round(H*i/4)` на каждый индекс —
+            // сумма ВСЕХ 4 высот гарантированно точно равна округлённому H,
+            // без потерянного остатка.
+            columnHeight={compactColumns ? abilitiesWrapSize?.height : null}
+        />
+    );
 
     const diceAbilitiesTile = (
         <View
+            ref={dATileRef}
             onLayout={onDATileLayout}
-            style={[styles.dATile, compactColumns && styles.dATileCompact]}
+            style={[styles.dATile, compactColumns && styles.dATileCompact, compactColumns && styles.dATileRow]}
         >
             <PersonPanel size={dATileSize} />
-            <View onLayout={onDiceTrayLayout} style={styles.diceTrayWrap}>
+            <View
+                onLayout={onDiceTrayLayout}
+                style={[
+                    styles.diceTrayWrap,
+                    compactColumns && styles.diceTrayWrapCompact,
+                    compactColumns && { width: diceTrayWidthCompact },
+                ]}
+            >
                 {/* targetCornerSize=8 (было 12, дефолт FramePanel) — 2026-09-20,
                     живая жалоба "рамка кубиков/усилений касается рамки общей
                     плитки на Android, на вебе норм". НЕ трогаем padding/размер
@@ -614,16 +996,33 @@ export default function PlayerInfoPanel({
                     ghostY={nativeGhostY}
                     panelOriginX={nativePanelOriginX}
                     panelOriginY={nativePanelOriginY}
-                    // Размер кубика в compactColumns — 28→40 (2026-09-20, по
-                    // прямому запросу пользователя "сделай кубики побольше",
-                    // сразу после того, как они переехали в 2×2-сетку внутри
-                    // общей рамки, см. DiceTray.js) — константа "как задумано",
-                    // никакого масштабирования под доступную высоту больше нет
-                    // (см. докстринг у styles.columns/`compactColumns` ниже).
-                    {...(compactColumns ? { size: 40 } : {})}
+                    // vertical — см. докстринг DiceTray.js (2026-10-01): в
+                    // compactColumns кубики столбиком (diceTrayWrap слева от
+                    // abilitiesWrap, не над ним), в landscape — как раньше, в
+                    // ряд. size=compactMoveDiceSize — уже сам решает
+                    // компактный/обычный случай (см. её докстринг выше), ОДНО
+                    // число всегда на ОБЕ грани (width=height в DiceDie.js) —
+                    // кубик структурно не может стать прямоугольником, только
+                    // меньше/больше квадратом.
+                    vertical={compactColumns}
+                    size={compactMoveDiceSize}
+                    // color — 2026-10-01, прямой запрос пользователя "кубики
+                    // хода под цвет бегунов игрока" — та же activePlayer.color,
+                    // что уже красит аватар/активную рамку карточки бегуна.
+                    color={activePlayer.color}
+                    // slotHeight — см. докстринг dATileRowHeight выше: явная
+                    // высота ОДНОГО слота кубика вместо justifyContent:
+                    // 'space-between', чтобы 4 кубика были распределены РОВНО,
+                    // без разномастных зазоров.
+                    slotHeight={compactColumns ? diceSlotHeight : null}
                 />
             </View>
-            <View style={styles.abilitiesWrap}>{abilitiesNode}</View>
+            <View
+                onLayout={onAbilitiesWrapLayout}
+                style={[styles.abilitiesWrap, compactColumns && styles.abilitiesWrapCompact]}
+            >
+                {abilitiesNode}
+            </View>
         </View>
     );
 
@@ -656,26 +1055,67 @@ export default function PlayerInfoPanel({
                     прямому запросу пользователя: высота ряда теперь равна
                     высоте ОДНОЙ плитки, а не трёх стопкой, чтобы все 4 плитки
                     (Жнец+3) помещались без прокрутки. **2026-09-30 — авто-
-                    масштабирование (и до него, resize-версия роста) убрано
-                    целиком по прямому запросу пользователя** (см. докстринг
-                    выше, где раньше стояли onColumnsLayout/leftScale/
-                    rightScale) — карточки всегда своего натурального
-                    константного размера, никакого transform/resize. Зона
-                    дропа кубика хода — вся карточка целиком (см. RunnerCard,
-                    сама меряет и репортит себя). */}
+                    масштабирование ЛЕВОЙ колонки (и до него, resize-версия
+                    роста) убрано целиком по прямому запросу пользователя** —
+                    карточки бегунов всегда своего натурального константного
+                    размера, никакого transform/resize. Зона дропа кубика хода
+                    — вся карточка целиком (см. RunnerCard, сама меряет и
+                    репортит себя). **2026-10-01 — ПРАВАЯ колонка (кубики+
+                    усиления) получила узкий shrink-only `rightScale`
+                    обратно** (см. её докстринг у объявления выше) — после
+                    того, как кубики хода стали физически крупнее
+                    (MOVE_DICE_SIZE_*), панель без этого заползала за нижние
+                    элементы; левой колонки эта правка не касается. */}
                 {compactColumns ? (
-                    <View style={styles.columns}>
-                        {/* overflow:hidden (styles.scaleClip) — чистая страховка
-                            на случай, если натуральный контент когда-нибудь не
-                            поместится по высоте столбца, не рабочий механизм
-                            (масштабирования, подгоняющего под неё, больше нет). */}
-                        <View style={[styles.leftColumn, styles.scaleClip]}>
+                    <View style={styles.columns} onLayout={onColumnsLayout}>
+                        {/* `height: columnsH` — явный (2026-10-01): раньше
+                            высота колонки полагалась ТОЛЬКО на cross-axis
+                            stretch ряда `columns` (без явного height) — живой
+                            замер на вебе показал, что stretch без явного числа
+                            не жёстко ограничивает высоту на RN Web (та же
+                            категория проблемы, что уже задокументирована для
+                            switcherHeight). Та же величина, что мерится для
+                            rightScale ниже. */}
+                        <View style={[styles.leftColumn, styles.scaleClip, columnsH != null && { height: columnsH }]}>
+                            {/* leftColumnContent — flex:1 (см. её докстринг
+                                выше, "ЛЕВАЯ колонка"): заполняет уже явно
+                                заданную высоту leftColumn целиком.
+                                `reaperNode` внутри — натурального размера (её
+                                высоту задаёт квадратная RoadBonusPanel, см.
+                                её докстринг), `runnerRow` — flex:1, забирает
+                                ВЕСЬ остаток, каждая карточка внутри тянется
+                                по высоте (RunnerCard.js#cardCompact), низ ряда
+                                бегунов теперь ВСЕГДА ровно у низа columnsH. */}
                             <View style={styles.leftColumnContent}>
                                 {reaperNode}
-                                <View style={styles.runnerRow}>{runnerCards}</View>
+                                <View style={styles.runnerRow} onLayout={onRunnerRowLayout}>{runnerCards}</View>
                             </View>
                         </View>
-                        <View style={[styles.rightColumn, styles.scaleClip]}>
+                        {/* `height: columnsH` — та же явная высота, тем же
+                            приёмом, что и у leftColumn выше (2026-10-01,
+                            живая жалоба "dATile не растянута по высоте до
+                            панели табов"). Весь механизм `rightScale`
+                            (paint-only transform, три захода подряд в этот же
+                            вечер — то огромный зазор по бокам, то расплющенные
+                            квадраты) УБРАН целиком: та же болезнь, что уже
+                            была у leftColumn (2026-09-30) — "не растягивай
+                            через transform, растягивай саму коробку" — теперь
+                            применена и тут, симметрично. */}
+                        <View style={[styles.rightColumn, styles.scaleClip, columnsH != null && { height: columnsH }]}>
+                            {/* rightColumnContent — flex:1, заполняет явно
+                                заданную высоту rightColumn целиком (тот же
+                                приём, что leftColumnContent у соседней
+                                колонки). dATile сама — тоже flex:1 внутри неё
+                                (см. dATileCompact/compactColumns-ветку стилей
+                                ниже) — её декоративный фон (PersonPanel,
+                                dATileSize) растягивается вместе с коробкой,
+                                достаёт до низа колонки (= до панели табов).
+                                Контент внутри (кубики/усиления) остаётся
+                                натурального размера и центрируется по высоте
+                                (DiceTray.js#column/AbilityZones.js#gridVertical
+                                — `justifyContent:'center'`), а не растягивается
+                                сам — тот же принцип, что уже применён к
+                                карточкам бегунов (растёт коробка, не контент). */}
                             <View style={styles.rightColumnContent}>
                                 {diceAbilitiesTile}
                             </View>
@@ -698,7 +1138,15 @@ export default function PlayerInfoPanel({
                             запросу пользователя) — то же самое теперь показывает
                             подсказка-пульсация (см. runnersHighlight выше), отдельная
                             инструкция в заголовке стала избыточна. */}
-                        <PulseText active={runnersHighlight} style={styles.sectionTitle}>Бегуны</PulseText>
+                        {/* baseColor — явно (2026-10-01, продолжение сессии): PulseText
+                            сам дефолтит на `colors.textOnDarkSecondary` (см. её
+                            докстринг) и накладывает его ПОСЛЕ styles.sectionTitle в
+                            массиве стилей — просто перекрасить sectionTitle.color
+                            было недостаточно, компонент всё равно перебивал его
+                            своим дефолтом, пока не active. */}
+                        <PulseText active={runnersHighlight} baseColor={colors.textOnDark} style={styles.sectionTitle}>
+                            Бегуны
+                        </PulseText>
                         {runnerCards}
                     </ScrollView>
                 )}
@@ -726,10 +1174,8 @@ export default function PlayerInfoPanel({
                 Animated умеет обновлять `transform` в обход React state,
                 `left`/`top` так дёшево не обновить. */}
             {Platform.OS === 'web' && dragGhostValue != null && (
-                <Animated.Image
-                    source={DICE_FACE_IMAGES[dragGhostValue]}
+                <Animated.View
                     pointerEvents="none"
-                    resizeMode="contain"
                     style={[
                         styles.dragGhost,
                         {
@@ -741,7 +1187,12 @@ export default function PlayerInfoPanel({
                             ],
                         },
                     ]}
-                />
+                >
+                    {/* DicePips (2026-10-01, см. её докстринг/DiceDie.js) —
+                        PNG-ассет грани удалён целиком, ghost должен совпадать
+                        с видом реального кубика в трее. */}
+                    <DicePips value={dragGhostValue} size={dragGhostSize} color={activePlayer.color} />
+                </Animated.View>
             )}
             {/* Native-версия — reanimated `Animated.Image` (из
                 `react-native-reanimated`, импортирован как
@@ -754,12 +1205,12 @@ export default function PlayerInfoPanel({
                 выше), обычный RN-View по умолчанию `position:'relative'`,
                 этого достаточно без портала/доп. родителя. */}
             {Platform.OS !== 'web' && dragGhostValue != null && (
-                <ReanimatedAnimated.Image
-                    source={DICE_FACE_IMAGES[dragGhostValue]}
+                <ReanimatedAnimated.View
                     pointerEvents="none"
-                    resizeMode="contain"
                     style={[styles.dragGhost, { width: dragGhostSize, height: dragGhostSize }, nativeGhostAnimatedStyle]}
-                />
+                >
+                    <DicePips value={dragGhostValue} size={dragGhostSize} color={activePlayer.color} />
+                </ReanimatedAnimated.View>
             )}
         </View>
     );
@@ -796,11 +1247,17 @@ const styles = StyleSheet.create({
     switcherBox: { justifyContent: 'center' },
     infoColumn: { flex: 1, marginTop: spacing.xs },
     scrollContent: { paddingBottom: spacing.md },
+    // Раньше — приглушённый (`colors.textOnDarkSecondary`, uppercase,
+    // letterSpacing) декоративный стиль подписи секции. 2026-10-01
+    // (продолжение сессии) — по прямому запросу пользователя приведён к
+    // тому же яркому стилю, что и новые подписи "Раунд"/"Ход"/"Бонус хода"
+    // (`reaperCellLabel`) — бросался в глаза контраст между новыми яркими
+    // тайтлами и этим приглушённым, когда они оказались рядом в одной
+    // панели.
     sectionTitle: {
-        color: colors.textOnDarkSecondary,
+        color: colors.textOnDark,
+        fontWeight: 'bold',
         fontSize: font.tiny,
-        textTransform: 'uppercase',
-        letterSpacing: 1,
         marginTop: spacing.md,
         marginBottom: spacing.xs,
     },
@@ -825,7 +1282,16 @@ const styles = StyleSheet.create({
     // неё, как задумано. Сама декоративная дуга (FramePanel) не пострадает
     // — она сидит НЕ внутри diceTrayWrap как контент, который надо
     // обрезать, а сама и есть первый слой этой View, ей клип не нужен.
-    diceTrayWrap: { borderRadius: 4, padding: spacing.xs },
+    // padding — spacing.sm, ровно толщина декоративного уголка
+    // (targetCornerSize=8, см. diceAbilitiesTile) — устраняет наползание
+    // вдоль ПРЯМЫХ краёв рамки. Доп. запас именно под сам угол (дуга срезает
+    // площадь по диагонали глубже, чем её толщина по прямой) — теперь в
+    // формуле compactMoveDiceSize (см. её докстринг), не здесь: увеличивать
+    // ЭТОТ padding пришлось бы синхронно пересчитывать долю там же, чтобы не
+    // вызвать переполнение по прямым краям — два независимых источника
+    // истины снова разъехались бы, ровно та ошибка, которую и просил
+    // устранить пользователь этим же заходом.
+    diceTrayWrap: { borderRadius: 4, padding: spacing.sm },
     // Общая плитка "Кубики+Усиления" (2026-09-20, PersonPanel-рамка, см.
     // diceAbilitiesTile) — padding, чтобы контент не упирался в декоративную
     // дугу рамки (тот же приём, что и у RunnerCard.js#styles.card).
@@ -855,13 +1321,56 @@ const styles = StyleSheet.create({
     // "сделать расстояние между фреймами усилений и кубиков меньше, может
     // вернуть правки без увеличения общей плитки" — чистый прирост высоты
     // ~0-4px, а не +22px, как было в откаченной версии.
-    dATileCompact: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: 0, overflow: 'hidden' },
+    // flex:1 (2026-10-01, живая жалоба "dATile не растянута по высоте до
+    // панели табов") — заполняет явно заданную высоту rightColumnContent
+    // целиком (та же роль, что flex:1 у leftColumnContent для соседней
+    // колонки) — декоративный фон (PersonPanel, dATileSize) растёт вместе с
+    // коробкой, а не остаётся короткой плиткой с пустотой под ней.
+    dATileCompact: { paddingHorizontal: spacing.md, paddingVertical: spacing.sm, marginBottom: 0, overflow: 'hidden', flex: 1 },
+    // Кубики слева / усиления справа, В РЯД (2026-10-01, прямой запрос
+    // пользователя "diceTrayWrap вертикально слева, усиления вертикально
+    // справа") — раньше diceTrayWrap стоял НАД abilitiesWrap (column, дефолт),
+    // теперь оба — родные дети dATile В РЯД. alignItems не задан — дефолтный
+    // stretch по кросс-оси (высоте) даёт обеим половинам одинаковую высоту,
+    // не мешает ни одной из них (у обеих контент сам себя центрирует/
+    // раскладывает внутри, см. DiceTray.js#column/AbilityZones.js#
+    // gridVertical).
+    dATileRow: { flexDirection: 'row', gap: spacing.sm },
+    // ЯВНАЯ ширина, НЕЗАВИСИМАЯ константа (DICE_FRAME_WIDTH_COMPACT, см. её
+    // докстринг вверху файла за полной хронологией: сначала flex-доля от
+    // ряда — либо сжимала кубик, либо раздувала рамку; потом ширина СЧИТАЛАСЬ
+    // от размера кубика — не видела второй, отдельный паддинг DiceTray.js#
+    // column, кубик вылезал за рамку; теперь ширина рамки — ПЕРВИЧНА, а
+    // размер кубика (compactMoveDiceSize) считается процентом уже ОТ НЕЁ,
+    // реально измеренной, см. её докстринг). БЕЗ justifyContent:'center'
+    // (был тут, убран 2026-10-01, живая жалоба "верхняя рамка усиления не
+    // вровень с рамкой кубиков" — см. докстринг DiceTray.js#column за полным
+    // разбором): сама колонка кубиков (DiceTray.js#column) теперь flex:1 +
+    // space-between, растягивается на всю высоту diceTrayWrap САМА, этой
+    // обёртке дополнительный justifyContent больше не нужен.
+    diceTrayWrapCompact: { width: DICE_FRAME_WIDTH_COMPACT },
     // Зазор между треем кубиков и сеткой усилений внутри общей плитки —
     // раньше его давал marginTop у заголовка "УСИЛЕНИЯ" (убран вместе с
     // текстом, см. abilitiesNode), без него сетка липла вплотную к кубикам.
     // spacing.xs (было spacing.sm) — уменьшен на 2026-09-20, компенсирует
     // прирост paddingVertical у dATileCompact выше (см. её комментарий).
+    // В compactColumns (abilitiesWrapCompact) marginTop больше не нужен —
+    // зазор между кубиками и усилениями теперь ГОРИЗОНТАЛЬНЫЙ (`gap` на
+    // dATileRow), а не вертикальный (усиления стоят РЯДОМ, не под кубиками).
     abilitiesWrap: { marginTop: spacing.xs },
+    // flex:1 — раз diceTrayWrapCompact теперь ЯВНОЙ (не flex-) ширины,
+    // усиления просто забирают ВЕСЬ остаток ряда — на типичном экране это
+    // заметно больше ширины кубиков (естественно выполняет "усиления —
+    // колонка пошире"), без отдельной пропорции, которую пришлось бы
+    // подгонять под конкретное значение ширины кубика вручную.
+    // БЕЗ justifyContent:'center' (был тут, убран 2026-10-01, живая жалоба
+    // "верхняя рамка усиления не вровень с рамкой кубиков" — см. докстринг
+    // DiceTray.js#column за полным разбором: центрирование выравнивает
+    // только центр, не края, а натуральная высота стопки усилений отличается
+    // от стопки кубиков). Сама сетка усилений (AbilityZones.js#gridVertical)
+    // теперь сама flex:1 + space-between — растягивается на всю высоту этой
+    // обёртки, этой обёртке дополнительный justifyContent больше не нужен.
+    abilitiesWrapCompact: { flex: 1, marginTop: 0 },
     // compactColumns (портретная раскладка) — бегуны+жнец слева (основное
     // пространство), кубики+усиления справа, заметно уже — по прямому
     // запросу пользователя "сделать зону усилений поуже, дать место плиткам
@@ -899,7 +1408,15 @@ const styles = StyleSheet.create({
     // него `flexBasis:0` не спасёт от того, что колонка не ужмётся меньше
     // естественного размера контента, та же ловушка, что уже чинилась для
     // `infoCol` в RunnerCard.js).
-    columns: { flex: 1, flexDirection: 'row', marginTop: spacing.xs },
+    // marginBottom: 0 (2026-10-01, прямой запрос пользователя — впритык к
+    // переключателю игроков). Раньше тут стоял `spacing.lg` (20px) — тем же
+    // способом, каким `columnsH` (измеренная высота ЭТОГО ряда, `onLayout`
+    // отдаёт border-box без margin) прокидывается в leftColumn/rightColumn
+    // как явный `height`, этот margin вычитался flexbox'ом из доступного
+    // `columns` пространства и симметрично укорачивал ОБЕ колонки — отсюда
+    // и был видимый зазор перед табами. Убрали совсем — колонки снова
+    // упираются в switcher вплотную.
+    columns: { flex: 1, flexDirection: 'row', marginTop: spacing.xs, marginBottom: 0 },
     // 3:2 (не 2:1) — после фикса flexGrow-конкуренции с ScrollView выше 2:1
     // дало реальную ширину карточки 211px (было 157) — живая жалоба
     // пользователя "слишком широко получилось", 3:2 — более умеренный шаг.
@@ -921,28 +1438,57 @@ const styles = StyleSheet.create({
     // "уменьшить ширину" обеих зон) — видимый отступ с обеих сторон, сама
     // ширина колонок (2:1) не меняется.
     //
-    // `flex: 1` + `justifyContent: 'space-between'` — 2026-09-30, по прямому
-    // запросу пользователя ("сделать высоту плиток бегунов статично длинной
-    // в высоту до кнопок табов, аналогично плитке с усилениями"). `leftColumn`
-    // (родитель) уже растянут на всю высоту `columns` через cross-axis
-    // stretch (см. её докстринг) — раньше этим пользовался только сам бокс,
-    // а `leftColumnContent` внутри был только настолько высоким, насколько
-    // требовал его натуральный контент, оставляя пустоту снизу. `flex:1`
-    // заставляет ЕГО заполнить весь этот уже-полный бокс, `space-between`
-    // разводит Жнеца и ряд бегунов к противоположным краям — так колонка
-    // визуально доходит до низа (до кнопок табов), БЕЗ изменения размера
-    // самих карточек (см. ROAD_BONUS_SIZE_COMPACT в RunnerCard.js — теперь их
-    // натуральная высота одинакова у любого игрока, растягивать точно под
-    // неё больше не нужно). paddingBottom — sm→xs, тем же заходом, что
-    // marginTop-цепочка в RunnerCard.js#cardCompact — после того, как
-    // roadBonus-квадрат вырос до размера кубика хода, натуральная высота
-    // стопки (Жнец+ряд бегунов) перестала помещаться в доступную высоту
-    // колонки без этого зазора, роадBonus-квадрат обрезался снизу.
-    leftColumnContent: { flex: 1, justifyContent: 'space-between', paddingBottom: spacing.xs, paddingHorizontal: spacing.xs },
+    // `flex:1` (2026-10-01) — заполняет ЯВНО заданную высоту leftColumn
+    // целиком (см. её докстринг выше, "ЛЕВАЯ колонка"): `reaperNode` внутри
+    // остаётся натурального размера (высоту держит квадратная
+    // RoadBonusPanel), а `runnerRow` (тоже flex:1, см. ниже) забирает ВЕСЬ
+    // остаток — низ ряда бегунов гарантированно у низа колонки. Раньше
+    // (2026-09-30 — начало 2026-10-01) тут был `justifyContent:'space-between'`
+    // (растягивал только ПУСТОЙ зазор между Жнецом и рядом, сами карточки
+    // оставались натурального размера) — заменён, когда пользователь прямо
+    // попросил, чтобы растягивались САМИ ПЛИТКИ, а не зазор между ними.
+    leftColumnContent: { flex: 1, paddingBottom: spacing.xs, paddingHorizontal: spacing.xs },
+    // Ряд "Раунд/Ход/Бонус дороги" (2026-10-01, см. reaperNode) — НЕ flex:1
+    // (в отличие от leftColumnContent/runnerRow) — намеренно натуральной
+    // высоты, её держат сами квадраты (aspectRatio:1 у RoundPanel/
+    // RoadBonusPanel) + подпись под каждым. gap — тот же приём, что и у
+    // runnerRow ниже. marginBottom — даёт зазор перед runnerRow.
+    reaperRow: { flexDirection: 'row', gap: spacing.xs, marginBottom: 2 },
+    // Один квадрат ряда + подпись под ним ("Раунд"/"Ход"/"Бонус хода") — та
+    // же идея, что подпись типа бегуна под RunnerCard (`styles.name`), по
+    // прямому запросу пользователя "по аналогии с тайтлом для бегуна сделать
+    // тайтлы". flex:1 — все три ячейки делят ширину ряда поровну (тот же
+    // эффект, что раньше давал явный `panelSize` каждой панели по
+    // отдельности — теперь это делает сама ячейка, панели внутри уже сами
+    // квадратные через aspectRatio:1).
+    reaperCell: { flex: 1, alignItems: 'center' },
+    reaperCellLabel: {
+        color: colors.textOnDark,
+        fontWeight: 'bold',
+        fontSize: font.tiny,
+        marginBottom: 2,
+    },
     // Ряд из 3 вертикальных плиток бегунов, ПОД Жнецом (2026-09-20, см.
     // RunnerCard.js#compact) — gap, тот же приём, что уже используют columns/
-    // DiceTray/turnBtnRow в этом файле/проекте.
-    runnerRow: { flexDirection: 'row', gap: spacing.xs },
-    rightColumn: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingHorizontal: spacing.xs },
-    rightColumnContent: { paddingBottom: spacing.sm },
+    // DiceTray/turnBtnRow в этом файле/проекте. flex:1 (2026-10-01, см.
+    // leftColumnContent выше) — забирает весь остаток высоты колонки после
+    // reaperRow; каждая карточка внутри тянется по высоте отдельно (см.
+    // RunnerCard.js#cardCompact#height:'100%').
+    runnerRow: { flexDirection: 'row', gap: spacing.xs, flex: 1 },
+    // paddingRight (было paddingHorizontal — отступ с ОБЕИХ сторон) —
+    // 2026-10-01, прямой запрос пользователя: "расширь панель кубиков и
+    // усилений влево до края колонки" + явный запрет трогать позицию правой
+    // рамки. Левый инсет убран целиком (paddingLeft отсутствует — панель
+    // (rightColumnContent/dATile) теперь начинается ровно от левого края
+    // rightColumn, а не отступает от него ещё на xs). Правый инсет (xs)
+    // оставлен БЕЗ изменений — та же величина, что и раньше, правая рамка
+    // панели не сдвигается ни на пиксель. Зазор МЕЖДУ leftColumn и
+    // rightColumn (marginRight у leftColumn) этим не тронут — отдельный,
+    // не запрошенный элемент.
+    rightColumn: { flexGrow: 2, flexShrink: 1, flexBasis: 0, minWidth: 0, paddingRight: spacing.xs },
+    // flex:1 (2026-10-01) — заполняет ЯВНО заданную высоту rightColumn
+    // целиком (тот же приём, что leftColumnContent у соседней колонки) —
+    // dATile внутри (тоже flex:1, см. dATileCompact) растягивается вместе с
+    // ней, декоративный фон плитки достаёт до низа колонки.
+    rightColumnContent: { paddingBottom: spacing.sm, flex: 1 },
 });

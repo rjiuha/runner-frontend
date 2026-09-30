@@ -103,6 +103,18 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             if (patch.type === 'ball') trigger(patch.id, 'start', { toPosition, runnerType: patch.type });
             return;
         }
+
+        // triggerPatch — 2026-10-01, узкий рефакторинг по прямому запросу
+        // пользователя (вместо очередной точечной заплатки): единая точка,
+        // которая ВСЕГДА прикладывает `fromStatus: prev.status` к любой
+        // анимации ЭТОГО бегуна в этом блоке, а не полагается, что каждая
+        // ветка (move/fly/wait/start) сама вспомнит это сделать — именно
+        // так дважды терялось (gotShot/destroyed 2026-09-30, коллизионный
+        // fly 2026-10-01). Безусловно — когда prev.status===patch.status,
+        // `displayRunners` (GameBoardScreen.js) видит fromStatus, РАВНЫЙ
+        // текущему статусу, и ничего не подменяет (см. её докстринг) — это
+        // no-op, не нужно решать "а точно ли ЭТА поза может менять статус".
+        const triggerPatch = (kind, extra) => trigger(patch.id, kind, { ...extra, fromStatus: prev.status });
         // 'start' — первый выход из резерва (RunnerStartMoveService,
         // reason явно 'start') — БЕЗ анимации вообще (по прямому запросу
         // пользователя, 2026-09-01): бегуна до этого момента нигде не было
@@ -110,7 +122,7 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
         // защитным фолбэком на случай рассинхрона reason/фактического
         // состояния — обе проверки должны совпадать всегда.
         if (e.reason === 'start' || prev.segment == null) {
-            trigger(patch.id, 'start', { toPosition });
+            triggerPatch('start', { toPosition });
             return;
         }
         if (patch.segment == null) return; // снят с трассы — не наш случай
@@ -140,7 +152,7 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             // depthChanged/targetLaneShifted — ТОЛЬКО для выбора visual-
             // варианта направления (юг/север/восток/запад), см. докстринг
             // модуля выше — geometрия тут больше не решает move-или-fly.
-            trigger(patch.id, 'move', {
+            triggerPatch('move', {
                 direction: neighbor?.direction ?? 'UP',
                 depthChanged: neighbor ? patch.positionX !== prev.positionX : false,
                 targetLaneShifted: neighbor ? patch.positionY % 2 === 0 : false,
@@ -163,7 +175,7 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             // реально доиграет свой текущий шаг (см. docstring модуля и
             // историю в CLAUDE_DONE_TASKS.md за разбор живых багов, которые
             // этот механизм чинил) — только потом реальный 'fly'.
-            trigger(patch.id, 'wait', {
+            triggerPatch('wait', {
                 toPosition: { segment: prev.segment, positionX: prev.positionX, positionY: prev.positionY },
             });
             animHelpers.onceStepDone(winnerId, () => {
@@ -182,12 +194,12 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
                 // первой в очереди и стартовала до того, как бегун реально
                 // долетел.
                 requestAnimationFrame(() => {
-                    animHelpers.completeWaitStep(patch.id, 'fly', { toPosition });
+                    animHelpers.completeWaitStep(patch.id, 'fly', { toPosition, fromStatus: prev.status });
                 });
             });
             return;
         }
-        trigger(patch.id, 'fly', { toPosition });
+        triggerPatch('fly', { toPosition });
         return;
     }
 
@@ -195,6 +207,12 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
         const patch = e.runnerId;
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
         if (!prev) return;
+        // triggerPatch — см. её докстринг в блоке 'runner_save' выше, тот же
+        // приём: fromStatus прикладывается автоматически ко всем анимациям
+        // ЭТОГО бегуна в этом блоке, включая 'bomb' у Жнеца НЕ участвует
+        // (та нацелена на ДРУГОГО бегуна — reaperHere.id, не patch.id —
+        // остаётся сырым trigger() ниже).
+        const triggerPatch = (kind, extra) => trigger(patch.id, kind, { ...extra, fromStatus: prev.status });
 
         // Последняя известная (ДО события) позиция — нужна как toPosition
         // для 'fly'/'destroyed' ниже: RunnerDestroyService на бэке (read-only)
@@ -225,7 +243,7 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             const toPosition = e.reason === 'track_shift'
                 ? { ...lastKnownPosition, positionX: lastKnownPosition.positionX - REAPER_TRACK_SHIFT_FLY_OFF_ROWS }
                 : lastKnownPosition;
-            trigger(patch.id, 'fly', { toPosition });
+            triggerPatch('fly', { toPosition });
             return;
         }
 
@@ -235,7 +253,7 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
         if (e.event === 'runner_destroy' && lastKnownPosition) {
             const deathKind = DEATH_KIND_BY_REASON[e.reason];
             if (deathKind) {
-                trigger(patch.id, deathKind, { toPosition: lastKnownPosition });
+                triggerPatch(deathKind, { toPosition: lastKnownPosition });
                 return;
             }
         }
@@ -255,25 +273,14 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             if (reaperHere) {
                 trigger(reaperHere.id, 'bomb', {});
                 setTimeout(
-                    () => trigger(patch.id, 'destroyed', { fromStatus: prev.status, toPosition: lastKnownPosition }),
+                    () => triggerPatch('destroyed', { toPosition: lastKnownPosition }),
                     REAPER_BOMB_TO_DESTROYED_DELAY_MS,
                 );
             } else {
-                trigger(patch.id, 'destroyed', { fromStatus: prev.status, toPosition: lastKnownPosition });
+                triggerPatch('destroyed', { toPosition: lastKnownPosition });
             }
         } else {
-            // fromStatus — 2026-09-30, живая жалоба пользователя: танк на
-            // danger-клетке (мина) мгновенно выглядел 'damaged' ещё ВО ВРЕМЯ
-            // взрыва/gotShot-позы, а не только после того, как она доиграла.
-            // Причина — RunnerToken выбирает спрайт по ЖИВОМУ runner.status
-            // (см. её докстринг), который реducer уже обновил на 'damaged' к
-            // этому моменту; сама 'destroyed'-ветка та же дыру уже закрывала
-            // через fromStatus (см. выше) — 'gotShot' тогда была пропущена.
-            // Потребитель — GameBoardScreen#displayRunners (BoardGrid И
-            // PlayerInfoPanel читают ОДИН и тот же подменённый статус, пока
-            // gotShot не доиграет — жетоны урона на карточке тоже не должны
-            // мигать раньше анимации на доске).
-            trigger(patch.id, 'gotShot', { fromStatus: prev.status });
+            triggerPatch('gotShot', {});
         }
         return;
     }

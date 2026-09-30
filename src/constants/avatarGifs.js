@@ -23,13 +23,13 @@ const avatarGifSources = {
         healthy: {
             red: require('../assets/images/avatars/scout_healthy_avatar_red.gif'),
             blue: require('../assets/images/avatars/scout_healthy_avatar_blue.gif'),
-            green: require('../assets/images/avatars/scout_healthy_avatar_green.gif'),
+            purple: require('../assets/images/avatars/scout_healthy_avatar_green.gif'),
             yellow: require('../assets/images/avatars/scout_healthy_avatar_yellow.gif'),
         },
         damaged: {
             red: require('../assets/images/avatars/scout_damaged_avatar_red.gif'),
             blue: require('../assets/images/avatars/scout_damaged_avatar_blue.gif'),
-            green: require('../assets/images/avatars/scout_damaged_avatar_green.gif'),
+            purple: require('../assets/images/avatars/scout_damaged_avatar_green.gif'),
             yellow: require('../assets/images/avatars/scout_damaged_avatar_yellow.gif'),
         },
     },
@@ -37,13 +37,13 @@ const avatarGifSources = {
         healthy: {
             red: require('../assets/images/avatars/tank_healthy_avatar_red.gif'),
             blue: require('../assets/images/avatars/tank_healthy_avatar_blue.gif'),
-            green: require('../assets/images/avatars/tank_healthy_avatar_green.gif'),
+            purple: require('../assets/images/avatars/tank_healthy_avatar_green.gif'),
             yellow: require('../assets/images/avatars/tank_healthy_avatar_yellow.gif'),
         },
         damaged: {
             red: require('../assets/images/avatars/tank_damaged_avatar_red.gif'),
             blue: require('../assets/images/avatars/tank_damaged_avatar_blue.gif'),
-            green: require('../assets/images/avatars/tank_damaged_avatar_green.gif'),
+            purple: require('../assets/images/avatars/tank_damaged_avatar_green.gif'),
             yellow: require('../assets/images/avatars/tank_damaged_avatar_yellow.gif'),
         },
     },
@@ -51,13 +51,13 @@ const avatarGifSources = {
         healthy: {
             red: require('../assets/images/avatars/athlet_healthy_avatar_red.gif'),
             blue: require('../assets/images/avatars/athlet_healthy_avatar_blue.gif'),
-            green: require('../assets/images/avatars/athlet_healthy_avatar_green.gif'),
+            purple: require('../assets/images/avatars/athlet_healthy_avatar_green.gif'),
             yellow: require('../assets/images/avatars/athlet_healthy_avatar_yellow.gif'),
         },
         damaged: {
             red: require('../assets/images/avatars/athlet_damaged_avatar_red.gif'),
             blue: require('../assets/images/avatars/athlet_damaged_avatar_blue.gif'),
-            green: require('../assets/images/avatars/athlet_damaged_avatar_green.gif'),
+            purple: require('../assets/images/avatars/athlet_damaged_avatar_green.gif'),
             yellow: require('../assets/images/avatars/athlet_damaged_avatar_yellow.gif'),
         },
     },
@@ -65,7 +65,7 @@ const avatarGifSources = {
         healthy: {
             red: require('../assets/images/avatars/drone_avatar_red.gif'),
             blue: require('../assets/images/avatars/drone_avatar_blue.gif'),
-            green: require('../assets/images/avatars/drone_avatar_green.gif'),
+            purple: require('../assets/images/avatars/drone_avatar_green.gif'),
             yellow: require('../assets/images/avatars/drone_avatar_yellow.gif'),
         },
     },

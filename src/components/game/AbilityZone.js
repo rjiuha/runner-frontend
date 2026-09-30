@@ -16,8 +16,25 @@ import { colors, spacing } from '../../theme';
 const isAndroid = Platform.OS === 'android';
 // Вынесено из styles.iconCompact (2026-09-26) — нужно ЧИСЛОМ для расчёта
 // sizeScale-роста (см. проп sizeScale/место рендера иконки ниже), не только
-// как style-константа.
-const ICON_SIZE_COMPACT = 34;
+// как style-константа. Было 34 — увеличено 2026-10-01 по прямому запросу
+// пользователя ("усиления сделай крупнее"), заодно с переходом кубиков хода
+// на один ряд (DiceTray.js) и rightColumn на полную ширину (PlayerInfoPanel.js
+// #rightScale, scaleY-only) — теперь в правой колонке появилось освободившееся
+// место по высоте под более крупную иконку.
+const ICON_SIZE_COMPACT = 44;
+// Ширина зоны в vertical-раскладке — ТОЛЬКО ФОЛБЭК (2026-10-01, живая жалоба
+// с реального устройства): раньше это была НЕЗАВИСИМАЯ константа, единственный
+// источник истины. На реальном устройстве (другая ширина rightColumn, не
+// такая, под которую эта константа когда-то подбиралась на эмуляторе) зона
+// перестала помещаться в колонку. Теперь ширину явно считает и присылает
+// PlayerInfoPanel.js пропом `zoneWidth` (от РЕАЛЬНО измеренной ширины общей
+// плитки dATile, см. её докстринг) — эта константа остаётся только на
+// лендскейп-раскладку (`zoneWidth` туда не передаётся) и как временное
+// значение до первого измерения. Размер иконки (`iconSizeVertical` ниже)
+// по-прежнему считается от РЕАЛЬНО отрендеренной ширины зоны (`zoneSize`,
+// `onLayout`) — какой бы источник ни определил саму ширину зоны, эта цепочка
+// не меняется.
+const ABILITY_ZONE_WIDTH_COMPACT = 60;
 
 /**
  * Зона-цель для перетаскивания кубика. Сама зона не решает, подходит ли ей
@@ -53,8 +70,29 @@ function AbilityZone({
     onPress,
     remeasureTick = 0,
     compact = false,
+    vertical = false,
     color,
     pulseHighlight = false,
+    // zoneWidth (2026-10-01, прямой запрос пользователя — реальное
+    // устройство, "усиления вышли за пределы колонки") — та же причина и тот
+    // же фикс, что уже применён к рамке кубиков хода
+    // (PlayerInfoPanel.js#diceTrayWidthCompact): раньше ширина зоны в
+    // vertical-раскладке была НЕЗАВИСИМОЙ константой (ABILITY_ZONE_WIDTH_
+    // COMPACT), настроенной под конкретный эмулятор — на реальном экране с
+    // другой шириной rightColumn эта константа могла не поместиться. Теперь
+    // PlayerInfoPanel.js измеряет ОБЩУЮ плитку (dATileSize) и явно считает,
+    // сколько места реально остаётся усилениям ПОСЛЕ рамки кубиков — эта
+    // величина прилетает сюда пропом. `null` (лендскейп-раскладка ИЛИ ещё
+    // не измерено на первом кадре) — падаем на старую константу ниже.
+    zoneWidth = null,
+    // zoneHeight (2026-10-01, живая жалоба "усиления НЕ прижаты друг к
+    // другу") — явная высота ОДНОГО слота (dATileRowHeight/4 от
+    // PlayerInfoPanel.js), заменяет натуральную высоту контента (иконка+
+    // паддинг) + `justifyContent:'space-between'` на gridVertical
+    // (AbilityZones.js), который раньше растягивал излишек в зазоры МЕЖДУ
+    // зонами. Зона теперь занимает РОВНО свою долю колонки — 4 зоны подряд
+    // без зазоров. `null` — лендскейп-раскладка или ещё не измерено.
+    zoneHeight = null,
     // Авто-РОСТ compact-колонки (2026-09-26, см. PlayerInfoPanel.js#rightGrow
     // за полным разбором) — >1, когда контента МЕНЬШЕ реально доступной
     // высоты правой колонки. Зона сама шириной 48% родителя (см.
@@ -153,6 +191,35 @@ function AbilityZone({
     // Тот же targetCornerSize=8, что передан в FramePanel ниже — см.
     // frameNotchRadius() в FramePanel.js за разбором.
     const notchRadius = frameNotchRadius(zoneSize, 8);
+    // Размер иконки в vertical-раскладке — от РЕАЛЬНО измеренного zoneSize
+    // (2026-10-01, прямой запрос пользователя, тот же приём, что и у кубиков
+    // хода — см. докстринг ABILITY_ZONE_WIDTH_COMPACT выше). Формула в два
+    // слоя, ТА ЖЕ, что и у compactMoveDiceSize в PlayerInfoPanel.js: (1)
+    // вычитаем РЕАЛЬНЫЙ paddingHorizontal самой зоны (`zoneVertical`,
+    // spacing.sm — та же константа, что и в её стиле, не отдельное число);
+    // (2) доп. запас ×0.85 конкретно под диагональное срезание у
+    // скруглённого угла декоративной рамки (FramePanel, targetCornerSize=8)
+    // — паддинг из шага (1) достаточен вдоль ПРЯМЫХ краёв, но не у самого
+    // угла. Потолок — ICON_SIZE_COMPACT, иконка никогда не растёт крупнее
+    // задуманного. До первого onLayout (zoneSize ещё null) — тот же потолок.
+    // Потолок ПО ВЫСОТЕ — 2026-10-01, прямой запрос пользователя ("а для 4
+    // усилений сложно сделать ту же механику масштабирования с делением
+    // общей высоты на 4?") — та же формула-паттерн, что уже применена к
+    // кубикам хода (PlayerInfoPanel.js#compactMoveDiceSize): `Math.min` по
+    // ОБЕИМ осям, не только по ширине. Делить на 4 тут заново не нужно —
+    // `zoneSize.height` УЖЕ является высотой ОДНОГО слота (PlayerInfoPanel.js
+    // сама делит общую высоту дорожки на 4 и отдаёт explicit `zoneHeight`
+    // каждой зоне, см. её докстринг) — это тот самый результат деления,
+    // просто измеренный постфактум через `onLayout`, а не взятый как готовое
+    // число. paddingVertical (`styles.zone`, spacing.xs) вычитается той же
+    // логикой, что и paddingHorizontal у ширины выше.
+    const iconSizeVertical = zoneSize
+        ? Math.min(
+            ICON_SIZE_COMPACT,
+            Math.floor((zoneSize.width - spacing.sm * 2) * 0.85),
+            Math.floor((zoneSize.height - spacing.xs * 2) * 0.85),
+        )
+        : ICON_SIZE_COMPACT;
 
     return (
         <TouchableOpacity
@@ -160,7 +227,13 @@ function AbilityZone({
             onLayout={handleLayout}
             onPress={filled ? handlePress : undefined}
             activeOpacity={filled ? 0.7 : 1}
-            style={[styles.zone, compact && styles.zoneCompact]}
+            style={[
+                styles.zone,
+                compact && styles.zoneCompact,
+                vertical && styles.zoneVertical,
+                vertical && zoneWidth != null && { width: zoneWidth },
+                vertical && zoneHeight != null && { height: zoneHeight, justifyContent: 'center' },
+            ]}
         >
             {/* targetCornerSize=8 (было 12, дефолт) — 2026-09-20, живая жалоба
                 "рамка усилений/кубиков касается рамки общей плитки на
@@ -215,6 +288,11 @@ function AbilityZone({
                         width: Math.round(ICON_SIZE_COMPACT * sizeScale),
                         height: Math.round(ICON_SIZE_COMPACT * sizeScale),
                     },
+                    // vertical — ПОСЛЕДНИЙ в массиве (высший приоритет),
+                    // 2026-10-01: перекрывает и iconCompact, и sizeScale —
+                    // размер иконки тут решает ТОЛЬКО iconSizeVertical (см.
+                    // её докстринг), реально измеренный от zoneSize.
+                    vertical && { width: iconSizeVertical, height: iconSizeVertical },
                     isAndroid && styles.iconNoHint,
                 ]}
                 resizeMode="contain"
@@ -255,6 +333,33 @@ const styles = StyleSheet.create({
     // без подсказки (hint) и мельче шрифт заголовка, по прямому запросу
     // пользователя "ужать пространство под усиления".
     zoneCompact: { paddingVertical: 4 },
+    // Столбик (2026-10-01, ДВА захода подряд):
+    // (1) БЫЛ width:'100%' (растягивался на всю ширину столбца-контейнера,
+    // см. AbilityZones.js), живая жалоба СРАЗУ после ("почему рамка
+    // усиления такая широкая") — `abilitiesWrapCompact` в PlayerInfoPanel.js
+    // забирает ВЕСЬ остаток ширины ряда (flex:1), а width:'100%' растягивал
+    // ДЕКОРАТИВНУЮ РАМКУ зоны на всю эту ширину — рамка становилась
+    // огромной, иконка терялась в её центре.
+    // (2) Дал явную ширину, СЧИТАННУЮ от размера иконки (в обратную
+    // сторону) — живая жалоба СРАЗУ после ("усиления выпирают за пределы
+    // панели") — та формула не видела ни собственный paddingHorizontal
+    // `zone` (4px, меньше толщины декоративного уголка — 8px), ни
+    // диагональное срезание у самого угла. Теперь НАОБОРОТ (см.
+    // ABILITY_ZONE_WIDTH_COMPACT/iconSizeVertical в компоненте выше) —
+    // ширина зоны ПЕРВИЧНА, иконка считается ОТ НЕЁ. paddingHorizontal
+    // здесь — spacing.sm (было spacing.xs у базового `zone`, не хватало на
+    // толщину уголка) — переопределяет `zone`'s paddingHorizontal ТОЛЬКО
+    // для vertical-раскладки, не трогая 2×2-сетку (`zoneCompact`).
+    // marginBottom:0 — 2026-10-01, живая жалоба "нижняя рамка усиления
+    // Призрак не вровень с нижней рамкой кубиков" (верх при этом уже
+    // совпадал, см. предыдущий заход): БАЗОВЫЙ `zone` даёт marginBottom
+    // ПОД КАЖДОЙ зоной, в т.ч. под ПОСЛЕДНЕЙ — `justifyContent:'space-
+    // between'` на gridVertical (AbilityZones.js) уже сам распределяет
+    // расстояние между зонами по всей высоте, а этот margin добавлялся
+    // ПОВЕРХ, сдвигая нижний край последней зоны ещё немного выше
+    // истинного низа контейнера. Обнулён ТОЛЬКО для vertical — 2×2-сетка
+    // (`zoneCompact`) не тронута, там margin всё ещё разделяет ряды.
+    zoneVertical: { width: ABILITY_ZONE_WIDTH_COMPACT, paddingHorizontal: spacing.sm, marginBottom: 0 },
     // Увеличены (было 34/26) — заняли место убранного текстового названия
     // усиления (см. комментарий у места рендера). 2026-09-26: точечная
     // попытка уменьшить (34→30) под нехватку высоты columns ОТКАЧЕНА — см.

@@ -455,15 +455,11 @@ export const RUNNER_STATUS_LABEL = {
   [RUNNER_STATUS.DESTROYED]: 'Уничтожен',
 };
 
-/** Грани кубика перемещения (D6) — ассеты D:\runner-frontend\src\assets\images\dice */
-export const DICE_FACE_IMAGES = {
-  1: require('../assets/images/dice/dice_p2_1.png'),
-  2: require('../assets/images/dice/dice_p2_2.png'),
-  3: require('../assets/images/dice/dice_p2_3.png'),
-  4: require('../assets/images/dice/dice_p2_4.png'),
-  5: require('../assets/images/dice/dice_p2_5.png'),
-  6: require('../assets/images/dice/dice_p2_6.png'),
-};
+// DICE_FACE_IMAGES (PNG-ассеты граней кубика) — удалены целиком 2026-10-01,
+// прямой запрос пользователя ("нахуй эти ассеты"), сам пользователь удалил
+// файлы src/assets/images/dice/*.png с диска. Грань кубика теперь рисуется
+// программно — см. src/components/game/DicePips.js (точки из View, всегда
+// квадрат конструктивно, не зависит ни от какого исходного изображения).
 
 /**
  * Командные усиления — зеркалят PlayerAbility (бэк, без служебного unghost).
@@ -581,21 +577,54 @@ export const DAMAGE_TOKENS = {
 // кандидатов (см. scratchpad-превью того же захода).
 const PLAYER_BLUE = '#2e3192';
 
+// "Зелёный" игрок бэка визуально ФИОЛЕТОВЫЙ — 2026-10-01, прямой запрос
+// пользователя, после того как раскрасил кубики хода в activePlayer.color
+// и стало видно наглядно: PLAYER_COLOR_HEX.green раньше указывал на
+// colors.success (настоящий зелёный), а готовые перекрашенные ассеты бегуна
+// (spritePackStrips.js/avatarGifs.js, ключ "green" там же) были СГЕНЕРИРОВАНЫ
+// под фиолетовый/индиго ещё на этапе перекраски спрайт-пака (см. CLAUDE.md,
+// 2026-09-11/09-21 — исторический неоновый цвет для этого слота ВСЕГДА был
+// фиолетовым, независимо от того, что PLAYER_COLOR_HEX называл его "green").
+// Значение снято ЖИВЬЁМ с пикселей уже готового аватара на эмуляторе
+// (adb screencap + прямой замер, не выдумано) — совпадает с историческим
+// #8b2fe0 из старых заметок CLAUDE.md. По прямому запросу пользователя —
+// вместо перекраски ассетов (дорого, их сотни) фронт теперь называет этот
+// слот ПРАВИЛЬНЫМ именем — "purple", а не "green". Бэк по-прежнему шлёт
+// строку "green" (PlayerColor.php не менялся, трогать чужой репозиторий
+// нельзя) — перевод "green"→"purple" происходит РОВНО В ОДНОЙ точке,
+// на границе (см. BACKEND_TO_FRONTEND_PLAYER_COLOR ниже + место её
+// применения в GameBoardScreen.js), дальше по фронту "green" нигде не
+// встречается — только "purple".
+const PLAYER_PURPLE = '#8b2fe0';
+
 /** Цвета для визуального различения бегунов разных игроков на общей доске (фолбэк по индексу) */
-export const PLAYER_COLORS = [colors.danger, PLAYER_BLUE, colors.success, colors.warning];
+export const PLAYER_COLORS = [colors.danger, PLAYER_BLUE, PLAYER_PURPLE, colors.warning];
 
 /**
  * Цвет игрока — зеркалит PlayerColor (бэк, Service/Game/RunnerGame/Enum/PlayerColor.php).
  * Бэк сам случайно и без повторов раздаёт эти 4 цвета игрокам при создании партии
  * (RunnerGameFactory::createGame) и отдаёт их строкой в RunnerPlayer.color — как в
  * GET /api/runner_game, так и во всех событиях, где публикуется игрок целиком.
+ * Ключ "purple" тут — ВНУТРЕННЕЕ имя фронта (см. докстринг PLAYER_PURPLE выше),
+ * бэк называет этот же слот "green" — перевод см. BACKEND_TO_FRONTEND_PLAYER_COLOR.
  */
 export const PLAYER_COLOR_HEX = {
   red: colors.danger,
   blue: PLAYER_BLUE,
   yellow: colors.warning,
-  green: colors.success,
+  purple: PLAYER_PURPLE,
 };
+
+/**
+ * Перевод цвета игрока с вокабуляра бэка на вокабуляр фронта — ЕДИНСТВЕННАЯ
+ * точка, где строка "green" (бэк) превращается в "purple" (фронт), см.
+ * докстринг PLAYER_PURPLE выше. Применяется РОВНО один раз, в
+ * GameBoardScreen.js, при разборе списка игроков партии — дальше по коду
+ * (PlayerInfoPanel.js, RunnerCard.js, DiceTray.js и т.д.) читают уже готовый
+ * hex (PLAYER_COLOR_HEX), а не эту строку, так что перевод достаточно
+ * применить один раз на входе.
+ */
+export const BACKEND_TO_FRONTEND_PLAYER_COLOR = { green: 'purple' };
 
 /** Статус партии — зеркалит GameStatus (бэк, Service/Game/Enum/GameStatus.php) */
 export const GAME_STATUS = {
