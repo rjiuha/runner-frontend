@@ -3,6 +3,8 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
+import { runOnJS, useSharedValue } from 'react-native-reanimated';
 
 import RoadNavButton from '../components/game/RoadNavButton';
 import MobileFrameOverlay from '../components/game/MobileFrameOverlay';
@@ -844,7 +846,81 @@ export default function GameBoardScreen({ route, navigation }) {
     // arrowBtnSize остаётся только для mobileNav-кнопок в seamRow — те
     // привязаны к толщине декоративной рамки, не к сегменту.
 
-    const { windowStart, backButtonProps, forwardButtonProps, jumpTo, jumpToStart } = useBoardScroll({ cols: viewportCols });
+    const { windowStart, backButtonProps, forwardButtonProps, jumpTo, jumpToStart, step: scrollStep } = useBoardScroll({ cols: viewportCols });
+
+    // Свайп по дороге на Android (2026-10-01, продолжение сессии, прямой
+    // запрос пользователя "не только по кнопкам") — ДОПОЛНЕНИЕ к кнопкам
+    // навигации (RoadNavButton/useBoardScroll), не замена: кнопки никуда не
+    // делись. Та же посегментная модель — свайп не тащит сетку визуально
+    // (BoardGrid.js вообще не умеет плавно скроллить, см. её докстринг),
+    // просто переводит дистанцию жеста в целое число вызовов `step()`, по
+    // одному на каждый пройденный `segmentH` (один сегмент дороги = один шаг
+    // кнопки).
+    // **Живой баг, найден и починен на реальном эмуляторе**: первая версия
+    // этого жеста была на core `PanResponder` (RN) — собралось чисто, но на
+    // живом устройстве НЕ СРАБОТАЛО ВООБЩЕ (`adb shell input swipe`, обычная
+    // кнопка рядом при этом штатно скроллила). Причина — `GestureHandlerRootView`
+    // (обязателен в App.js, см. CLAUDE.md) меняет диспетчеризацию тачей на
+    // Android, и legacy `PanResponder` ненадёжен внутри его дерева (известная
+    // несовместимость RNGH/PanResponder). Весь остальной драг в проекте
+    // (DiceDie.js) уже и так идёт через `Gesture.Pan()`/`GestureDetector` из
+    // `react-native-gesture-handler` — свайп переведён на тот же путь, а не
+    // изобретает отдельный.
+    // **Живой фидбек на эмуляторе, второй заход**: 1) направление было
+    // перевёрнуто относительно ожидания пользователя — исправлено (dy>0,
+    // палец тянут ВНИЗ = dir+1, "дальше по треку"); 2) шаг на целый
+    // `segmentH` ощущался вялым — порог шага уменьшен вдвое (`segmentH*0.5`).
+    // **Третий заход — живой вопрос пользователя "почему скролл срабатывает
+    // только при отпускании пальца?"**: первая версия звала `step()` ТОЛЬКО
+    // в `onEnd` (вся дистанция одним пакетом после релиза) — по прямому
+    // запросу пользователя переведено на `onUpdate`, шаги срабатывают ПРЯМО
+    // во время движения пальца, как только пройден очередной порог
+    // (`segmentH*0.5`), не дожидаясь отпускания. `swipeConsumedSteps`
+    // (shared value, не React state — обновляется из воркета на UI-потоке,
+    // без моста на каждый кадр) считает, сколько шагов УЖЕ списано с текущего
+    // жеста; `onUpdate` сравнивает с текущим "положенным по дистанции" числом
+    // шагов и списывает только РАЗНИЦУ (`newSteps`) — не весь `translationY`
+    // заново, иначе на каждый кадр жеста шаг повторялся бы с нуля. `onStart`
+    // обнуляет счётчик — новый жест считает с чистого листа. Скоростной бонус
+    // в `onEnd` (была часть второго захода) убран — прогрессивный `onUpdate`
+    // уже даёт мгновенный отклик по факту движения, скоростной бонус поверх
+    // него рисковал задвоить шаги на резком флике (onUpdate уже списал бы их
+    // по дистанции, onEnd добавил бы ещё).
+    const handleBoardSwipeStep = useCallback(
+        (dir, count) => {
+            for (let i = 0; i < count; i++) scrollStep(dir);
+        },
+        [scrollStep],
+    );
+    const swipeConsumedSteps = useSharedValue(0);
+    // activeOffsetY/failOffsetX — жест НЕ активируется на обычный тап по
+    // клетке (см. onCellPress) или на горизонтальное движение, только на
+    // заметное (>12dp) вертикальное — тот же порог, что был у снятого
+    // PanResponder-варианта. `pan`-объект пересоздаётся каждый рендер (не
+    // обёрнут в useRef/useMemo) — GestureDetector сам переподхватывает новый
+    // объект, тот же приём, что в DiceDie.js, замыкание всегда видит
+    // актуальный `segmentH`/`handleBoardSwipeStep`.
+    const boardSwipeGesture = Gesture.Pan()
+        .enabled(Platform.OS === 'android')
+        .activeOffsetY([-12, 12])
+        .failOffsetX([-20, 20])
+        .onStart(() => {
+            swipeConsumedSteps.value = 0;
+        })
+        .onUpdate((e) => {
+            if (!segmentH) return;
+            const unit = segmentH * 0.5;
+            // Палец тянут ВНИЗ (translationY>0) = "дальше по треку" (тот же
+            // dir=+1, что у кнопки "вверх"/forwardButtonProps) — по прямому
+            // запросу пользователя, обратная сторона от первой интуитивной
+            // попытки. `Math.trunc` (не round) — знаковое число шагов,
+            // положенное по ТЕКУЩЕЙ суммарной дистанции жеста с его начала.
+            const totalSteps = Math.trunc(e.translationY / unit);
+            const newSteps = totalSteps - swipeConsumedSteps.value;
+            if (newSteps === 0) return;
+            swipeConsumedSteps.value = totalSteps;
+            runOnJS(handleBoardSwipeStep)(newSteps > 0 ? 1 : -1, Math.abs(newSteps));
+        });
 
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
@@ -2495,10 +2571,17 @@ export default function GameBoardScreen({ route, navigation }) {
                             {/* Появление/исчезновение фрагмента при сдвиге трассы теперь
                                 рисует САМ BoardGrid (columnOpacities — см. эффект у
                                 trackShiftPhase выше) — обёртка тут не нужна,
-                                boardGridStack остался чисто layout-контейнером. */}
-                            <View style={styles.boardGridStack}>
-                                {boardGridEl}
-                            </View>
+                                boardGridStack остался чисто layout-контейнером.
+                                GestureDetector — см. boardSwipeGesture выше
+                                (`.enabled(Platform.OS==='android')` внутри
+                                самого жеста, отдельного условия тут не нужно;
+                                на вебе/iOS жест просто никогда не активируется,
+                                обычные тапы по клеткам не затронуты). */}
+                            <GestureDetector gesture={boardSwipeGesture}>
+                                <View style={styles.boardGridStack}>
+                                    {boardGridEl}
+                                </View>
+                            </GestureDetector>
                         </View>
                     </RoadArea>
                     {/* bleed.top закрывает И вырез/статус-бар (insets.top), плюс

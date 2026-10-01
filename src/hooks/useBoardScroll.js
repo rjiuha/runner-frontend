@@ -86,5 +86,10 @@ export function useBoardScroll({ cols }) {
         forwardButtonProps: { onPressIn: () => startRepeat(1), onPressOut: stopRepeat },
         jumpTo,
         jumpToStart,
+        // step — экспортирован 2026-10-01 (продолжение сессии), по прямому
+        // запросу пользователя добавить свайп-скролл на Android (та же
+        // посегментная модель, что уже используют кнопки — свайп просто
+        // вызывает этот же `step()` нужное число раз, см. GameBoardScreen.js).
+        step,
     };
 }
