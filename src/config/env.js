@@ -38,17 +38,26 @@ function devHost() {
 // хоста как есть) и веб продолжают ходить на голый 80.
 const MERCURE_PORT_SUFFIX = (Platform.OS === 'android' && Device.isDevice) ? ':8079' : '';
 
-const DEV = __DEV__;
+/** Боевой сервер: API и Mercure на одном хосте (cookie mercureAuthorization ставится без домена) */
+const SERVER_ORIGIN = 'https://91-142-72-220.sslip.io:8443';
+
+/**
+ * true — dev-сборка ходит на боевой сервер вместо локального docker-compose.
+ * Релизная сборка ходит на сервер всегда.
+ */
+const USE_SERVER_IN_DEV = true;
+
+const LOCAL = __DEV__ && !USE_SERVER_IN_DEV;
 const host = devHost();
 
 /** nginx из docker-compose слушает 8080 */
-export const API_URL = DEV
+export const API_URL = LOCAL
     ? `http://${host}:8080/api`
-    : 'https://api.example.com/api';
+    : `${SERVER_ORIGIN}/api`;
 
 /** контейнер mercure отдаёт 80-й порт — см. MERCURE_PORT_SUFFIX выше */
-export const MERCURE_URL = DEV
+export const MERCURE_URL = LOCAL
     ? `http://${host}${MERCURE_PORT_SUFFIX}/.well-known/mercure`
-    : 'https://hub.example.com/.well-known/mercure';
+    : `${SERVER_ORIGIN}/.well-known/mercure`;
 
 export const REQUEST_TIMEOUT = 150000000;
