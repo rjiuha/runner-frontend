@@ -1,6 +1,19 @@
 // src/constants/runnerAnimations.js
 import { PLAYER_COLOR_HEX, RUNNER_STATUS, RUNNER_TYPES } from './GameConstants';
 
+// ХВОСТ рефакторинга green→purple (2026-10-01, см. GameConstants.js —
+// PLAYER_PURPLE/BACKEND_TO_FRONTEND_PLAYER_COLOR): тогда переименовали ключ
+// цвета в spritePackStrips.js/avatarGifs.js (native), но этот файл — ЕДИНСТВЕННЫЙ
+// реестр анимаций на ВЕБЕ (см. RunnerToken.js#webGifSource) — пропустили.
+// Из-за этого colorKeyForHex() ниже резолвил фиолетовый hex в ключ 'purple',
+// а RUNNER_ANIMATION_SETS знал только про 'green' → getRunnerAnimationImage
+// тихо откатывался на `?? colorSet.blue`: фиолетовый игрок на вебе визуально
+// рисовался СИНИМИ ассетами. Найдено по живому вопросу пользователя
+// 2026-10-03 ("blue и green одни и те же ассеты?"), починено тем же приёмом,
+// что и в двух других файлах — только имя ключа ('green'→'purple'), ссылки на
+// физические .../*_green.gif НЕ трогали (сами файлы визуально фиолетовые,
+// просто остались в папках/именах со старым названием).
+
 /**
  * Ассеты анимаций бегунов — Скаут/Атлет/Танк (RUNNER_TYPES.SPRINTER/
  * ATHLETE/TANK), добавлены пользователем в assets/images/runners/
@@ -15,7 +28,7 @@ import { PLAYER_COLOR_HEX, RUNNER_STATUS, RUNNER_TYPES } from './GameConstants';
  * ДВОЙНОЙ decode на Android при каждой смене анимации — подозревался как
  * одна из причин "мигания" между анимациями (не единственная, см. CLAUDE.md).
  * Новая схема — ОДИН заранее перекрашенный gif НА КАЖДЫЙ из 4 цветов игрока
- * (red/blue/green/yellow, см. PLAYER_COLOR_HEX): неон НЕ трогается (остаётся
+ * (red/blue/purple/yellow, см. PLAYER_COLOR_HEX): неон НЕ трогается (остаётся
  * родным голубым), "стальное" покрытие тонируется ПОЛУПРОЗРАЧНО (30% —
  * пользователь запросил "70% прозрачности") в цвет команды поверх исходной
  * текстуры (alpha-blend, не плоская заливка). Один <Image> на смену состояния
@@ -84,7 +97,7 @@ const scoutHealthyBlue = {
     },
 };
 
-const scoutHealthyGreen = {
+const scoutHealthyPurple = {
     attack: {
         northEast: require('../assets/images/runners/scout/healthy/scout_healthy_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/scout/healthy/scout_healthy_attack_north-west_green.gif'),
@@ -190,7 +203,7 @@ const scoutDamagedBlue = {
     },
 };
 
-const scoutDamagedGreen = {
+const scoutDamagedPurple = {
     attack: {
         northEast: require('../assets/images/runners/scout/damaged/scout_damaged_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/scout/damaged/scout_damaged_attack_north-west_green.gif'),
@@ -296,7 +309,7 @@ const athletHealthyBlue = {
     },
 };
 
-const athletHealthyGreen = {
+const athletHealthyPurple = {
     attack: {
         northEast: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/athlet/healthy/athlet_healthy_attack_north-west_green.gif'),
@@ -402,7 +415,7 @@ const athletDamagedBlue = {
     },
 };
 
-const athletDamagedGreen = {
+const athletDamagedPurple = {
     attack: {
         northEast: require('../assets/images/runners/athlet/damaged/athlet_damaged_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/athlet/damaged/athlet_damaged_attack_north-west_green.gif'),
@@ -508,7 +521,7 @@ const tankHealthyBlue = {
     },
 };
 
-const tankHealthyGreen = {
+const tankHealthyPurple = {
     attack: {
         northEast: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/tank/healthy/tank_healthy_attack_north-west_green.gif'),
@@ -614,7 +627,7 @@ const tankDamagedBlue = {
     },
 };
 
-const tankDamagedGreen = {
+const tankDamagedPurple = {
     attack: {
         northEast: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/tank/damaged/tank_damaged_attack_north-west_green.gif'),
@@ -724,7 +737,7 @@ const droneBlue = {
     },
 };
 
-const droneGreen = {
+const dronePurple = {
     attack: {
         northEast: require('../assets/images/runners/drone/drone_attack_north-east_green.gif'),
         northWest: require('../assets/images/runners/drone/drone_attack_north-west_green.gif'),
@@ -772,7 +785,7 @@ const droneYellow = {
 // crimson путался с игроком red, промежуточный white пользователь передумал
 // на следующий день — "пожалуй лучше magenta"), выбран из 10 предложенных
 // вариантов, специально избегая сходства со всеми 4 цветами игроков
-// (red/indigo-blue/yellow/green).
+// (red/indigo-blue/yellow/purple).
 // Сгенерированы ВСЕ 10 кандидатов на диске (obstacle_*_{crimson,orange,gold,
 // lime,teal,indigo,violet,magenta,silver,white}.gif) — если понадобится
 // сменить ещё раз, достаточно поменять суффикс ниже, картинки уже готовы,
@@ -797,24 +810,24 @@ const ballFixed = {
 
 export const RUNNER_ANIMATION_SETS = {
     [RUNNER_TYPES.BALL]: {
-        healthy: { red: ballFixed, blue: ballFixed, green: ballFixed, yellow: ballFixed },
-        damaged: { red: ballFixed, blue: ballFixed, green: ballFixed, yellow: ballFixed },
+        healthy: { red: ballFixed, blue: ballFixed, purple: ballFixed, yellow: ballFixed },
+        damaged: { red: ballFixed, blue: ballFixed, purple: ballFixed, yellow: ballFixed },
     },
     [RUNNER_TYPES.REAPER]: {
-        healthy: { red: droneRed, blue: droneBlue, green: droneGreen, yellow: droneYellow },
-        damaged: { red: droneRed, blue: droneBlue, green: droneGreen, yellow: droneYellow },
+        healthy: { red: droneRed, blue: droneBlue, purple: dronePurple, yellow: droneYellow },
+        damaged: { red: droneRed, blue: droneBlue, purple: dronePurple, yellow: droneYellow },
     },
     [RUNNER_TYPES.SPRINTER]: {
         healthy: {
             red: scoutHealthyRed,
             blue: scoutHealthyBlue,
-            green: scoutHealthyGreen,
+            purple: scoutHealthyPurple,
             yellow: scoutHealthyYellow,
         },
         damaged: {
             red: scoutDamagedRed,
             blue: scoutDamagedBlue,
-            green: scoutDamagedGreen,
+            purple: scoutDamagedPurple,
             yellow: scoutDamagedYellow,
         },
     },
@@ -822,13 +835,13 @@ export const RUNNER_ANIMATION_SETS = {
         healthy: {
             red: athletHealthyRed,
             blue: athletHealthyBlue,
-            green: athletHealthyGreen,
+            purple: athletHealthyPurple,
             yellow: athletHealthyYellow,
         },
         damaged: {
             red: athletDamagedRed,
             blue: athletDamagedBlue,
-            green: athletDamagedGreen,
+            purple: athletDamagedPurple,
             yellow: athletDamagedYellow,
         },
     },
@@ -836,19 +849,19 @@ export const RUNNER_ANIMATION_SETS = {
         healthy: {
             red: tankHealthyRed,
             blue: tankHealthyBlue,
-            green: tankHealthyGreen,
+            purple: tankHealthyPurple,
             yellow: tankHealthyYellow,
         },
         damaged: {
             red: tankDamagedRed,
             blue: tankDamagedBlue,
-            green: tankDamagedGreen,
+            purple: tankDamagedPurple,
             yellow: tankDamagedYellow,
         },
     },
 };
 
-/** hex (PLAYER_COLOR_HEX) -> ключ цвета ('red'/'blue'/'green'/'yellow') для выбора готового перекрашенного ассета. */
+/** hex (PLAYER_COLOR_HEX) -> ключ цвета ('red'/'blue'/'purple'/'yellow') для выбора готового перекрашенного ассета. */
 const HEX_TO_COLOR_KEY = Object.fromEntries(Object.entries(PLAYER_COLOR_HEX).map(([key, hex]) => [hex, key]));
 export function colorKeyForHex(hex) {
     return HEX_TO_COLOR_KEY[hex] ?? 'blue';
@@ -880,11 +893,61 @@ function statusFolder(status) {
     return status === RUNNER_STATUS.HEALTHY ? 'healthy' : 'damaged';
 }
 
+/** Плоский список require()-значений бакета (move/attack/collision — на один
+ * уровень вложенные объекты по направлению/стороне, остальные ключи — сами
+ * require()). */
+function collectBucketSources(bucket) {
+    const out = [];
+    if (!bucket) return out;
+    for (const value of Object.values(bucket)) {
+        if (!value) continue;
+        if (typeof value === 'object' && !Array.isArray(value)) {
+            for (const inner of Object.values(value)) {
+                if (inner) out.push(inner);
+            }
+        } else {
+            out.push(value);
+        }
+    }
+    return out;
+}
+
+/**
+ * Список ВСЕХ require()-ассетов для type+status+colorKey — веб-прогрев (см.
+ * RunnerToken.js#prewarm), та же идея, что и у spritePacks.js#
+ * listAllSpriteSources (native), но под старый gif-реестр этого файла.
+ * Браузер грузит каждый require() отдельным HTTP-запросом ТОЛЬКО по факту
+ * первого реального использования — без прогрева первая игра конкретной
+ * позы (attack/gotShot/start и т.п. — не idle/move, они обычно уже тёплые к
+ * этому моменту) попросту не показывается: бегун пропадает на всё время
+ * ANIM_DURATION_MS (см. useRunnerAnimations.js), пока файл качается, а сам
+ * таймер смены позы об этом не знает (живая жалоба пользователя, 2026-10-05).
+ */
+export function listAllRunnerAnimationSources(type, status, colorKey) {
+    const set = RUNNER_ANIMATION_SETS[type];
+    if (!set) return [];
+    const sources = new Set();
+    const add = (bucket) => { for (const s of collectBucketSources(bucket)) sources.add(s); };
+
+    add(set[statusFolder(status)]?.[colorKey]);
+    // Кросс-статусные ассеты, которые бегун может запросить независимо от
+    // ТЕКУЩЕГО статуса — см. те же исключения в getRunnerAnimationImage выше:
+    // heal берётся из damaged-бакета, burn/acid — всегда из healthy-бакета,
+    // а destroyed может понадобиться из бакета ПРОТИВОПОЛОЖНОГО статуса
+    // (fromStatus на момент гибели).
+    add({ heal: set.damaged?.[colorKey]?.heal });
+    add({ burn: set.healthy?.[colorKey]?.burn, acid: set.healthy?.[colorKey]?.acid });
+    const otherStatus = status === RUNNER_STATUS.HEALTHY ? 'damaged' : 'healthy';
+    add({ destroyed: set[otherStatus]?.[colorKey]?.destroyed });
+
+    return Array.from(sources);
+}
+
 /**
  * Единственный require()-ассет (не {base,mask} — см. доку выше) для текущего
  * анимационного состояния бегуна на доске, уже перекрашенный в цвет игрока.
  * `anim` — { kind: 'move'|'attack'|'fly'|'gotShot'|'destroyed'|'collision', direction?, side?, fromStatus? } | null (idle).
- * `colorKey` — 'red'|'blue'|'green'|'yellow' (см. colorKeyForHex выше).
+ * `colorKey` — 'red'|'blue'|'purple'|'yellow' (см. colorKeyForHex выше).
  * Возвращает null, если для этого типа нет набора анимаций вообще — вызывающий
  * код (RunnerToken) тогда откатывается на старую статичную иконку.
  */

@@ -1,5 +1,5 @@
 // src/components/game/RunnerToken.js
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, View } from 'react-native';
 import { RUNNER_DISPLAY } from '../../constants/GameConstants';
 import { colorKeyForHex } from '../../constants/runnerAnimHelpers';
@@ -34,7 +34,7 @@ import SpritePackAnimation from '../ui/SpritePackAnimation';
 // файлы снова на месте, `getRunnerAnimationImage`/`getRunnerAvatarImage`
 // покрывают ВСЕ 5 типов (не только Скаута, как в самом первом scout-хаке) —
 // восстановление веб-ветки не требует отдельного хака под конкретный тип.
-import { getRunnerAnimationImage, getRunnerAvatarImage } from '../../constants/runnerAnimations';
+import { getRunnerAnimationImage, getRunnerAvatarImage, listAllRunnerAnimationSources } from '../../constants/runnerAnimations';
 import { colors } from '../../theme';
 
 const IS_WEB = Platform.OS === 'web';
@@ -167,6 +167,41 @@ function RunnerToken({
             ? resolveSpriteAvatarFrame(type, status, colorKey)
             : resolveSpriteRef(type, status, anim, colorKey);
 
+    // Веб (2026-10-05, прямой запрос пользователя — "пусть сначала
+    // прогрузится анимация, а потом проиграется") — ДОПОЛНЕНИЕ к прогреву
+    // выше: прогрев снижает шанс первого "пропадания", но не гарантирует его
+    // (Image.prefetch — отдельный сетевой запрос, может не успеть к моменту
+    // смены позы). Поэтому ЕЩЁ И сам рендер не переключает <Image source>
+    // сразу на новый desiredGifSource — держит ПРЕДЫДУЩИЙ закоммиченный кадр
+    // (committedGifSource), пока конкретно этот URI не прогрузится (тот же
+    // приём, что уже применяет SpritePackAnimation.js для спрайт-пака —
+    // preloadToken отсекает устаревший prefetch, если source сменился ЕЩЁ РАЗ
+    // до того, как первый успел отработать). Только веб — на native
+    // require()-ассеты уже в бандле приложения, сетевого ожидания нет,
+    // renderedGifSource там просто всегда равен desiredGifSource напрямую.
+    const desiredGifSource = avatarGifSource || webGifSource;
+    const [committedGifSource, setCommittedGifSource] = useState(desiredGifSource);
+    const gifPreloadTokenRef = useRef(0);
+    useEffect(() => {
+        if (!IS_WEB) return;
+        if (desiredGifSource === committedGifSource) return;
+        if (!desiredGifSource) {
+            setCommittedGifSource(null);
+            return;
+        }
+        const myToken = ++gifPreloadTokenRef.current;
+        const uri = Image.resolveAssetSource?.(desiredGifSource)?.uri;
+        const commit = () => {
+            if (myToken === gifPreloadTokenRef.current) setCommittedGifSource(desiredGifSource);
+        };
+        if (!uri || typeof Image.prefetch !== 'function') {
+            commit();
+            return;
+        }
+        Image.prefetch(uri).then(commit).catch(commit);
+    }, [desiredGifSource, committedGifSource]);
+    const renderedGifSource = IS_WEB ? (committedGifSource ?? desiredGifSource) : desiredGifSource;
+
     // Вращение ореола — ОДИН Animated.Value, растёт линейно 0→1 и сразу
     // зацикливается (не туда-обратно, как было бы у пульса) — стабильное
     // вращение БЕЗ мерцания, по прямому выбору пользователя из 5 живых
@@ -205,18 +240,41 @@ function RunnerToken({
     // в момент первого реального использования — слайд (RunnerTokenSlide) уже
     // начинает ехать, пока decode идёт, и поза потом резко "прыгает" на move
     // уже на середине пути. Прогреваем ВСЕ возможные кадры этой комбинации
-    // type+status+colorKey заранее (см. spritePacks.js#listAllSpriteSources),
-    // один раз за комбинацию на весь сеанс (prewarmedCombos выше) — сама
-    // проверка `!avatar` не нужна: у аватарки те же type/status/colorKey,
-    // тот же набор файлов и так нужен доске рано или поздно. Только native —
-    // веб рисует старыми gif (см. webGifSource выше), этот пак там вообще не
-    // используется, прогревать нечего.
+    // type+status+colorKey заранее, один раз за комбинацию на весь сеанс
+    // (prewarmedCombos выше) — сама проверка `!avatar` не нужна: у аватарки
+    // те же type/status/colorKey, тот же набор файлов и так нужен доске рано
+    // или поздно.
+    //
+    // **Веб (2026-10-05, живая жалоба пользователя)** — тот же класс бага,
+    // но куда серьёзнее: на native `require()`-ассеты уже лежат в бандле
+    // приложения, Image.prefetch там только прогревает decode-кэш. На вебе
+    // КАЖДЫЙ require() — это отдельный HTTP-файл, который браузер реально
+    // СКАЧИВАЕТ по факту первого использования — без прогрева первая игра
+    // конкретной позы (attack/gotShot/start и т.п.) не просто чуть дёргается,
+    // а не показывается ВООБЩЕ: бегун пропадает на всё время ANIM_DURATION_MS
+    // (useRunnerAnimations.js), пока файл качается, таймер смены позы об этом
+    // не знает и откатывает в idle, не дожидаясь загрузки. Повторная игра той
+    // же позы — файл уже в браузерном кеше, играется мгновенно, отсюда и
+    // жалоба "только первый раз за партию не проигрывается". Источник списка
+    // веб-ветка берёт другой (listAllRunnerAnimationSources — старый
+    // gif-реестр runnerAnimations.js, а не спрайт-пак), сам приём (Image.
+    // resolveAssetSource+prefetch, один раз на комбинацию) — тот же.
+    //
+    // **2026-10-05, тот же день, дальше по сессии** — возникла живая жалоба
+    // "веб тормозит при заходе в партию"; прогрев СНАЧАЛА откатывался с веба
+    // как подозреваемая причина (массовый параллельный Image.prefetch по
+    // 15-20 файлам на каждого смонтированного бегуна), но пользователь
+    // уточнил — тормоза были и ДО этой правки, прогрев тут ни при чём, причина
+    // не найдена/не в этом коде. Возвращено как было.
     useEffect(() => {
-        if (IS_WEB || !display) return;
+        if (!display) return;
         const comboKey = `${type}|${status}|${colorKey}`;
         if (prewarmedCombos.has(comboKey)) return;
         prewarmedCombos.add(comboKey);
-        for (const source of listAllSpriteSources(type, status, colorKey)) {
+        const sources = IS_WEB
+            ? listAllRunnerAnimationSources(type, status, colorKey)
+            : listAllSpriteSources(type, status, colorKey);
+        for (const source of sources) {
             const uri = Image.resolveAssetSource?.(source)?.uri;
             if (uri) Image.prefetch(uri).catch(() => {});
         }
@@ -305,8 +363,8 @@ function RunnerToken({
                 />
             )}
             <View style={imgBoxStyle}>
-                {avatarGifSource || webGifSource ? (
-                    <Image source={avatarGifSource || webGifSource} resizeMode="contain" fadeDuration={0} style={imgBoxStyle} />
+                {desiredGifSource ? (
+                    <Image source={renderedGifSource} resizeMode="contain" fadeDuration={0} style={imgBoxStyle} />
                 ) : (
                     <SpritePackAnimation
                         frame={frame}

@@ -14,12 +14,16 @@ import FragmentLabelStrip from '../components/game/FragmentLabelStrip';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
 import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
+import GameMenuButton from '../components/game/GameMenuButton';
+import GameMenuModal from '../components/game/GameMenuModal';
+import GameSettingsModal from '../components/game/GameSettingsModal';
 import Button from '../components/ui/Button';
 import LoadingCard from '../components/ui/LoadingCard';
 import PulseText from '../components/ui/PulseText';
 import FramePanel from '../components/ui/FramePanel';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
+import { useAudioSettings } from '../hooks/useAudioSettings';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { useGhostPairs } from '../hooks/useGhostPairs';
@@ -35,7 +39,7 @@ import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickS
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
 import { COMMENT_SOUNDS } from '../constants/commentSounds';
 import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
-import { notify } from '../lib/notify';
+import { notify, confirm } from '../lib/notify';
 import { createLogger } from '../lib/logger';
 import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
@@ -416,15 +420,34 @@ export default function GameBoardScreen({ route, navigation }) {
     // же компромисс, что и у voice/shoot/start чуть выше (если два разных
     // комментария выпадут почти одновременно, второй оборвёт первый через
     // .replace() — событие редкое, специально не усложняем множеством
-    // каналов). collisionSound (существующий, .wav вне comments/) теперь
-    // приглушена вдвое и играет ЦИКЛИЧНО, пока видна поза столкновения (см.
-    // handleCollisionPoseStart/End ниже), а не один раз коротким хлопком —
-    // по прямому запросу пользователя.
+    // каналов). collisionSound играет ЦИКЛИЧНО, пока видна поза столкновения
+    // (см. handleCollisionPoseStart/End ниже), а не один раз коротким
+    // хлопком — по прямому запросу пользователя.
     const commentSound = useAudioPlayer(null);
     useEffect(() => {
         collisionSound.loop = true;
-        collisionSound.volume = 0.5;
     }, [collisionSound]);
+    // Громкость по каналам — lib/audioSettings.js (панель настроек, кнопка
+    // settings в seam-ряду, 2026-10-04). Раньше тут были захардкожены
+    // MUSIC_VOLUME=0.1/collisionSound.volume=0.5 прямо на плеере — теперь
+    // ЕДИНСТВЕННЫЙ источник этих чисел, слайдеры в GameSettingsModal
+    // показывают именно то, что реально звучит, без скрытого множителя
+    // поверх. 'voice' — ТОЛЬКО реплики бегунов (active/damagedActive, по
+    // прямому запросу пользователя — отдельно от остального "игрового"
+    // звука); 'action' — всё остальное небоевое-не-музыка-не-комментатор:
+    // выстрелы/ожидание решения при столкновении/шаги/появление Жнеца-Мяча.
+    const audioSettings = useAudioSettings();
+    useEffect(() => {
+        voiceSound.volume = audioSettings.voice;
+    }, [voiceSound, audioSettings.voice]);
+    useEffect(() => {
+        shootSound.volume = audioSettings.action;
+        startSound.volume = audioSettings.action;
+        collisionSound.volume = audioSettings.action;
+    }, [shootSound, startSound, collisionSound, audioSettings.action]);
+    useEffect(() => {
+        commentSound.volume = audioSettings.commentator;
+    }, [commentSound, audioSettings.commentator]);
     // Считает ОДНОВРЕМЕННО активные пары столкновений (на доске теоретически
     // может быть больше одной сразу) — collisionSound останавливаем, только
     // когда ПОСЛЕДНЯЯ пара реально разошлась, не раньше.
@@ -964,6 +987,11 @@ export default function GameBoardScreen({ route, navigation }) {
     // ниже). pendingAbility к этому моменту уже сброшен в null.
     const [pendingReaperPlacement, setPendingReaperPlacement] = useState(null);
     const [busy, setBusy] = useState(false);
+    // Игровое меню (кнопка settings в seam-ряду, см. GameMenuButton/
+    // GameMenuModal/GameSettingsModal, 2026-10-04) — только 2 уровня, оба
+    // модальные, друг друга не перекрывают (см. handleOpenSettings ниже).
+    const [gameMenuOpen, setGameMenuOpen] = useState(false);
+    const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
 
     // Раньше совпадало с ANIM_DURATION_MS.start обычных бегунов
     // (useRunnerAnimations, 2200мс) — пока идёт "прилёт" Жнеца ИЗ-ЗА КРАЯ
@@ -1436,16 +1464,15 @@ export default function GameBoardScreen({ route, navigation }) {
                 }
                 return { highlightedCells: cells, tapMode: 'start' };
             }
-            // Накат (type=ROLL, см. canSelectRunner) — строго 1 клетка ВПЕРЁД
-            // (UP), без выбора направления (по прямому запросу пользователя,
-            // 2026-09-08: "накат — это строго движение вперёд"). Бегун,
-            // делающий накат, уже полностью проехал в обычном режиме (dice===0)
-            // и получил ОТДЕЛЬНЫЙ кубик rollDice для этого доп. хода (см.
-            // canSelectRunner/RunnerCard "Накат") — этой парой полей и отличаем
-            // накат-ход от обычного здесь, где `activeRunner` уже не несёт
-            // никакого признака "это был выбор type=ROLL" сам по себе.
-            const isRollMove = activeRunner.dice === 0 && activeRunner.rollDice != null;
-            const neighbors = forwardNeighbors(activeRunner).filter((n) => !isRollMove || n.direction === 'UP');
+            // Накат (type=ROLL, см. canSelectRunner) — реверс решения
+            // 2026-09-08 ("накат — это строго движение вперёд", только UP),
+            // по прямому запросу пользователя, 2026-10-03: теперь все 3
+            // клетки вперёд, ПО АНАЛОГИИ С ОБЫЧНЫМ ХОДОМ — та же
+            // forwardNeighbors(activeRunner), без фильтра по направлению.
+            // isRollMove (вычисляется отдельно в handleCellPress ниже) по-
+            // прежнему нужен ДЛЯ ДРУГОГО решения — "накат не должен
+            // предлагать доп. выстрел" (2026-09-30) — эта логика не тронута.
+            const neighbors = forwardNeighbors(activeRunner);
             return {
                 highlightedCells: new Set(neighbors.map(cellKey)),
                 tapMode: 'move',
@@ -1583,6 +1610,12 @@ export default function GameBoardScreen({ route, navigation }) {
     useEffect(() => {
         moveSound.loop = true;
     }, [moveSound]);
+    // 'action' — тот же канал, что у shoot/collision/start чуть выше (см.
+    // audioSettings-эффекты рядом с их созданием) — шаги объявлены позже по
+    // файлу (зависят от movingRunnerType), поэтому свой отдельный эффект.
+    useEffect(() => {
+        moveSound.volume = audioSettings.action;
+    }, [moveSound, audioSettings.action]);
     useEffect(() => {
         if (movingRunnerType) {
             moveSound.replace(pickMoveSoundSource(movingRunnerType));
@@ -1600,17 +1633,18 @@ export default function GameBoardScreen({ route, navigation }) {
     // список (см. constants/backgroundMusic.js за тем, почему не директория
     // целиком) из assets/sounds/background_music/, пока там один файл —
     // пользователь обещал донабрать ещё, механизм уже рассчитан на N треков.
-    // MUSIC_VOLUME приглушена относительно дефолтных 1.0 у звуковых
-    // эффектов, чтобы музыка не перекрикивала голосовые реплики/выстрелы.
-    // Настоящая причина "громкость не применяется" (живая жалоба
-    // пользователя, 2026-09-12): на вебе expo-audio's `.replace()`
+    // Громкость — audioSettings.music (lib/audioSettings.js), тот же канал,
+    // что и у меню/лобби-музыки (useMenuMusic) — приглушена относительно
+    // дефолтных 1.0 у звуковых эффектов, чтобы музыка не перекрикивала
+    // голосовые реплики/выстрелы (см. AUDIO_DEFAULTS.music). Настоящая
+    // причина "громкость не применяется" (живая жалоба пользователя,
+    // 2026-09-12): на вебе expo-audio's `.replace()`
     // (AudioPlayerWeb, node_modules/expo-audio/src/AudioPlayer.web.ts)
     // выкидывает старый <audio>-элемент и создаёт НОВЫЙ (`_createMediaElement()`)
     // — громкость сбрасывается на дефолтные 1.0 браузера, `musicSound.volume`,
     // установленная один раз в отдельном mount-эффекте, тут же перекрывалась
     // ПЕРВЫМ ЖЕ вызовом playRandomTrack(). Фикс — выставлять volume ПОСЛЕ
     // КАЖДОГО .replace(), не один раз при монтировании.
-    const MUSIC_VOLUME = 0.1;
     const musicSound = useAudioPlayer(null);
     const musicTrackIndexRef = useRef(-1);
     const playRandomTrack = useCallback(() => {
@@ -1621,9 +1655,9 @@ export default function GameBoardScreen({ route, navigation }) {
         const idx = pickRandomTrackIndex(BACKGROUND_MUSIC_TRACKS.length, musicTrackIndexRef.current);
         musicTrackIndexRef.current = idx;
         musicSound.replace(BACKGROUND_MUSIC_TRACKS[idx]);
-        musicSound.volume = MUSIC_VOLUME;
+        musicSound.volume = audioSettings.music;
         musicSound.play();
-    }, [musicSound]);
+    }, [musicSound, audioSettings.music]);
     // Как только текущий трек доигрывает до конца — сразу следующий
     // случайный (без паузы/тишины между ними, обычный плейлист-шаффл).
     useEffect(() => {
@@ -1632,6 +1666,13 @@ export default function GameBoardScreen({ route, navigation }) {
         });
         return () => sub.remove();
     }, [musicSound, playRandomTrack]);
+    // Живое изменение громкости, пока трек уже играет (слайдер "Фоновая
+    // музыка" в GameSettingsModal) — без этого эффекта новое значение
+    // применилось бы только на следующей смене трека, т.е. могло ждать
+    // несколько минут.
+    useEffect(() => {
+        musicSound.volume = audioSettings.music;
+    }, [musicSound, audioSettings.music]);
     // Играет ТОЛЬКО пока партия реально идёт (ACTIVE) — молчит в
     // ready-up-спиннере (WAITING) и на экране победителя (FINISH).
     useEffect(() => {
@@ -1713,52 +1754,44 @@ export default function GameBoardScreen({ route, navigation }) {
         }
     }, []);
 
-    // Автоматический ход накатом (по прямому запросу пользователя, 2026-09-08):
-    // после подтверждения SELECT типа ROLL шаг игрока переходит в MOVE, а
-    // highlightedCells (см. выше, isRollMove) подсвечивает РОВНО одну клетку
-    // (строго UP, без выбора направления — уже решено ранее, 2026-09-08) —
-    // тапать там больше не по чему выбирать, только по единственному
-    // варианту, так что делаем этот тап сами. autoRollMoveKeyRef — защита от
-    // повторного вызова: эффект перезапускается на каждое изменение
-    // activeRunner (новый объект на каждое live-обновление), а не только
-    // когда РЕАЛЬНО появляется новая накат-возможность.
-    // Ключ — "runnerId:rollMoves", НЕ "runnerId:rollDice" (было так до
-    // 2026-09-12) — живая жалоба пользователя: "первый накат сработал
-    // автоматом, второй пришлось прожимать рукой" (2 наката доступны,
-    // остался 1 бегун). Причина: `rollDice` — это 1-based ИНДЕКС кубика
-    // игрока (тот же слот, что и в обычном SELECT, см.
-    // StepSelectionService::handleRoll — `$runner->setRollDice($dto->dice)`),
-    // НЕ уникальный номер попытки — если игрок оба раза тащит кубик из
-    // ОДНОГО и того же слота (например, остался последний свободный), у
-    // второго наката `rollDice` совпадает с первым, ключ получается тем же
-    // самым, и эффект молча пропускает автотап, думая, что уже обработал
-    // именно эту попытку. `rollMoves`, наоборот, — счётчик РЕАЛЬНО
-    // ВЫПОЛНЕННЫХ накатов, `RunnerRollService::run()` (бэк, read-only)
-    // увеличивает его на 1 СТРОГО при завершении каждого наката — на
-    // момент SELECT следующего наката это уже другое число, коллизия
-    // невозможна независимо от того, какой кубик перетащил игрок.
-    // **2026-09-30, живая жалоба пользователя** — на вебе после наката
-    // иногда виден тост "Не удалось выполнить действие (не твой ход)",
-    // хотя сам накат фактически прошёл. Причина, воспроизведённая чтением
-    // кода: `autoRollMoveKeyRef` СБРАСЫВАЛСЯ в `null` в любой момент, когда
-    // `isRollMove` временно читался как false — а бандл событий (см.
-    // 2026-09-27 в CLAUDE.md) применяется реducer'ом ПО ОДНОМУ событию за
-    // рендер, значит между применением событий бандла возможен промежуточный
-    // рендер, где `activeRunner` УЖЕ отражает какое-то более позднее событие
-    // накат-хода (напр. коллизию, обнулившую dice/rollDice), но ЕЩЁ не то,
-    // что реально сдвинуло `rollMoves`/шаг игрока дальше. Если на ЭТОМ
-    // промежуточном рендере guard успевал сброситься в null, а СЛЕДУЮЩИЙ
-    // (после полного применения бандла) рендер почему-то снова видел
-    // isRollMove===true с ТЕМ ЖЕ `rollMoves` (не исключено при повторной
-    // синхронизации/reconnect) — эффект стрелял ПОВТОРНО тем же накатом,
-    // хотя бэк его уже обработал → "не твой ход"/"Wrong step". Фикс —
-    // guard больше НЕ сбрасывается в null вообще, ключ монотонен
-    // (`rollMoves` только растёт за партию) — раз конкретный `rollMoves` уже
-    // обработан, он никогда не запустит накат повторно, независимо от того,
-    // сколько раз isRollMove промелькнёт false/true между рендерами.
-    // НЕ подтверждено живьём отдельно от изначальной жалобы — рассуждение по
-    // чтению кода бандлинга, живого лога с меткой конкретно этого случая не
-    // было.
+    // "Покинуть игру" (GameMenuModal, 2026-10-04) — POST /runner_game/surrender
+    // (без тела, см. api/runnerGame.js). Бэк следом шлёт player_surrender →
+    // runner_destroy(reason:'surrender') по каждому бегуну → player_out, и
+    // если это был последний активный игрок — game_finish; уходящий игрок
+    // при этом сам не ждёт этих событий (они предназначены ОСТАЛЬНЫМ
+    // клиентам партии) — сразу после успешного ответа уводим его в главное
+    // меню тем же goToMainMenu, что уже использует GameFinishModal.
+    // skipStuckWatch — после surrender игрок уходит с экрана, watchdog
+    // "действие зависло" ему уже не нужен.
+    const handleSurrender = useCallback(() => {
+        confirm(
+            'Покинуть игру?',
+            'Ваши бегуны будут сняты с трассы, вы выбудете из партии. Остальные игроки продолжат без вас.',
+            () => runAction(() => runnerGameApi.surrender().then(goToMainMenu), { skipStuckWatch: true }),
+            'Покинуть',
+        );
+    }, [runAction, goToMainMenu]);
+
+    const handleOpenGameMenu = useCallback(() => setGameMenuOpen(true), []);
+    const handleCloseGameMenu = useCallback(() => setGameMenuOpen(false), []);
+    const handleLeaveFromMenu = useCallback(() => {
+        setGameMenuOpen(false);
+        handleSurrender();
+    }, [handleSurrender]);
+    const handleOpenSettingsFromMenu = useCallback(() => {
+        setGameMenuOpen(false);
+        setGameSettingsOpen(true);
+    }, []);
+    const handleCloseSettings = useCallback(() => setGameSettingsOpen(false), []);
+
+    // Накат (type=ROLL) — до 2026-10-03 двигался АВТОМАТИЧЕСКИ (единственная
+    // легальная клетка — строго UP, тапать было не по чему, см. git-историю
+    // за старый `autoRollMoveKeyRef`-эффект). По прямому запросу пользователя
+    // реверснуто: теперь highlightedCells для наката подсвечивает все 3
+    // клетки вперёд (см. выше, isRollMove-фильтр убран) — выбор направления
+    // идёт обычным тапом через handleCellPress/tapMode==='move', отдельного
+    // наката-эффекта больше нет.
+    //
     // Накат НЕ должен предлагать доп. выстрел — по прямому запросу
     // пользователя, 2026-09-30: "накат может привести к коллизии и другим
     // событиям, связанным с расположением на доске, но дополнительных
@@ -1766,14 +1799,16 @@ export default function GameBoardScreen({ route, navigation }) {
     // перемещения (в т.ч. накат-хода), если рядом оказался легальный
     // прицел — та же логика, что и у обычного ручного MOVE (см.
     // PLAYER_STEP.SHOOT ниже) — отличать накат от обычного хода умеет
-    // только фронт. `pendingRollShootSkipRef` взводится ПРЯМО перед
-    // авто-накатом (см. следующий эффект) и держится, пока шаг игрока не
+    // только фронт. `pendingRollShootSkipRef` взводится В handleCellPress
+    // (2026-10-03, раньше — прямо перед авто-накатом, см. выше) ПРЯМО перед
+    // вызовом move() для накат-хода, и держится, пока шаг игрока не
     // определится — как только он СТАНОВИТСЯ известен: SHOOT → авто-отказ
     // (`shoot(false)`, тот же вызов, что делает игрок кнопкой "Пропустить
     // выстрел"), любой ДРУГОЙ шаг (ROAD_BONUS/новый SELECT/конец хода) →
     // просто гасим флаг без действия — эти шаги (в т.ч. диалог коллизии,
     // управляемый ОТДЕЛЬНЫМ `game.extraTurnPlayer`, не `myStep`) должны
-    // остаться штатными, интерактивными. НЕ подтверждено живьём.
+    // остаться штатными, интерактивными. НЕ подтверждено живьём (ни в старой,
+    // ни в новой форме).
     const pendingRollShootSkipRef = useRef(false);
     useEffect(() => {
         if (!pendingRollShootSkipRef.current || busy) return;
@@ -1790,21 +1825,6 @@ export default function GameBoardScreen({ route, navigation }) {
             pendingRollShootSkipRef.current = false;
         }
     }, [myStep, myTurn, busy, runAction]);
-
-    const autoRollMoveKeyRef = useRef(null);
-    useEffect(() => {
-        if (!myTurn || busy || myStep !== PLAYER_STEP.MOVE || !activeRunner) return;
-        const isRollMove = activeRunner.dice === 0 && activeRunner.rollDice != null;
-        if (!isRollMove) return;
-        const key = `${activeRunner.id}:${activeRunner.rollMoves}`;
-        if (autoRollMoveKeyRef.current === key) return;
-        autoRollMoveKeyRef.current = key;
-        // Накат сам решает не давать доп. выстрел (см. эффект выше) —
-        // коллизия и другие события от расположения на доске по-прежнему
-        // обрабатываются как обычно, глушится только SHOOT.
-        pendingRollShootSkipRef.current = true;
-        runAction(() => runnerGameApi.move(null, 'UP'), { skipStuckWatch: true });
-    }, [myTurn, busy, myStep, activeRunner, runAction]);
 
     // Второй шаг размещения Жнеца — направление выстрела (или пропуск).
     // direction === undefined → JSON.stringify выкидывает поле из тела
@@ -1877,6 +1897,13 @@ export default function GameBoardScreen({ route, navigation }) {
                 const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
                 const neighbor = forwardNeighbors(activeRunner).find((n) => cellKey(n) === cellKey(target));
                 if (!neighbor) return;
+                // Накат (type=ROLL, см. canSelectRunner) — тот же тап, что у
+                // обычного хода (2026-10-03, см. комментарий у
+                // pendingRollShootSkipRef выше), но дополнительно глушит
+                // предложенный после хода довыстрел (решение 2026-09-30, не
+                // тронуто).
+                const isRollMove = activeRunner.dice === 0 && activeRunner.rollDice != null;
+                if (isRollMove) pendingRollShootSkipRef.current = true;
                 runAction(() => runnerGameApi.move(null, neighbor.direction), { skipStuckWatch: true });
                 return;
             }
@@ -2462,6 +2489,17 @@ export default function GameBoardScreen({ route, navigation }) {
                 onExit={goToMainMenu}
             />
 
+            {/* Игровое меню — кнопка settings в seam-ряду (см. ниже), только
+                useMobileNavButtons (портретный native), см. CLAUDE.md за
+                обоснованием области применения. */}
+            <GameMenuModal
+                visible={gameMenuOpen}
+                onClose={handleCloseGameMenu}
+                onLeave={handleLeaveFromMenu}
+                onSettings={handleOpenSettingsFromMenu}
+            />
+            <GameSettingsModal visible={gameSettingsOpen} onClose={handleCloseSettings} />
+
             {/* Кат-сцена сдвига фрагментов/столкновение — раньше отдельный
                 плавающий styles.collisionBanner (свой top-right угол,
                 независимый от turnBanner/panelTurnBanner), теперь содержимое
@@ -2661,12 +2699,19 @@ export default function GameBoardScreen({ route, navigation }) {
                 и раскрывающийся список — абсолютным дропдауном НАД собой. Только для
                 useMobileNavButtons (мобильная рамка) — вне этого случая лог остаётся
                 в прежнем углу (position ниже), кнопки навигации — RoadNavButton
-                колонкой слева от дороги (см. navBtnColumnLeft выше). */}
+                колонкой слева от дороги (см. navBtnColumnLeft выше). GameMenuButton
+                (settings) — та же плитка, что и лог/стрелки, открывает
+                GameMenuModal ("Покинуть игру"/"Настройки"), 2026-10-04. */}
             {useMobileNavButtons ? (
                 <View style={[styles.seamRow, { bottom: panelH - arrowBtnSize / 2, height: arrowBtnSize }]}>
                     <RoadNavButton direction="up" size={arrowBtnSize} handlers={forwardButtonProps} />
                     <RoadNavButton direction="down" size={arrowBtnSize} handlers={backButtonProps} />
-                    <EventLogPanel entries={eventLog} position="seam" />
+                    <EventLogPanel entries={eventLog} position="seam" iconSize={arrowBtnSize} />
+                    <GameMenuButton
+                        size={arrowBtnSize}
+                        active={gameMenuOpen || gameSettingsOpen}
+                        onPress={handleOpenGameMenu}
+                    />
                 </View>
             ) : (
                 <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />

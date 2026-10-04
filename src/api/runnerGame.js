@@ -44,4 +44,10 @@ export const runnerGameApi = {
     // явный null ничего не усложняет.
     ability: (accept, details = null) =>
         request('/runner_game/ability', { method: 'POST', body: { accept, details } }),
+
+    // Сдаться — без тела (см. README бэка). Следом бэк шлёт player_surrender
+    // → runner_destroy (reason:'surrender') по каждому бегуну → player_out;
+    // если это был последний активный игрок — следом game_finish (уже
+    // обрабатывается runnerGameReducer/GameFinishModal, см. GameBoardScreen).
+    surrender: () => request('/runner_game/surrender', { method: 'POST' }),
 };

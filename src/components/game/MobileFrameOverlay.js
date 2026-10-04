@@ -4,19 +4,22 @@ import { Image, View } from 'react-native';
 import {
     MOBILE_FRAME_BORDER_PX,
     MOBILE_FRAME_CORNER_SIZE_PX,
-    MOBILE_FRAME_CORNER_TR,
-    MOBILE_FRAME_EDGE_RIGHT,
+    MOBILE_FRAME_CORNER_BOTTOM,
+    MOBILE_FRAME_CORNER_TOP,
+    MOBILE_FRAME_EDGE_BOTTOM,
+    MOBILE_FRAME_EDGE_LEFT,
     MOBILE_FRAME_EDGE_TOP,
 } from '../../constants/GameConstants';
 
 /**
  * Декоративная sci-fi рамка (мобильное приложение, портретная раскладка,
- * см. GameBoardScreen.useMobileNavButtons) — собрана из ОДНОГО угла
- * (верхний правый) и 2 планок (верхняя горизонтальная, правая
- * вертикальная); остальные 3 угла и обратные стороны планок получены
- * зеркалированием (`scaleX:-1`/`scaleY:-1`) того же изображения — отдельных
- * файлов под них нет, толщина уголка и планки в исходниках уже точно
- * совпадает (см. GameConstants.js), так что швы сходятся без подгонки.
+ * см. GameBoardScreen.useMobileNavButtons). 2026-10-04: пользователь прислал
+ * раздельные верх/низ ассеты (см. GameConstants.js за полным разбором) —
+ * угол и горизонтальная планка верха/низа каждый уже верно нарисован под
+ * свою половину (зеркалим ТОЛЬКО по горизонтали, `scaleX:-1`, для правой
+ * стороны), вертикальная планка — канонически левая, правая зеркалится тем
+ * же `scaleX:-1`. Толщина уголка и планки в исходниках совпадает (см.
+ * GameConstants.js), швы сходятся без подгонки.
  *
  * Заполняет РОВНО родителя — но НЕ через left+right без явного width на
  * планках: на реальном Android планка рендерилась в СВОЁМ нативном размере
@@ -89,66 +92,62 @@ export default function MobileFrameOverlay({ borderDp, corners = {}, bleed = {} 
                         }}
                     />
                     <Image
-                        source={MOBILE_FRAME_EDGE_TOP}
+                        source={MOBILE_FRAME_EDGE_BOTTOM}
                         resizeMode="stretch"
                         style={{
                             position: 'absolute', bottom: 0, left: leftInsetBottom,
                             width: size.width - leftInsetBottom - rightInsetBottom, height: borderDp,
-                            transform: [{ scaleY: -1 }],
                         }}
                     />
                     <Image
-                        source={MOBILE_FRAME_EDGE_RIGHT}
+                        source={MOBILE_FRAME_EDGE_LEFT}
                         resizeMode="stretch"
                         style={{
                             position: 'absolute', right: 0, top: rightInsetTop,
                             width: borderDp, height: size.height - rightInsetTop - rightInsetBottom,
+                            transform: [{ scaleX: -1 }],
                         }}
                     />
                     <Image
-                        source={MOBILE_FRAME_EDGE_RIGHT}
+                        source={MOBILE_FRAME_EDGE_LEFT}
                         resizeMode="stretch"
                         style={{
                             position: 'absolute', left: 0, top: leftInsetTop,
                             width: borderDp, height: size.height - leftInsetTop - leftInsetBottom,
-                            transform: [{ scaleX: -1 }],
                         }}
                     />
                     {tr && (
                         <Image
-                            source={MOBILE_FRAME_CORNER_TR}
-                            resizeMode="stretch"
-                            style={{ position: 'absolute', top: 0, right: 0, width: cornerSize, height: cornerSize }}
-                        />
-                    )}
-                    {tl && (
-                        <Image
-                            source={MOBILE_FRAME_CORNER_TR}
+                            source={MOBILE_FRAME_CORNER_TOP}
                             resizeMode="stretch"
                             style={{
-                                position: 'absolute', top: 0, left: 0, width: cornerSize, height: cornerSize,
+                                position: 'absolute', top: 0, right: 0, width: cornerSize, height: cornerSize,
                                 transform: [{ scaleX: -1 }],
                             }}
                         />
                     )}
+                    {tl && (
+                        <Image
+                            source={MOBILE_FRAME_CORNER_TOP}
+                            resizeMode="stretch"
+                            style={{ position: 'absolute', top: 0, left: 0, width: cornerSize, height: cornerSize }}
+                        />
+                    )}
                     {br && (
                         <Image
-                            source={MOBILE_FRAME_CORNER_TR}
+                            source={MOBILE_FRAME_CORNER_BOTTOM}
                             resizeMode="stretch"
                             style={{
                                 position: 'absolute', bottom: 0, right: 0, width: cornerSize, height: cornerSize,
-                                transform: [{ scaleY: -1 }],
+                                transform: [{ scaleX: -1 }],
                             }}
                         />
                     )}
                     {bl && (
                         <Image
-                            source={MOBILE_FRAME_CORNER_TR}
+                            source={MOBILE_FRAME_CORNER_BOTTOM}
                             resizeMode="stretch"
-                            style={{
-                                position: 'absolute', bottom: 0, left: 0, width: cornerSize, height: cornerSize,
-                                transform: [{ scaleX: -1 }, { scaleY: -1 }],
-                            }}
+                            style={{ position: 'absolute', bottom: 0, left: 0, width: cornerSize, height: cornerSize }}
                         />
                     )}
                 </>

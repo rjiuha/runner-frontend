@@ -310,26 +310,49 @@ export const FRAGMENT_COLORS = ['#e2113f', '#e65100', '#00c853'];
  * Первая версия декоративной рамки (один квадратный `frame.png`, нарезанный
  * скриптом на 9 частей) не прижилась — асимметрия толщины по сторонам,
  * искажённые углы, наплыв рамок друг на друга (см. историю в CLAUDE.md).
- * Пользователь заменил её на честно подготовленный набор — один угол
- * (верхний правый) и 2 планки (верхняя горизонтальная, правая
- * вертикальная), с ТОЧНО совпадающей толщиной уголка и планки (проверено
- * по пикселям: у угла толщина сверху 47px/справа 49px — совпадает с
- * высотой горизонтальной планки (47px) и шириной вертикальной (49px)).
- * Остальные 3 угла и вторые стороны планок — то же изображение,
- * отзеркаленное `scaleX:-1`/`scaleY:-1` в MobileFrameOverlay, отдельных
- * файлов под них не нужно.
+ * Второй набор (один угол TR + 2 планки, зеркалились scaleX/scaleY на все
+ * 4 стороны) продержался до 2026-10-04 — пользователь прислал ТРЕТИЙ набор:
+ * отдельные верх/низ для угла И горизонтальной планки (frame_corner_top/
+ * bottom.png, frame_horizont_top/bottom.png — каждый уже верно нарисован
+ * под свою половину, зеркалить нужно ТОЛЬКО по горизонтали `scaleX:-1` для
+ * правой стороны, НЕ по вертикали — в отличие от прошлого набора) + одна
+ * вертикальная планка (frame_vert_left.png, канонически левая — правая
+ * получается её зеркалом `scaleX:-1`, та же схема, что была у прошлого
+ * набора, просто сменился канонический угол/сторона).
  */
-export const MOBILE_FRAME_CORNER_TR = require('../assets/images/ui/mobile/frame_corner.png');
-export const MOBILE_FRAME_EDGE_TOP = require('../assets/images/ui/mobile/frame_gorizont.png');
-export const MOBILE_FRAME_EDGE_RIGHT = require('../assets/images/ui/mobile/frame_vert.png');
-// Ассет — квадрат 200×200, толщина каймы внутри него ~47-49px (см. выше) —
-// используем среднее (48) как референс для пересчёта масштаба под целевую
+export const MOBILE_FRAME_CORNER_TOP = require('../assets/images/ui/mobile/frame_corner_top.png');
+export const MOBILE_FRAME_CORNER_BOTTOM = require('../assets/images/ui/mobile/frame_corner_bottom.png');
+export const MOBILE_FRAME_EDGE_TOP = require('../assets/images/ui/mobile/frame_horizont_top.png');
+export const MOBILE_FRAME_EDGE_BOTTOM = require('../assets/images/ui/mobile/frame_horizont_bottom.png');
+export const MOBILE_FRAME_EDGE_LEFT = require('../assets/images/ui/mobile/frame_vert_left.png');
+// Ассет — квадрат 168×168 (замерено PIL, 2026-10-04), толщина граней
+// ~42-44px — используем 43 как референс для пересчёта масштаба под целевую
 // толщину рамки на экране (MobileFrameOverlay.borderDp).
-export const MOBILE_FRAME_CORNER_SIZE_PX = 200;
-export const MOBILE_FRAME_BORDER_PX = 48;
+export const MOBILE_FRAME_CORNER_SIZE_PX = 168;
+export const MOBILE_FRAME_BORDER_PX = 43;
+// road_map_button_* — 2026-10-04: пользователь заменил отдельные up/down на
+// ОДИН визуальный ассет ("вперёд", смотрит вверх) + 2 состояния нажатия
+// (pressed/unpressed) — "назад" получается поворотом на 180° в самом
+// RoadNavButton.js (как уже делалось для left/right в альбомной раскладке),
+// отдельного файла под него больше нет.
 export const ROAD_NAV_BUTTON_IMAGES = {
-  up: require('../assets/images/ui/mobile/road_map_button_up.png'),
-  down: require('../assets/images/ui/mobile/road_map_button_down.png'),
+  unpressed: require('../assets/images/ui/mobile/road_map_button_unpressed.png'),
+  pressed: require('../assets/images/ui/mobile/road_map_button_pressed.png'),
+};
+// Кнопка-тоггл лога событий (seam-ряд, см. EventLogPanel.js#position='seam')
+// — заменяет текстовую таблетку "Лог событий (N) ▸", 2026-10-04. pressed —
+// лог сейчас открыт, unpressed — закрыт (не состояние нажатия пальцем).
+export const LOG_BUTTON_IMAGES = {
+  unpressed: require('../assets/images/ui/mobile/log_unpressed.png'),
+  pressed: require('../assets/images/ui/mobile/log_pressed.png'),
+};
+// Кнопка-тоггл игрового меню (seam-ряд, GameMenuButton.js) — открывает
+// GameMenuModal ("Покинуть игру"/"Настройки"), 2026-10-04. Та же семантика
+// pressed/unpressed, что и у LOG_BUTTON_IMAGES — pressed, пока открыто хоть
+// одно из меню (GameMenuModal/GameSettingsModal).
+export const SETTINGS_BUTTON_IMAGES = {
+  unpressed: require('../assets/images/ui/mobile/settings_unpressed.png'),
+  pressed: require('../assets/images/ui/mobile/settings_pressed.png'),
 };
 
 /**

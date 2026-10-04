@@ -4,8 +4,7 @@ import { useAudioPlayer } from 'expo-audio';
 
 import { MENU_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
 import { ROUTES } from '../navigation/routes';
-
-const MENU_MUSIC_VOLUME = 0.1;
+import { useAudioSettings } from './useAudioSettings';
 
 // Экраны, на которых должна играть меню-музыка (см. запись 2026-09-19 в
 // CLAUDE.md — пользователь выбрал «главное меню + лобби»). RunnerGame сам
@@ -29,10 +28,18 @@ const MENU_MUSIC_ROUTES = new Set([ROUTES.MAIN_MENU, ROUTES.LOBBY_SEARCH, ROUTES
  * volume ставится ПОСЛЕ каждого .replace() (см. история бага в тех
  * комментариях, тот же класс на вебе актуален и тут), следующий трек — на
  * 'playbackStatusUpdate'.didJustFinish, без повтора одного трека подряд.
+ *
+ * Громкость — из общего lib/audioSettings.js (канал 'music', тот же, что и
+ * у игровой музыки в GameBoardScreen — с точки зрения пользователя это один
+ * регулятор на оба места, см. его докстринг), не захардкожена здесь —
+ * 2026-10-04, по прямому запросу пользователя (панель настроек громкости).
+ * Отдельный эффект переприменяет volume при каждом изменении канала — тот
+ * же трек не перезапускается, просто громкость уже играющего плеера меняется.
  */
 export function useMenuMusic(routeName) {
     const musicSound = useAudioPlayer(null);
     const trackIndexRef = useRef(-1);
+    const { music: musicVolume } = useAudioSettings();
 
     const playRandomTrack = useCallback(() => {
         // MENU_MUSIC_TRACKS.length — СВОЯ длина, не чужая (см. докстринг
@@ -41,9 +48,13 @@ export function useMenuMusic(routeName) {
         const idx = pickRandomTrackIndex(MENU_MUSIC_TRACKS.length, trackIndexRef.current);
         trackIndexRef.current = idx;
         musicSound.replace(MENU_MUSIC_TRACKS[idx]);
-        musicSound.volume = MENU_MUSIC_VOLUME;
+        musicSound.volume = musicVolume;
         musicSound.play();
-    }, [musicSound]);
+    }, [musicSound, musicVolume]);
+
+    useEffect(() => {
+        musicSound.volume = musicVolume;
+    }, [musicSound, musicVolume]);
 
     useEffect(() => {
         const sub = musicSound.addListener('playbackStatusUpdate', (status) => {

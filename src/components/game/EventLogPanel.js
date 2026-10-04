@@ -1,8 +1,9 @@
 // src/components/game/EventLogPanel.js
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { colors, font, radius, spacing } from '../../theme';
+import { LOG_BUTTON_IMAGES } from '../../constants/GameConstants';
 
 /**
  * Сворачиваемый отладочный лог Mercure-событий партии (см. lib/eventLog.js
@@ -19,8 +20,16 @@ import { colors, font, radius, spacing } from '../../theme';
  * кладёт его инлайн в общий ряд с кнопками навигации, отцентрированный на
  * стыке рамок; список при открытии — абсолютный дропдаун НАД тогглом
  * (`bottom:'100%'`), не раздувает высоту самого ряда.
+ *
+ * В 'seam'-режиме тоггл с 2026-10-04 — иконка (LOG_BUTTON_IMAGES), не
+ * текстовая таблетка (та осталась для top/bottom-right — веб/ландшафт, там
+ * новый квадратный ассет не вписывается стилистически, см. CLAUDE.md).
+ * pressed = лог СЕЙЧАС открыт (`open`), не состояние нажатия пальцем — та
+ * же семантика, что и у GameMenuButton.js рядом в том же ряду. `iconSize` —
+ * размер плитки в 'seam'-режиме (вызывающий код передаёт ТОТ ЖЕ
+ * arrowBtnSize, что и у соседних RoadNavButton, для единообразия ряда).
  */
-export default function EventLogPanel({ entries, position = 'bottom-right' }) {
+export default function EventLogPanel({ entries, position = 'bottom-right', iconSize = 44 }) {
     const [open, setOpen] = useState(false);
     const scrollRef = useRef(null);
     const isTop = position === 'top';
@@ -35,7 +44,15 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
         if (open) scrollRef.current?.scrollToEnd({ animated: true });
     }, [entries, open]);
 
-    const toggle = (
+    const toggle = isSeam ? (
+        <TouchableOpacity onPress={() => setOpen((v) => !v)} activeOpacity={0.8}>
+            <Image
+                source={open ? LOG_BUTTON_IMAGES.pressed : LOG_BUTTON_IMAGES.unpressed}
+                style={{ width: iconSize, height: iconSize }}
+                resizeMode="contain"
+            />
+        </TouchableOpacity>
+    ) : (
         <TouchableOpacity style={styles.toggle} onPress={() => setOpen((v) => !v)} activeOpacity={0.8}>
             <Text style={styles.toggleText} noGlobalTint>{open ? 'Скрыть лог ▾' : `Лог событий (${entries.length}) ▸`}</Text>
         </TouchableOpacity>

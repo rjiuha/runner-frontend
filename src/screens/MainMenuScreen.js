@@ -8,6 +8,7 @@ import MenuCard from '../components/menu/MenuCard';
 import ProfileCard from '../components/menu/ProfileCard';
 import CreateLobbyModal from '../components/menu/CreateLobbyModal';
 import LoadingCard from '../components/ui/LoadingCard';
+import GameSettingsModal from '../components/game/GameSettingsModal';
 import { useAuth } from '../hooks/useAuth';
 import { lobbyApi } from '../api/lobby';
 import { meApi } from '../api/me';
@@ -30,6 +31,12 @@ export default function MainMenuScreen({ navigation }) {
   const [checkingSession, setCheckingSession] = useState(true);
   const bootCheckedRef = useRef(false);
   const [modalOpen, setModalOpen] = useState(false);
+  // "⚙️ Настройки" (2026-10-04, по прямому запросу пользователя — в меню
+  // уже была заготовка-заглушка под MVP-2, "Профиль и звук") — пока только
+  // звук, тот же GameSettingsModal, что и в игре (кнопка settings в
+  // seam-ряду GameBoardScreen) — общий lib/audioSettings.js стор, одни и те
+  // же 4 канала/значения видны из обоих мест.
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   /**
    * useFocusEffect, а не useEffect: проверять активное лобби/партию нужно
@@ -145,11 +152,17 @@ export default function MainMenuScreen({ navigation }) {
               onPress={() => navigation.navigate(ROUTES.LOBBY_SEARCH)}
           />
 
-          {/* Заготовки под MVP-2 — оставлены намеренно, чтобы был виден план */}
+          <MenuCard
+              title="⚙️ Настройки"
+              description="Громкость звука"
+              color={colors.muted}
+              onPress={() => setSettingsOpen(true)}
+          />
+
+          {/* Заготовка под MVP-2 — оставлена намеренно, чтобы был виден план */}
           <View style={styles.soonBlock}>
             <Text style={styles.soonLabel} noGlobalTint>Скоро</Text>
             <MenuCard title="🛒 Магазин" description="Скины и бонусы" color={colors.muted} disabled />
-            <MenuCard title="⚙️ Настройки" description="Профиль и звук" color={colors.muted} disabled />
           </View>
 
           <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
@@ -161,6 +174,7 @@ export default function MainMenuScreen({ navigation }) {
             onClose={() => setModalOpen(false)}
             onSubmit={handleCreate}
         />
+        <GameSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
       </Screen>
   );
 }
