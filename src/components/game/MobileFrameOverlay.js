@@ -54,12 +54,23 @@ import {
  * прошлой версии outward-growth, которая росла на всех 4 сторонах сразу и
  * налезала на соседние зоны/кнопки, см. CLAUDE.md). onLayout меряет уже
  * УВЕЛИЧЕННЫЙ (за счёт bleed) размер — доп. пересчёт не нужен.
+ *
+ * `cornerBackdropColor` (2026-10-10) — опциональная плоская подложка под
+ * декоративной дугой КАЖДОГО включённого угла (см. `corners` выше), той же
+ * роли, что person_panel_background_corner у PersonPanel.js — закрывает
+ * то, что иначе просвечивало бы сквозь вырез скругления (ParallaxBackground
+ * приложения, живёт ниже этого экрана). По умолчанию не передаётся —
+ * поведение не меняется там, где раньше.
  */
-export default function MobileFrameOverlay({ borderDp, corners = {}, bleed = {} }) {
+export default function MobileFrameOverlay({ borderDp, corners = {}, bleed = {}, cornerBackdropColor = null }) {
     const { tl = true, tr = true, bl = true, br = true } = corners;
     const { top: bleedTop = 0, bottom: bleedBottom = 0, left: bleedLeft = 0, right: bleedRight = 0 } = bleed;
     const [size, setSize] = useState(null);
     const cornerSize = (borderDp / MOBILE_FRAME_BORDER_PX) * MOBILE_FRAME_CORNER_SIZE_PX;
+    // 0.18 — подобрано по живому скриншоту ассета (см. докстринг у места
+    // рендера подложки ниже): радиус фактического скругления скобы заметно
+    // меньше её полного бокса (cornerSize).
+    const cornerBackdropSize = cornerSize * 0.18;
 
     const onLayout = (e) => {
         const { width, height } = e.nativeEvent.layout;
@@ -83,6 +94,36 @@ export default function MobileFrameOverlay({ borderDp, corners = {}, bleed = {} 
         >
             {size && (
                 <>
+                    {/* Подложка цвета под скруглением КАЖДОГО угла (2026-10-10,
+                        по прямому запросу пользователя: "рамка на углах
+                        сглаженная, не хочу видеть там parallax"). ВАЖНО —
+                        НЕ весь cornerSize×cornerSize бокс: живой скриншот
+                        пользователя вскрыл, что frame_corner_top/bottom.png —
+                        НЕ залитая дуга (как person_panel_top/bottom_corner у
+                        PersonPanel, где этот же приём уместен на весь бокс),
+                        а тонкая декоративная скоба-браслет — прозрачна почти
+                        ВЕЗДЕ внутри своего бокса (её рисунок — только узкая
+                        Г-образная линия вдоль двух краёв), заливка всего
+                        cornerSize дала "огромные квадраты" на углах вместо
+                        точечной заплатки под скруглением. cornerBackdropSize —
+                        маленькая доля cornerSize (подобрана по живому
+                        скриншоту самого ассета — радиус скругления скобы
+                        заметно меньше её полного бокса), закрывает только
+                        фактический вырез скругления у истинного угла, не
+                        полезая в область, которую и так рисует сетка дороги
+                        под скобой. */}
+                    {cornerBackdropColor && tl && (
+                        <View style={{ position: 'absolute', top: 0, left: 0, width: cornerBackdropSize, height: cornerBackdropSize, backgroundColor: cornerBackdropColor }} />
+                    )}
+                    {cornerBackdropColor && tr && (
+                        <View style={{ position: 'absolute', top: 0, right: 0, width: cornerBackdropSize, height: cornerBackdropSize, backgroundColor: cornerBackdropColor }} />
+                    )}
+                    {cornerBackdropColor && bl && (
+                        <View style={{ position: 'absolute', bottom: 0, left: 0, width: cornerBackdropSize, height: cornerBackdropSize, backgroundColor: cornerBackdropColor }} />
+                    )}
+                    {cornerBackdropColor && br && (
+                        <View style={{ position: 'absolute', bottom: 0, right: 0, width: cornerBackdropSize, height: cornerBackdropSize, backgroundColor: cornerBackdropColor }} />
+                    )}
                     <Image
                         source={MOBILE_FRAME_EDGE_TOP}
                         resizeMode="stretch"

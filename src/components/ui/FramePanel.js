@@ -112,6 +112,17 @@ function FramePanel({
     backgroundCornerSource = PERSON_PANEL_BACKGROUND_CORNER,
     backgroundTileSize = 39,
     targetCornerSize = 12,
+    // `showBackground` (2026-10-11, тот же приём, что уже есть у
+    // PersonPanel.js, см. её докстринг) — для RunnerCard.js#avatarBoxCompact:
+    // персонаж рисуется ПОВЕРХ фона (нужен виден), а декоративная рамка
+    // (грани+уголки) — ПОВЕРХ персонажа (чтобы не перекрывалась им, когда
+    // персонаж крупнее своего бокса) — компонент рендерится ДВАЖДЫ в этом
+    // месте: сначала обычный (showBackground=true, под персонажем, даёт
+    // фон), затем ещё раз СВЕРХУ персонажа с showBackground=false — та же
+    // декоративная кайма без фона, который иначе перекрыл бы персонажа
+    // заново. По умолчанию `true` — остальные места (RunnerCard — слот
+    // кубика, AbilityZone и т.д.) не затронуты, ведут себя как раньше.
+    showBackground = true,
 }) {
     if (!size) return null;
 
@@ -153,43 +164,47 @@ function FramePanel({
             style={[styles.wrap, { width: size.width, height: size.height, borderRadius: notchRadius }, style]}
             pointerEvents="none"
         >
-            <Tiled
-                source={backgroundSource}
-                tileW={bgTile}
-                tileH={bgTile}
-                width={size.width}
-                height={size.height}
-                style={{ top: 0, left: 0 }}
-            />
-            <Image
-                source={backgroundCornerSource}
-                resizeMode="stretch"
-                style={{ position: 'absolute', top: 0, left: 0, width: cornerSize, height: cornerSize }}
-            />
-            <Image
-                source={backgroundCornerSource}
-                resizeMode="stretch"
-                style={{
-                    position: 'absolute', top: 0, right: 0, width: cornerSize, height: cornerSize,
-                    transform: [{ scaleX: -1 }],
-                }}
-            />
-            <Image
-                source={backgroundCornerSource}
-                resizeMode="stretch"
-                style={{
-                    position: 'absolute', bottom: 0, left: 0, width: cornerSize, height: cornerSize,
-                    transform: [{ scaleY: -1 }],
-                }}
-            />
-            <Image
-                source={backgroundCornerSource}
-                resizeMode="stretch"
-                style={{
-                    position: 'absolute', bottom: 0, right: 0, width: cornerSize, height: cornerSize,
-                    transform: [{ scaleX: -1 }, { scaleY: -1 }],
-                }}
-            />
+            {showBackground && (
+                <>
+                    <Tiled
+                        source={backgroundSource}
+                        tileW={bgTile}
+                        tileH={bgTile}
+                        width={size.width}
+                        height={size.height}
+                        style={{ top: 0, left: 0 }}
+                    />
+                    <Image
+                        source={backgroundCornerSource}
+                        resizeMode="stretch"
+                        style={{ position: 'absolute', top: 0, left: 0, width: cornerSize, height: cornerSize }}
+                    />
+                    <Image
+                        source={backgroundCornerSource}
+                        resizeMode="stretch"
+                        style={{
+                            position: 'absolute', top: 0, right: 0, width: cornerSize, height: cornerSize,
+                            transform: [{ scaleX: -1 }],
+                        }}
+                    />
+                    <Image
+                        source={backgroundCornerSource}
+                        resizeMode="stretch"
+                        style={{
+                            position: 'absolute', bottom: 0, left: 0, width: cornerSize, height: cornerSize,
+                            transform: [{ scaleY: -1 }],
+                        }}
+                    />
+                    <Image
+                        source={backgroundCornerSource}
+                        resizeMode="stretch"
+                        style={{
+                            position: 'absolute', bottom: 0, right: 0, width: cornerSize, height: cornerSize,
+                            transform: [{ scaleX: -1 }, { scaleY: -1 }],
+                        }}
+                    />
+                </>
+            )}
 
             <Tiled
                 source={FRAME_PANEL_TOP_EDGE}

@@ -29,10 +29,18 @@ import { ROAD_NAV_BUTTON_IMAGES } from '../../constants/GameConstants';
  */
 const ROTATE_DEG = { up: 0, right: 90, down: 180, left: 270 };
 
-export default function RoadNavButton({ direction, size, handlers }) {
+export default function RoadNavButton({ direction, size, width, height, handlers }) {
     const scale = useRef(new Animated.Value(1)).current;
     const [pressed, setPressed] = useState(false);
     const rotateDeg = ROTATE_DEG[direction] ?? 0;
+    // width/height — ОПЦИОНАЛЬНОЕ переопределение `size` по отдельной оси
+    // (2026-10-10, по прямому запросу пользователя — кнопки навигации на
+    // кайме рамки дороги вдвое шире своей высоты, не квадратные). По
+    // умолчанию обе равны `size` — обратная совместимость со всеми
+    // существующими местами (navBtnColumnLeft и т.д.), которые как и
+    // раньше передают только квадратный `size`.
+    const boxW = width ?? size;
+    const boxH = height ?? size;
 
     const animateTo = (toValue) =>
         Animated.spring(scale, { toValue, useNativeDriver: true, speed: 40, bounciness: 6 }).start();
@@ -52,8 +60,18 @@ export default function RoadNavButton({ direction, size, handlers }) {
         <TouchableOpacity activeOpacity={1} onPressIn={handlePressIn} onPressOut={handlePressOut}>
             <Animated.Image
                 source={pressed ? ROAD_NAV_BUTTON_IMAGES.pressed : ROAD_NAV_BUTTON_IMAGES.unpressed}
-                style={{ width: size, height: size, transform: [{ scale }, { rotate: `${rotateDeg}deg` }] }}
-                resizeMode="contain"
+                style={{ width: boxW, height: boxH, transform: [{ scale }, { rotate: `${rotateDeg}deg` }] }}
+                // resizeMode="stretch" (2026-10-10, было "contain", живая жалоба
+                // пользователя — "ширина не стала вдвое больше"). Ассет почти
+                // квадратный (660×648) — с "contain" непропорциональный бокс
+                // (boxW=2×boxH) просто центрировал квадратную иконку по высоте,
+                // оставляя пустые поля по бокам, визуально ширина не менялась
+                // вообще. "stretch" растягивает картинку РОВНО под заданный
+                // бокс — для квадратного использования (boxW===boxH, все
+                // остальные места) разница от "contain" незаметна (сам ассет
+                // и так почти 1:1), а для широкого бокса (кнопки на кайме
+                // рамки дороги) даёт реально широкую кнопку.
+                resizeMode="stretch"
             />
         </TouchableOpacity>
     );

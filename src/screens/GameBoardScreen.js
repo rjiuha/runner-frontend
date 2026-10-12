@@ -17,10 +17,13 @@ import EventLogPanel from '../components/game/EventLogPanel';
 import GameMenuButton from '../components/game/GameMenuButton';
 import GameMenuModal from '../components/game/GameMenuModal';
 import GameSettingsModal from '../components/game/GameSettingsModal';
+import PlayerSwitchPanel, { SWITCH_ASPECT } from '../components/game/PlayerSwitchPanel';
+import FramedSquare from '../components/game/FramedSquare';
 import Button from '../components/ui/Button';
 import LoadingCard from '../components/ui/LoadingCard';
 import PulseText from '../components/ui/PulseText';
-import FramePanel from '../components/ui/FramePanel';
+import FramePanel, { frameNotchRadius } from '../components/ui/FramePanel';
+import NeonGlow from '../components/ui/NeonGlow';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAudioSettings } from '../hooks/useAudioSettings';
@@ -46,7 +49,8 @@ import { runnerGameReducer } from '../store/runnerGameReducer';
 import { ROUTES } from '../navigation/routes';
 import {
     BACKEND_TO_FRONTEND_PLAYER_COLOR,
-    BOARD_LAYOUT, GAME_STATUS, MOBILE_FRAME_BLEED, PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STATUS, PLAYER_STEP,
+    BOARD_LAYOUT, GAME_STATUS, MOBILE_FRAME_BLEED,
+    PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STATUS, PLAYER_STEP,
     RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
@@ -79,9 +83,9 @@ const STUCK_ACTION_TIMEOUT = 8000;
 const COLLISION_ANIM_DELAY_MS = 1400;
 
 // Collision — PHP int-backed enum на бэке (Enum/Collision.php: LOWER=1/TOP=2),
-// json_encode сериализует backed enum напрямую в число (не строку) — см.
-// pendingCollisionRoll в теле компонента.
-const COLLISION_LOWER = 1;
+// json_encode сериализует backed enum напрямую в число (не строку). Нужна
+// collisionFlyingRunnerLabel (см. тело компонента) для формулы TOP→runnerId/
+// LOWER→otherRunnerId, см. её докстринг за разбором StepCollisionService.
 const COLLISION_TOP = 2;
 
 // Высота баннера "Твой ход"/столкновение/сдвиг трассы — ЗАФИКСИРОВАНА под 3
@@ -158,21 +162,24 @@ function rawCellType(game, segment, positionX, positionY) {
 // доске для перемещения/размещения.
 function stepInstruction(
     step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
-    pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
+    pendingReaperPlacement, reaperPreviewReady, canReaperShoot, reaperConfirmed,
 ) {
     if (pendingReaperPlacement) {
         // До того, как "прилёт" из-за края карты успел доиграть
         // (reaperPreviewReady), подсветки на доске ещё нет — тапать некуда,
         // текст объясняет паузу, а не намекает на несуществующие клетки.
-        // canReaperShoot (см. highlightedCells выше) — стрелять реально
-        // можно, только если раунд>0 И на клетке впереди есть бегун (бэк
-        // молча игнорирует выстрел в обоих остальных случаях, см.
-        // ReaperService::run(), read-only) — если нельзя, не намекаем на
-        // несуществующий выбор, остаётся только "Без выстрела".
         if (!reaperPreviewReady) return 'Жнец приближается…';
-        return canReaperShoot
-            ? 'Жнец на месте — тапни подсвеченную клетку для выстрела или нажми «Без выстрела»'
-            : 'Жнец на месте — нажми «Без выстрела»';
+        // Два последовательных диалога (2026-10-11, по прямому запросу
+        // пользователя): сперва подтверждение размещения (✓/✕, см. кнопки
+        // ниже в рендере), ПОТОМ, только после ✓ — выбор выстрела. Текст
+        // второго диалога — буквально тот же, что у обычного SHOOT (см.
+        // ниже), по прямому запросу пользователя ("сменим текстовку на...").
+        // canReaperShoot тут больше не меняет ТЕКСТ (только то, появятся ли
+        // реально подсвеченные клетки, см. highlightedCells) — если выстрела
+        // в принципе нет, автоэффект (autoNoShotAttemptedRef) решит сам,
+        // этот текст виден лишь на миг или не виден вовсе.
+        if (!reaperConfirmed) return 'Жнец на месте — подтверди размещение';
+        return 'Тапни на цель для выстрела или нажми «Скип»';
     }
     if (pendingSelect) {
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
@@ -186,7 +193,7 @@ function stepInstruction(
         const label = pendingRunnerName ? `«${pendingRunnerName}»` : 'Бегун';
         return pendingSelect.type === 'ROLL'
             ? `Накат для ${label} выбран — подтверди действие`
-            : `${label} выбран — подтверди действие`;
+            : `Подтверди выбор бегуна ${label}`;
     }
     switch (step) {
         case PLAYER_STEP.SELECT:
@@ -209,8 +216,8 @@ function stepInstruction(
                 ? 'Тапни подсвеченную клетку в заднем ряду — это выход на трассу'
                 : 'Выбери доступную клетку для хода';
         case PLAYER_STEP.SHOOT:
-            if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — доступно только «Пропустить выстрел»';
-            return 'Тапни подсвеченную цель или нажми «Пропустить выстрел»';
+            if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — доступен только «Скип»';
+            return 'Тапни на цель для выстрела или нажми «Скип»';
         case PLAYER_STEP.ROAD_BONUS:
             return 'Применить бонус кубика дороги?';
         default:
@@ -629,13 +636,14 @@ export default function GameBoardScreen({ route, navigation }) {
     // пользователя, 2026-09-10: баннер "Использовать/Перебросить" не
     // показывал, ЧТО именно произойдёт при "Использовать", решение
     // принималось вслепую. `CollisionEvent` несёт `{collision, direction,
-    // runnerId, otherRunnerId}`. `collision` — PHP int-backed enum
-    // (Collision::LOWER=1/TOP=2, см. Enum/Collision.php), json_encode
-    // сериализует backed enum в его value НАПРЯМУЮ (число, не строка) — см.
-    // COLLISION_LOWER/COLLISION_TOP ниже. Баннер по-прежнему показывает
-    // категорию "меньший/больший бегун" (сама по себе корректна — это прямое
-    // значение броска), не конкретное "твой/их" — см. известный бэковый баг
-    // с перепутанным порядком lowRunner/topRunner в CLAUDE.md.
+    // runnerId, otherRunnerId}` — все четыре сохраняются и читаются (см.
+    // collisionFlyingRunnerLabel в теле компонента за точной формулой
+    // TOP/LOWER→runnerId/otherRunnerId, найденной чтением
+    // StepCollisionService на бэке, read-only). Первая версия этой формулы
+    // (2026-10-11, "не мой участник отлетит") была НЕВЕРНОЙ — живая жалоба
+    // пользователя поймала конкретный случай (бэк показал Атлета, отлетел
+    // Танк) — исправлена в тот же день на формулу, основанную на
+    // `collision`, не на владельце.
     const [pendingCollisionRoll, setPendingCollisionRoll] = useState(null);
     // Одноразовый комментарий (collision_*.wav) — ЗАЩИТА от двойного/
     // запоздалого звука (звук должен звучать синхронно с транзиентом
@@ -758,7 +766,13 @@ export default function GameBoardScreen({ route, navigation }) {
                     minePendingRef.current = true;
                 }
                 if (e.event === 'collision') {
-                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
+                    // runnerId/otherRunnerId — раньше тут сохранялись ТОЛЬКО
+                    // collision/direction, хотя CollisionEvent несёт оба id
+                    // (простое упущение при первой реализации этого стейта,
+                    // id просто не докинули в объект) — все 4 поля нужны
+                    // collisionFlyingRunnerLabel (см. pendingCollisionRoll
+                    // выше за полным разбором формулы).
+                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction, runnerId: e.runnerId, otherRunnerId: e.otherRunnerId });
                     if (!collisionCommentPlayedRef.current) {
                         collisionCommentPlayedRef.current = true;
                         playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
@@ -807,7 +821,10 @@ export default function GameBoardScreen({ route, navigation }) {
                     minePendingRef.current = true;
                 }
                 if (e.event === 'collision') {
-                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction });
+                    // Тот же фикс, что и в reduce() выше — runnerId/
+                    // otherRunnerId раньше терялись и тут (отдельный путь
+                    // для version-less бандлов, см. докстринг onTransient).
+                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction, runnerId: e.runnerId, otherRunnerId: e.otherRunnerId });
                     if (!collisionCommentPlayedRef.current) {
                         collisionCommentPlayedRef.current = true;
                         playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
@@ -868,6 +885,33 @@ export default function GameBoardScreen({ route, navigation }) {
     // computeRoadGeometry#reserveNavColumn), не дублируем расчёт здесь.
     // arrowBtnSize остаётся только для mobileNav-кнопок в seamRow — те
     // привязаны к толщине декоративной рамки, не к сегменту.
+
+    // Финальная раскладка низа экрана на native-портрете (2026-10-01..10-10,
+    // много итераций с пользователем, см. CLAUDE.md за полной историей —
+    // финальная раскладка):
+    // — на самой кайме рамки дороги: стрелки навигации ПО ЦЕНТРУ всей каймы
+    //   (ширина каждой = 2×своей высоты, не квадратная), рамка PersonPanel;
+    // — сразу под швом, одна строка: СЛЕВА 4 переключателя игрока (во всю
+    //   высоту строки), СПРАВА — панель имени сверху (рамка FramePanel), под
+    //   ней в ряд 5 квадратов: раунд/ход/бонус дороги (FramePanel) +
+    //   настройки/лог (PersonPanel) — общая высота правого блока совпадает
+    //   с высотой переключателей слева, имя по ширине — ровно как весь ряд
+    //   из 5 квадратов под ним.
+    // Финальное распределение стилей рамок (несколько раз менялось в
+    // разговоре с пользователем, см. CLAUDE.md): имя+раунд/ход/бонус —
+    // FramePanel ("как у аватарки бегуна"); навигация/настройки/лог —
+    // PersonPanel ("как у панели хода"), но ТОНКАЯ версия через
+    // targetCornerSize — PersonPanel.js теперь это умеет (добавлено
+    // специально под этот случай, см. её докстринг), по умолчанию её
+    // поведение в остальных местах (RunnerCard и т.д.) не изменилось.
+    const seamNameH = Math.round(arrowBtnSize * 0.8);
+    const navBoxH = Math.round(arrowBtnSize * 0.7);
+    // roadFrameRoundSize — ВЫСОТА (не ширина — та считается ниже, от
+    // измеренной ширины баннера хода) квадратов раунд/ход/бонус/настройки/
+    // лога. switchRowH — общая высота строки (= высоте переключателей
+    // слева, те получают её готовой как height-проп PlayerSwitchPanel).
+    const roadFrameRoundSize = Math.round(arrowBtnSize * 0.95);
+    const switchRowH = seamNameH + roadFrameRoundSize + spacing.xs;
 
     const { windowStart, backButtonProps, forwardButtonProps, jumpTo, jumpToStart, step: scrollStep } = useBoardScroll({ cols: viewportCols });
 
@@ -1015,6 +1059,18 @@ export default function GameBoardScreen({ route, navigation }) {
         return () => clearTimeout(t);
     }, [pendingReaperPlacement]);
 
+    // Явное подтверждение размещения Жнеца — второй диалог (выбор выстрела)
+    // открывается ТОЛЬКО после него, по прямому запросу пользователя,
+    // 2026-10-11: раньше после "прилёта" (reaperPreviewReady) сразу
+    // показывался диалог выстрела, без отдельного шага "подтверди
+    // размещение / верни Жнеца в руку". Сбрасывается вместе с
+    // reaperPreviewReady — тот же приём (зависимость от самого объекта
+    // pendingReaperPlacement, новый объект на каждое размещение).
+    const [reaperConfirmed, setReaperConfirmed] = useState(false);
+    useEffect(() => {
+        setReaperConfirmed(false);
+    }, [pendingReaperPlacement]);
+
     // По умолчанию — свой игрок, как только придут данные. Один раз (пока не выбран вручную).
     // Ждём authLoading===false: иначе, если gamePlayers приходят раньше, чем догрузится user,
     // "себя" не находим и НАВСЕГДА фиксируем чужого gamePlayers[0] (см. CLAUDE.md TODO, 2026-09-28).
@@ -1118,6 +1174,30 @@ export default function GameBoardScreen({ route, navigation }) {
         return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
     }, [runners, pendingSelect]);
 
+    // Тип бегуна, который реально отлетит при столкновении — ПЕРВАЯ ПОПЫТКА
+    // (2026-10-11, "не мой участник = он отлетит") была НЕВЕРНОЙ, живая
+    // жалоба подтвердила ("видел Атлет, отлетел Танк") — роль не зависит от
+    // владельца. Настоящая формула найдена чтением `StepCollisionService::
+    // run()` на бэке (read-only, обработчик /collision с accept:true):
+    // `collision===LOWER → move($lowRunner)`, `collision===TOP →
+    // move($topRunner)`. А `CollisionEvent.runnerId`/`.otherRunnerId` —
+    // ВСЕГДА `topRunner`/`lowRunner` соответственно (порядок параметров в
+    // `Collision::runnerCollision()`→`saveCollision()`→`new CollisionEvent
+    // (..., $runner->getId(), $runner2->getId())` на бэке — $runner
+    // (первый) всегда становится topRunner, $runner2 (второй) — lowRunner,
+    // НЕЗАВИСИМО от того, кто из них физически крупнее — имена low/top тут
+    // не про размер). Значит: TOP → летит runnerId, LOWER → летит
+    // otherRunnerId — ни "мой/чужой", ни размер тут вообще не при чём.
+    const collisionFlyingRunnerLabel = useMemo(() => {
+        if (!pendingCollisionRoll) return null;
+        const flyingId = pendingCollisionRoll.collision === COLLISION_TOP
+            ? pendingCollisionRoll.runnerId
+            : pendingCollisionRoll.otherRunnerId;
+        const runner = runners.find((r) => String(r.id) === String(flyingId));
+        if (!runner) return null;
+        return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
+    }, [runners, pendingCollisionRoll]);
+
     const players = useMemo(
         () =>
             gamePlayers.map((p, i) => ({
@@ -1133,6 +1213,14 @@ export default function GameBoardScreen({ route, navigation }) {
                 // встречается, только готовый hex.
                 color: PLAYER_COLOR_HEX[BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color]
                     ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
+                // colorKey — 2026-10-10, нужен PlayerSwitchPanel (переключатель
+                // игроков, см. его докстринг): выбор нужного switch_on_<key>
+                // ассета требует имени цвета ('red'/'blue'/'purple'/'yellow'),
+                // а не уже готового hex, который несёт `color` выше. Тот же
+                // перевод "green"(бэк)→"purple"(фронт), просто без финального
+                // шага в hex — фолбэк на 'red', если цвет не распознан
+                // (партии до появления этого поля, см. комментарий у `color`).
+                colorKey: BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color ?? 'red',
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 ability: p.ability,
                 // step — 2026-09-20, нужен PlayerInfoPanel/RunnerCard, чтобы
@@ -1419,12 +1507,13 @@ export default function GameBoardScreen({ route, navigation }) {
         // управляет игрок прямо сейчас").
         if (!myTurn || busy || trackShiftPhase) return { highlightedCells: new Set(), tapMode: null };
 
-        if (pendingReaperPlacement && reaperPreviewReady) {
+        if (pendingReaperPlacement && reaperPreviewReady && reaperConfirmed) {
             // Направление выстрела Жнеца сразу при размещении — подсветка
             // на доске вместо кнопок ↖/↑/↗ (единообразно с MOVE, по прямому
             // запросу пользователя, 2026-09-07). Появляется только ПОСЛЕ
-            // того, как "прилёт" Жнеца успел доиграть (см. reaperPreviewReady
-            // выше) — до этого highlightedCells пуст, тапать некуда. Все 3
+            // того, как "прилёт" Жнеца успел доиграть (reaperPreviewReady) И
+            // игрок подтвердил размещение (reaperConfirmed, второй диалог,
+            // 2026-10-11) — до этого highlightedCells пуст, тапать некуда. Все 3
             // направления вперёд, как у обычного MOVE/SHOOT (2026-09-30, по
             // прямому запросу пользователя — реверс прежнего решения
             // 2026-09-08 "стрелять строго по прямой должен только Жнец").
@@ -1522,7 +1611,7 @@ export default function GameBoardScreen({ route, navigation }) {
         }
 
         return { highlightedCells: new Set(), tapMode: null };
-    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, trackShiftPhase]);
+    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, reaperConfirmed, trackShiftPhase]);
 
     // Первый выход бегуна из резерва на трассу (tapMode==='start') —
     // подсвеченные клетки ВСЕГДА на segment=0/positionX=0 (globalCol=0), но
@@ -1873,13 +1962,18 @@ export default function GameBoardScreen({ route, navigation }) {
     // сбрасывается на следующей попытке, отдельно чистить не нужно. «Отмена»
     // (см. рендер кнопок ниже) остаётся видимой в любом случае — если
     // авто-вызов всё же завис/упал, у игрока по-прежнему есть явный выход.
+    // 2026-10-11: дополнительно ждёт reaperConfirmed (новый диалог
+    // подтверждения размещения, см. выше) — раньше срабатывал сразу по
+    // reaperPreviewReady, минуя подтверждение; теперь автовыбор "без
+    // выстрела" возможен только ПОСЛЕ того, как игрок явно подтвердил
+    // размещение (✓), как и обычный тап по клетке выстрела.
     const autoNoShotAttemptedRef = useRef(null);
     useEffect(() => {
-        if (!pendingReaperPlacement || !reaperPreviewReady || canReaperShoot || busy) return;
+        if (!pendingReaperPlacement || !reaperPreviewReady || !reaperConfirmed || canReaperShoot || busy) return;
         if (autoNoShotAttemptedRef.current === pendingReaperPlacement) return;
         autoNoShotAttemptedRef.current = pendingReaperPlacement;
         handleReaperShoot(undefined);
-    }, [pendingReaperPlacement, reaperPreviewReady, canReaperShoot, busy, handleReaperShoot]);
+    }, [pendingReaperPlacement, reaperPreviewReady, reaperConfirmed, canReaperShoot, busy, handleReaperShoot]);
 
     const handleCellPress = useCallback(
         (cell) => {
@@ -2162,6 +2256,59 @@ export default function GameBoardScreen({ route, navigation }) {
         const { width, height } = e.nativeEvent.layout;
         setTurnBannerSize({ width, height });
     }, []);
+    // Ширина строки под швом (переключатели+имя+настройки+лог, см. место
+    // рендера) — измеряется отдельно от turnBannerSize (та теперь только
+    // про сам баннер хода, делящий свою строку с колонкой раунд/ход/бонус,
+    // см. комментарий у seamNameWidth ниже).
+    const [seamRowWidth, setSeamRowWidth] = useState(null);
+    const onSeamRowLayout = useCallback((e) => {
+        setSeamRowWidth(e.nativeEvent.layout.width);
+    }, []);
+
+    // Раунд/Ход/Бонус хода — ПЕРЕЕХАЛИ (2026-10-11, по прямому запросу
+    // пользователя) из строки под швом в колонку СПРАВА от баннера хода
+    // ("Твой ход"), см. место рендера headerContent ниже. Квадраты, высота
+    // каждого — РОВНО ⅓ измеренной высоты самого баннера (turnBannerSize,
+    // тот же onLayout, что и раньше) — три квадрата без зазора между ними в
+    // сумме точно равны высоте баннера, верх/низ колонки совпадают с
+    // верхом/низом баннера. До первого измерения (turnBannerSize===null,
+    // самый первый кадр) — 0, колонка просто не рендерится видимым
+    // размером тот кадр (условие на использование — useMobileNavButtons,
+    // см. место рендера).
+    const turnBannerSideSize = turnBannerSize ? Math.round(turnBannerSize.height / 3) : 0;
+    // Живая жалоба 2026-10-11: фиксированный font.h2 (24, см. styles.
+    // seamRoundValue/seamBonusValue — унаследован от старого места этого
+    // ряда, где квадраты были крупнее) в НОВЫХ, заметно более мелких
+    // квадратах (turnBannerSideSize) выглядел "слишком здоровенным" —
+    // цифра едва помещалась в рамку. Шрифт теперь пропорционален реальному
+    // размеру квадрата, не константе темы.
+    const turnBannerSideFontStyle = { fontSize: Math.max(10, Math.round(turnBannerSideSize * 0.45)) };
+    // Ширина панели имени в строке под швом — живой баг 2026-10-11: первая
+    // версия (фиксированный множитель от switchRowH) либо вылезала за край
+    // экрана (настройки/лог обрезались), либо оставляла дыру — по прямому
+    // запросу пользователя сумма (переключатели+имя+настройки+лог) теперь
+    // считается от РЕАЛЬНО измеренной ширины самой строки (seamRowWidth, см.
+    // onSeamRowLayout ниже), ровно той же техникой, что раньше спасла
+    // аналогичный ряд от того же класса бага (см. старую историю
+    // roadFrameRoundRowWidth в CLAUDE.md, 2026-10-10) — turnBannerSize тут
+    // больше не годится, его измеренная ширина теперь УЖЕ полной строки
+    // (баннер делит её с колонкой раунд/ход/бонус, см. headerContent).
+    // switchesNaturalWidth — ширина 4 переключателей по их собственному
+    // аспекту (SWITCH_ASPECT) + 3 внутренних зазора (PlayerSwitchPanel#
+    // styles.row.gap=spacing.xs) между ними. iconsWidth — настройки+лог,
+    // оба квадратные switchRowH×switchRowH. Между переключателями/именем/
+    // настройками/логом зазора нет (styles.seamRow.gap=0, по прямому
+    // запросу пользователя) — КРОМЕ стыка последний-переключатель→имя: там
+    // отдельный marginLeft (см. место рендера), равный тому же spacing.xs,
+    // что и между самими переключателями (по прямому запросу пользователя
+    // 2026-10-11) — SEAM_NAME_GAP, вычитается тут же, чтобы сумма всей
+    // строки по-прежнему не вылезала за экран. До первого измерения
+    // (seamRowWidth===null) — безопасный фолбэк.
+    const switchesNaturalWidth = Math.round(switchRowH * SWITCH_ASPECT) * 4 + spacing.xs * 3;
+    const seamIconsWidth = switchRowH * 2;
+    const seamNameWidth = seamRowWidth != null
+        ? Math.max(40, seamRowWidth - spacing.md * 2 - switchesNaturalWidth - spacing.xs - seamIconsWidth)
+        : Math.round(switchRowH * 2.4);
 
     if (!game) {
         return (
@@ -2215,7 +2362,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // занимал место, которое теперь отдано доске/панели.
     const turnHintText = stepInstruction(
         myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
-        pendingReaperPlacement, reaperPreviewReady, canReaperShoot,
+        pendingReaperPlacement, reaperPreviewReady, canReaperShoot, reaperConfirmed,
     );
     // pendingSelect (карточка выбрана, ждём ✓/✕) — кнопки ПРАВЕЕ текста, в
     // одну строку с ним, а не отдельным рядом ниже (по прямому запросу
@@ -2240,21 +2387,37 @@ export default function GameBoardScreen({ route, navigation }) {
     ) : game.extraTurnPlayer != null ? (
         <View style={styles.collisionRow}>
             <View style={styles.collisionTextColumn}>
+                {/* "Заруба!..." — единый стиль текста на ВСЕ состояния этого
+                    баннера (2026-10-11, по прямому запросу пользователя —
+                    раньше "Заруба!" был только в тексте ПОДТВЕРЖДЕНИЯ, а
+                    промежуточные состояния ("жду бросок"/"жду игрока") ещё
+                    носили старое "Столкновение —..."). collisionDecisionReady
+                    больше НЕ гейтит сам текст (только кнопки ✓/↻ ниже,
+                    см. COLLISION_ANIM_DELAY_MS) — pendingCollisionRoll
+                    приходит практически тем же бандлом, что и extraTurnPlayer,
+                    так что ветка "решение моё, но результат ещё не пришёл"
+                    теперь скорее теоретическая, чем реально видимая. */}
                 <Text style={styles.turnHint} noGlobalTint>
-                    {myCollision
-                        ? `Столкновение — ${collisionWinnerPlayer?.name ?? 'вы'} крупнее`
-                        : `Столкновение — ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`}
+                    {myCollision && pendingCollisionRoll
+                        ? `Заруба! Результат: ${collisionFlyingRunnerLabel ?? 'бегун'} отлетит ${directionLabel(pendingCollisionRoll.direction)}. Принять?`
+                        : myCollision
+                            ? 'Заруба! Жду результат…'
+                            : `Заруба! Ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`}
                 </Text>
-                {pendingCollisionRoll && collisionDecisionReady && (
-                    <Text style={styles.collisionRollText} noGlobalTint>
-                        Бросок: {pendingCollisionRoll.collision === COLLISION_TOP ? 'больший' : 'меньший'} → {directionLabel(pendingCollisionRoll.direction)}
-                    </Text>
-                )}
             </View>
             {myCollision && !busy && collisionDecisionReady && (
+                // Иконки вместо текста (2026-10-11, по прямому запросу
+                // пользователя — "Использовать"/"Перебросить" занимали
+                // слишком много ширины, коллизионному тексту слева не
+                // хватало места и он обрезался в теперь-фиксированном
+                // turnBanner, см. его докстринг) — ✓ (тот же глиф и стиль,
+                // что уже использует подтверждение выбора бегуна/бонуса
+                // дороги чуть ниже в этом же файле — БЕЗ textStyle-
+                // переопределения, крупнее collisionBtnText) и ↻ (циклическая
+                // стрелка — "перебросить").
                 <View style={styles.turnBtnRow}>
-                    <Button title="Использовать" variant="success" onPress={() => handleCollision(true)} style={styles.turnSkipBtnCompact} textStyle={styles.collisionBtnText} />
-                    <Button title="Перебросить" variant="danger" onPress={() => handleCollision(false)} style={styles.turnSkipBtnCompact} textStyle={styles.collisionBtnText} />
+                    <Button title="✓" variant="success" onPress={() => handleCollision(true)} style={styles.turnSkipBtnCompact} />
+                    <Button title="↻" variant="danger" onPress={() => handleCollision(false)} style={styles.turnSkipBtnCompact} />
                 </View>
             )}
             {!myCollision && showStuckRefresh && (
@@ -2280,7 +2443,49 @@ export default function GameBoardScreen({ route, navigation }) {
             <PulseText active baseColor={colors.textOnDark} toColor={colors.success} style={styles.turnTitleMine}>
                 Твой ход
             </PulseText>
-            {!pendingReaperPlacement && pendingSelect && !busy ? (
+            {pendingReaperPlacement && !busy ? (
+                // Три фазы одного и того же баннера, тот же приём турн-хинт-
+                // строки (текст+кнопки справа), что у pendingSelect/
+                // showRoadBonusChoice/showAbilitySkip — 2026-10-11, по
+                // прямому запросу пользователя: ДВА последовательных диалога
+                // ПОСЛЕ "прилёта" (до этого — approach-фаза, как и раньше,
+                // "Без выстрела"/"Отмена" доступны сразу, не дожидаясь
+                // reaperPreviewReady — та же логика, что была, см. старый
+                // комментарий у handleReaperShoot).
+                //   1) !reaperPreviewReady — "Жнец приближается…", те же
+                //      скип/отмена кнопки, что и раньше (можно пропустить
+                //      выстрел, не дожидаясь анимации прилёта).
+                //   2) reaperPreviewReady && !reaperConfirmed — НОВЫЙ диалог
+                //      подтверждения размещения: ✓ переходит к выбору
+                //      выстрела (reaperConfirmed=true), ✕ возвращает Жнеца
+                //      в руку (как и старое "Отмена" — отменяет усиление
+                //      целиком, ничего не отправляя на бэк).
+                //   3) reaperConfirmed — выбор выстрела: подсвеченные клетки
+                //      на доске (см. highlightedCells) + «Скип» (красная,
+                //      тот же стиль/язык, что у showAbilitySkip/
+                //      showShootSkip). Если выстрела в принципе нет
+                //      (canReaperShoot===false) — автоэффект
+                //      (autoNoShotAttemptedRef) решает сам практически
+                //      мгновенно, эта кнопка видна лишь на миг или не видна.
+                <View style={styles.turnHintRow}>
+                    <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
+                    <View style={styles.turnBtnRow}>
+                        {!reaperPreviewReady ? (
+                            <>
+                                <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtnCompact} />
+                                <Button title="Отмена" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtnCompact} />
+                            </>
+                        ) : !reaperConfirmed ? (
+                            <>
+                                <Button title="✓" variant="success" onPress={() => setReaperConfirmed(true)} style={styles.turnSkipBtnCompact} />
+                                <Button title="✕" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtnCompact} />
+                            </>
+                        ) : (
+                            <Button title="Скип" variant="danger" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtnCompact} />
+                        )}
+                    </View>
+                </View>
+            ) : pendingSelect && !busy ? (
                 <View style={styles.turnHintRow}>
                     <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
                     <View style={styles.turnBtnRow}>
@@ -2312,16 +2517,34 @@ export default function GameBoardScreen({ route, navigation }) {
                 // 2026-09-14, "по аналогии с предыдущим диалогом"). Без
                 // пульсации (была раньше, PulseHighlight active={showAbilitySkip})
                 // — убрана по прямому запросу, тут больше не подсвечиваем.
+                // "Пропустить" (2026-10-11, по прямому запросу пользователя)
+                // сперва заменена на красную кнопку с крестиком (✕, тот же
+                // приём, что у "Бонус дороги"/pendingSelect выше), затем в
+                // том же заходе — текст на ней заменён на "Скип" (тем же
+                // днём, по аналогии с кнопкой пропуска выстрела).
                 <View style={styles.turnHintRow}>
                     <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
-                    <Button title="Пропустить" variant="muted" onPress={handleAbilitySkip} style={styles.turnSkipBtnCompact} />
+                    <Button title="Скип" variant="danger" onPress={handleAbilitySkip} style={styles.turnSkipBtnCompact} />
+                </View>
+            ) : showShootSkip ? (
+                // "Пропустить выстрел" (2026-10-11, по прямому запросу
+                // пользователя) — переименована в "Скип", перекрашена в
+                // красную (variant="danger", как и у остальных ✕-кнопок
+                // этого баннера) и перенесена из отдельной строки НИЖЕ в
+                // один ряд с текстом, кнопка справа — тот же приём, что у
+                // pendingSelect/showRoadBonusChoice/showAbilitySkip выше
+                // (пользователь сперва попросил слева, затем в том же
+                // заходе передумал обратно на справа).
+                <View style={styles.turnHintRow}>
+                    <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
+                    <Button title="Скип" variant="danger" onPress={handleShootSkip} style={styles.turnSkipBtnCompact} />
                 </View>
             ) : (
                 // Центрировано (по прямому запросу пользователя, 2026-09-14) —
-                // ТОЛЬКО этот, безкнопочный случай (MOVE/SHOOT/ABILITY heal-
-                // reaper и т.п.). Строки с кнопками (turnHintFlex выше) не
-                // трогали — там текст рядом с кнопкой, левое выравнивание там
-                // читается естественнее.
+                // ТОЛЬКО этот, безкнопочный случай (MOVE/ABILITY heal-reaper
+                // и т.п.). Строки с кнопками (turnHintFlex выше) не трогали —
+                // там текст рядом с кнопкой, левое выравнивание там читается
+                // естественнее.
                 <Text style={[styles.turnHint, styles.turnHintCenter]} noGlobalTint>{turnHintText}</Text>
             )}
             {showActionStuckRefresh && !busy && (
@@ -2337,53 +2560,19 @@ export default function GameBoardScreen({ route, navigation }) {
                     style={styles.turnSkipBtn}
                 />
             )}
-            {/* Направление выстрела Жнеца — теперь тап по подсвеченной клетке
-                (см. highlightedCells/handleCellPress выше), а не кнопки
-                ↖/↑/↗ (по прямому запросу пользователя, 2026-09-07, "такое же
-                отображение, как для обычных бегунов"). "Без выстрела"
-                остаётся кнопкой — это не клетка на доске. Доступна сразу
-                (не ждёт reaperPreviewReady) — пропустить выстрел можно и не
-                дожидаясь, пока доиграет анимация прилёта.
-
-                Кнопка СКРЫТА, когда автоэффект выше (см. autoNoShotAttemptedRef)
-                и так уже примет то же решение сам — по прямому запросу
-                пользователя, 2026-09-09: раньше диалог "Без выстрела/Отмена"
-                показывался ДАЖЕ когда выбора физически нет (round===0 или
-                нет цели), хотя игроку нечего решать. Условие СИММЕТРИЧНО
-                автоэффекту (canReaperShoot||!reaperPreviewReady) — до того,
-                как preview settled, кнопка ещё видна (можно пропустить
-                выстрел не дожидаясь анимации, как и раньше), settled+нет
-                выбора → эффект уже сам всё решил, лишняя кнопка не нужна. */}
-            {pendingReaperPlacement && !busy && (
-                <View style={styles.turnBtnRow}>
-                    {(canReaperShoot || !reaperPreviewReady) && (
-                        <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtn} />
-                    )}
-                    {/* "Отмена" — живой тест, 2026-09-08, поймал реальный
-                        тупик: если размещение отклонено бэком (например,
-                        невалидный positionX — см. фикс highlightedCells
-                        выше), pendingReaperPlacement не сбрасывается сам
-                        (runAction молча ловит ошибку, .then(()=>...) не
-                        вызывается), а других способов вернуться к выбору
-                        клетки не было — игрок застревал, раз за разом
-                        повторяя ту же обречённую попытку. Видна БЕЗУСЛОВНО
-                        (не гейтится canReaperShoot) — общий аварийный выход
-                        и для авто-случая тоже, если сам авто-вызов вдруг
-                        зависнет/упадёт. */}
-                    <Button title="Отмена" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtn} />
-                </View>
-            )}
-            {/* Бонус дороги и усиление теперь в строке с текстом выше (см.
-                showRoadBonusChoice/showAbilitySkip в ветке turnHintRow) —
-                здесь остался только выстрел. */}
-            {!pendingSelect && !showRoadBonusChoice && !showAbilitySkip && showShootSkip && (
-                <Button
-                    title="Пропустить выстрел"
-                    variant="muted"
-                    onPress={handleShootSkip}
-                    style={styles.turnSkipBtn}
-                />
-            )}
+            {/* Жнец — весь диалог (approach/confirm/shoot) теперь ОДНОЙ
+                turnHintRow-строкой выше (см. pendingReaperPlacement-ветку в
+                начале этого тернарника), отдельного блока кнопок здесь
+                больше нет. "Отмена" на фазе выстрела (3) сознательно убрана
+                по прямому запросу пользователя, 2026-10-11, С ЯВНЫМ
+                ПРЕДУПРЕЖДЕНИЕМ о риске (согласован): если бэк отклонит само
+                размещение (например, невалидная клетка), runAction поймает
+                ошибку тостом, но pendingReaperPlacement НЕ сбросится —
+                showActionStuckRefresh тут НЕ срабатывает (вооружается
+                только на УСПЕШНЫЙ вызов, см. runAction выше), значит
+                реального аварийного выхода из этого конкретного тупика
+                теперь нет (был — старая "Отмена", 2026-09-08). Если баг
+                повторится — первое, что стоит проверить. */}
         </>
     ) : (
         // Центрировано + имя в цвете игрока, чей сейчас ход — по прямому
@@ -2635,13 +2824,45 @@ export default function GameBoardScreen({ route, navigation }) {
                                 left: MOBILE_FRAME_BLEED,
                                 right: MOBILE_FRAME_BLEED,
                             }}
+                            cornerBackdropColor={colors.panelPlateBg}
                         />
+                    )}
+                    {/* Стрелки навигации — ПРЯМО НА нижней кайме рамки дороги,
+                        ПО ЦЕНТРУ всей ширины, 2026-10-10 по прямому запросу
+                        пользователя. `variant="person"` + `targetCornerSize`
+                        тоньше дефолта (34px) — честная 9-slice рамка
+                        (FramedSquare.js/PersonPanel.js докстринги) БЕЗ своего
+                        фона поверх PNG-ассета `RoadNavButton` (тот своей
+                        нарисованной рамки больше не содержит, см. CLAUDE.md
+                        2026-10-10 — вырезана скриптом, чтобы не было двойного
+                        контура). RoadNavButton#width/height (см. её докстринг)
+                        даёт прямоугольную, не квадратную, кнопку. */}
+                    {useMobileNavButtons && (
+                        <View style={[styles.roadFrameNavRow, { bottom: (arrowBtnSize - navBoxH) / 2, gap: spacing.xs }]}>
+                            <FramedSquare variant="person" width={navBoxH * 2} height={navBoxH} targetCornerSize={32} glow>
+                                <RoadNavButton direction="up" height={navBoxH} width={navBoxH * 2} handlers={forwardButtonProps} />
+                            </FramedSquare>
+                            <FramedSquare variant="person" width={navBoxH * 2} height={navBoxH} targetCornerSize={32} glow>
+                                <RoadNavButton direction="down" height={navBoxH} width={navBoxH * 2} handlers={backButtonProps} />
+                            </FramedSquare>
+                        </View>
                     )}
                 </View>
             </View>
 
             {isPortrait && (
-                <View style={styles.panelFrameWrap}>
+                // backgroundColor (2026-10-10, по прямому запросу пользователя,
+                // ВТОРАЯ попытка — первая, 2026-10-10 раньше в этот же день,
+                // была реализована и полностью откачена, см. CLAUDE.md) — ТОЛЬКО
+                // useMobileNavButtons (портрет+native, условие внутри стиля):
+                // панель больше не в декоративной MobileFrameOverlay-рамке (той
+                // ниже тут больше нет вообще), вместо неё — сплошная заливка
+                // person_panel_background (см. styles.panelFrameWrap — сам цвет
+                // #2d3e4f измерен из PNG, который оказался АБСОЛЮТНО плоским,
+                // без текстуры, поэтому цвет, не тайлинг картинками). Веб-портрет
+                // (isPortrait без useMobileNavButtons) не затронут — там всё как
+                // было (полупрозрачная панель поверх параллакса).
+                <View style={[styles.panelFrameWrap, useMobileNavButtons && styles.panelFrameWrapFlat]}>
                     <PlayerInfoPanel
                         players={players}
                         activePlayerId={activePlayerId}
@@ -2664,54 +2885,117 @@ export default function GameBoardScreen({ route, navigation }) {
                         switcherHeight={switcherH}
                         switcherAtBottom
                         compactColumns
+                        flatBackground={useMobileNavButtons}
+                        switchRowHeight={useMobileNavButtons ? switchRowH : 0}
                         headerContent={(
-                            <View style={styles.turnBanner} onLayout={onTurnBannerLayout}>
-                                <FramePanel size={turnBannerSize} targetCornerSize={10} />
-                                {turnBannerInner}
+                            <View style={styles.turnBannerRow}>
+                                <View style={[styles.turnBanner, styles.turnBannerFlex]} onLayout={onTurnBannerLayout}>
+                                    <FramePanel size={turnBannerSize} targetCornerSize={10} />
+                                    {/* NeonGlow (2026-10-11, по прямому запросу
+                                        пользователя — "...у панели 'твой ход'...") —
+                                        только тут (портретный native-вызов), не в
+                                        альбомном/веб HeaderContent выше — тот же
+                                        масштаб правки, что и у остальных мест этого
+                                        захода (useMobileNavButtons-зона). */}
+                                    <NeonGlow size={turnBannerSize} radius={frameNotchRadius(turnBannerSize, 10)} />
+                                    {turnBannerInner}
+                                </View>
+                                {/* Раунд/Ход/Бонус хода — колонка квадратов СПРАВА
+                                    от баннера (2026-10-11, по прямому запросу
+                                    пользователя — переехали из строки под швом,
+                                    см. её докстринг ниже). Только useMobileNavButtons
+                                    — в остальных случаях (веб-портрет) этой колонки
+                                    тут не было и не появляется, раунд/ход/бонус там
+                                    по-прежнему не показываются вообще (см. TODO в
+                                    CLAUDE.md про ход). Высота каждого квадрата —
+                                    РОВНО ⅓ измеренной высоты баннера
+                                    (turnBannerSideSize), без зазоров между ними —
+                                    сумма трёх точно равна высоте баннера. */}
+                                {useMobileNavButtons && (
+                                    <View style={[styles.turnBannerSideCol, { width: turnBannerSideSize }]}>
+                                        <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
+                                            <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
+                                                {game.round != null ? game.round : '-'}
+                                            </Text>
+                                        </FramedSquare>
+                                        {/* "Ход" — заглушка до появления поля с бэка,
+                                            см. TODO в CLAUDE.md. */}
+                                        <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
+                                            <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>-</Text>
+                                        </FramedSquare>
+                                        <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
+                                            <Text style={[styles.seamBonusValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
+                                                {game.trackGain != null && game.trackGain > 0 ? game.trackGain : '—'}
+                                            </Text>
+                                        </FramedSquare>
+                                    </View>
+                                )}
                             </View>
                         )}
                         roadBonusValue={game.trackGain}
                         gameRound={game.round}
                     />
-                    {/* bleed: низ/лево/право — чуть за край экрана. Верх — 0
-                        (шов с дорогой, см. комментарий у неё выше) — рамки просто
-                        стоят вплотную без зазора, каждая остаётся отдельной рамкой
-                        со всеми 4 скруглёнными углами (НЕ сливаются в одну). */}
-                    {useMobileNavButtons && (
-                        <MobileFrameOverlay
-                            borderDp={arrowBtnSize}
-                            bleed={{ bottom: MOBILE_FRAME_BLEED, left: MOBILE_FRAME_BLEED, right: MOBILE_FRAME_BLEED }}
-                        />
-                    )}
                 </View>
             )}
 
-            {/* Единый ряд: стрелки вверх/вниз + кнопка лога, отцентрированный ровно НА
-                стыке рамок (дорога/панель) — половина ряда лежит на нижней кромке
-                дорожной рамки, половина на верхней кромке рамки панели. panelH
-                известна (панель — последний child фиксированной высоты в колонке,
-                прижат к самому низу wrapper), поэтому seam = panelH от низа экрана;
-                bottom ряда = panelH − arrowBtnSize/2 ставит ЦЕНТР ряда (row height
-                зафиксирована = arrowBtnSize) ровно на этот шов, независимо от
-                фактической высоты кнопки лога — она просто center'уется внутри той
-                же строки через alignItems. EventLogPanel в режиме position="seam"
-                рендерит только кнопку-тоггл инлайн (без своего абсолютного wrapper'а)
-                и раскрывающийся список — абсолютным дропдауном НАД собой. Только для
-                useMobileNavButtons (мобильная рамка) — вне этого случая лог остаётся
-                в прежнем углу (position ниже), кнопки навигации — RoadNavButton
-                колонкой слева от дороги (см. navBtnColumnLeft выше). GameMenuButton
-                (settings) — та же плитка, что и лог/стрелки, открывает
-                GameMenuModal ("Покинуть игру"/"Настройки"), 2026-10-04. */}
+            {/* Единая строка под швом — ОДНИМ рядом: 4 переключателя игрока,
+                панель имени, настройки, лог — ВСЕ одной и той же высоты
+                (switchRowH), по прямому запросу пользователя 2026-10-11
+                (раньше тут ЕЩЁ были раунд/ход/бонус дороги, второй строкой
+                под именем — переехали в колонку рядом с баннером хода, см.
+                headerContent выше). Панель имени — ФИКСИРОВАННОЙ ширины
+                (seamNameWidth), НЕ растягивается на остаток строки — по
+                прямому запросу пользователя ("уже, чем сейчас"); свободное
+                место справа от неё/настроек/лога просто остаётся залито тем
+                же фоном строки (styles.seamRow#backgroundColor), не выглядит
+                как дырка. Лежит ЦЕЛИКОМ ниже стыка, внутри territory
+                панели — рамку дороги не трогает (предыдущая версия стояла
+                ровно на стыке и конфликтовала то с рамкой, то с баннером
+                хода внутри панели — живые жалобы). switchRowH — высота всей
+                строки, та же величина, что PlayerInfoPanel резервирует у
+                себя СВЕРХУ через switchRowHeight (см. её докстринг) —
+                floating-ряд рисуется ровно над этим зарезервированным
+                зазором, не перекрывая баннер хода. Только useMobileNavButtons
+                — вне этого случая раскладка не менялась (лог в прежнем
+                углу, см. else ниже). */}
             {useMobileNavButtons ? (
-                <View style={[styles.seamRow, { bottom: panelH - arrowBtnSize / 2, height: arrowBtnSize }]}>
-                    <RoadNavButton direction="up" size={arrowBtnSize} handlers={forwardButtonProps} />
-                    <RoadNavButton direction="down" size={arrowBtnSize} handlers={backButtonProps} />
-                    <EventLogPanel entries={eventLog} position="seam" iconSize={arrowBtnSize} />
-                    <GameMenuButton
-                        size={arrowBtnSize}
-                        active={gameMenuOpen || gameSettingsOpen}
-                        onPress={handleOpenGameMenu}
-                    />
+                <View style={[styles.seamRow, { bottom: panelH - switchRowH, height: switchRowH }]} onLayout={onSeamRowLayout}>
+                    <PlayerSwitchPanel players={players} activeId={activePlayerId} onSelect={setActivePlayerId} height={switchRowH} />
+                    {/* Панель имени — FramedSquare variant="frame" (по
+                        умолчанию, FramePanel — "как у аватарки бегуна"), НЕ
+                        старый PersonPanel-based NamePanel — финальный выбор
+                        стиля после нескольких правок, см. докстринг у места
+                        рендера кнопок навигации на рамке дороги выше.
+                        marginLeft: spacing.xs (2026-10-11, по прямому
+                        запросу пользователя) — ТОЛЬКО тут, между последним
+                        переключателем и именем, тот же зазор, что и между
+                        самими переключателями (PlayerSwitchPanel.js#
+                        styles.row.gap) — остальные стыки строки (имя→
+                        настройки→лог) остаются без зазора, см. seamRow. */}
+                    <FramedSquare width={seamNameWidth} height={switchRowH} targetCornerSize={8} glow style={{ marginLeft: spacing.xs }}>
+                        <Text style={styles.seamNameText} numberOfLines={1} noGlobalTint>
+                            {players.find((p) => p.id === activePlayerId)?.name ?? ''}
+                        </Text>
+                    </FramedSquare>
+                    {/* Настройки+лог — variant="person" (showBackground=false,
+                        см. FramedSquare.js/PersonPanel.js докстринги) —
+                        честная 9-slice рамка БЕЗ фона (их PNG-ассеты
+                        `settings_*`/`log_*` уже содержат свой фон, просто без
+                        нарисованной линии-рамки, см. CLAUDE.md 2026-10-10),
+                        как и у RoadNavButton выше. Иконка — полный размер
+                        слота, рамка рисуется ПОД ней (см. FramedSquare.js),
+                        перекрытия нет. Квадратные — ширина = высота строки
+                        (switchRowH), как и у всех остальных элементов ряда. */}
+                    <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow>
+                        <GameMenuButton
+                            size={switchRowH}
+                            active={gameMenuOpen || gameSettingsOpen}
+                            onPress={handleOpenGameMenu}
+                        />
+                    </FramedSquare>
+                    <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow>
+                        <EventLogPanel entries={eventLog} position="seam" iconSize={switchRowH} />
+                    </FramedSquare>
                 </View>
             ) : (
                 <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
@@ -2735,13 +3019,21 @@ const styles = StyleSheet.create({
     // панель снизу (см. useBoardLayout.orientation).
     wrapper: { flex: 1, flexDirection: 'row' },
     wrapperPortrait: { flexDirection: 'column' },
-    // Обёртки под MobileFrameOverlay — ТОЛЬКО position:'relative', БЕЗ
-    // overflow:'hidden'. Рамка сама заполняет их РОВНО (не вылезает за
-    // границы, см. компонент) — эти View просто дают ей позиционирующий
-    // контекст. roadFrameWrap — flex:1 (тот же слот, что раньше держал
-    // RoadArea напрямую); panelFrameWrap — без flex (высота идёт от
-    // PlayerInfoPanel через её проп height, как и раньше).
+    // roadFrameWrap — обёртка под MobileFrameOverlay (та ОСТАЁТСЯ у дороги,
+    // не трогали, 2026-10-10), ТОЛЬКО position:'relative', БЕЗ overflow:
+    // 'hidden' — рамка сама заполняет её РОВНО (не вылезает за границы, см.
+    // компонент), этот View просто даёт ей позиционирующий контекст. flex:1
+    // — тот же слот, что раньше держал RoadArea напрямую.
     roadFrameWrap: { flex: 1, position: 'relative' },
+    // Стрелки навигации на кайме рамки дороги (см. место рендера) —
+    // zIndex/elevation выше самой рамки (10, см. MobileFrameOverlay.js),
+    // чтобы не оказаться ПОД её декоративными слоями и ловить тапы.
+    // По центру ВСЕЙ ширины (left:0,right:0 + justifyContent:'center').
+    roadFrameNavRow: {
+        position: 'absolute', left: 0, right: 0,
+        flexDirection: 'row', justifyContent: 'center',
+        zIndex: 11, elevation: 11,
+    },
     // Полоса имени фрагмента (FragmentLabelStrip) + сетка, бок о бок — портретная
     // раскладка. Обе имеют явную height=roadContainerH (см. JSX), выравнивать
     // по кросс-оси дополнительно не нужно.
@@ -2753,22 +3045,73 @@ const styles = StyleSheet.create({
     // stack-обёртками в этом файле.
     boardGridStack: { position: 'relative' },
     panelFrameWrap: { position: 'relative' },
+    // Сплошная заливка панели на мобильном портрете (2026-10-10) — см.
+    // комментарий у места рендера (useMobileNavButtons) и colors.panelPlateBg
+    // за происхождением цвета. Применяется ТОЛЬКО в этом случае (отдельный
+    // стиль, не влит в panelFrameWrap) — на вебе/альбомной раскладке
+    // panelFrameWrap остаётся прозрачным, как было.
+    panelFrameWrapFlat: { backgroundColor: colors.panelPlateBg },
     // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
     // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому
     // left+right без width, а не flex. zIndex/elevation выше рамок (10) и
     // выше EventLogPanel-плашек в остальных режимах (25), чтобы кнопки и
     // тоггл лога были кликабельны и видны поверх текстуры рамок.
+    // backgroundColor (2026-10-10) — та же заливка, что и у panelFrameWrapFlat
+    // (colors.panelPlateBg), чтобы шов с кнопками навигации/лога/настроек не
+    // оставался прозрачным островком между дорогой и панелью (ровно та
+    // "кривизна" первой попытки, по прямому замечанию пользователя) — этот
+    // стиль рисуется ТОЛЬКО внутри useMobileNavButtons-ветки (см. место
+    // рендера), отдельного условия тут не нужно.
+    // elevation (2026-10-10, живая жалоба пользователя: видимый "зазор" между
+    // этой строкой и панелью хода ниже + её собственный фон визуально отличался
+    // по цвету от того же colors.panelPlateBg у панели) — elevation на Android
+    // это НЕ только z-order, это ЕЩЁ И настоящая Material-тень (чем больше
+    // число, тем гуще/шире размытие), а 30 было взято с запасом только чтобы
+    // перебить другие элементы (рамка — 10, EventLogPanel в остальных
+    // режимах — 25), не как осознанный выбор интенсивности тени. Снижено до
+    // 26 (всё ещё перебивает 25) — тень заметно слабее; shadowColor:
+    // 'transparent' — доп. подстраховка, на части версий RN/Android гасит её
+    // почти полностью, не трогая сам z-order (который даёт elevation).
+    // paddingHorizontal: spacing.md (2026-10-10, было spacing.sm, живая
+    // жалоба "пустота справа, не вровень с панелью хода") — ТА ЖЕ величина,
+    // что `padding` у PlayerInfoPanel.js#styles.panel (корень панели, внутри
+    // которого лежит баннер хода) — левый край этой строки совпадает с левым
+    // краем баннера хода. Содержимое строки (2026-10-11, см. место рендера)
+    // вычисляется под точную ширину строки (seamNameWidth, см. seamRowWidth/
+    // onSeamRowLayout) — переключатели+имя+настройки+лог заполняют её ровно
+    // впритык к правому краю, без остатка. gap:0 (2026-10-11, прямой запрос
+    // пользователя "между элементами не должно быть расстояния") — элементы
+    // строки вплотную друг к другу (внутренний зазор МЕЖДУ 4 переключателями
+    // — отдельный, см. PlayerSwitchPanel.js#styles.row, не трогали).
     seamRow: {
         position: 'absolute',
         left: 0,
         right: 0,
         flexDirection: 'row',
-        justifyContent: 'center',
         alignItems: 'center',
-        gap: spacing.md,
+        gap: 0,
+        paddingHorizontal: spacing.md,
+        backgroundColor: colors.panelPlateBg,
         zIndex: 30,
-        elevation: 30,
+        elevation: 26,
+        shadowColor: 'transparent',
     },
+    // Панель имени в строке под швом (2026-10-11) — просто Text, фиксированная
+    // ширина/высота задаются инлайн через FramedSquare (seamNameWidth/
+    // switchRowH, см. место рендера), отдельного обёрточного стиля-колонки
+    // больше не нужно (раньше тут была колонка "имя + ряд из 5 квадратов",
+    // та ушла целиком — раунд/ход/бонус переехали в styles.turnBannerSideCol
+    // рядом с баннером хода, настройки/лог — соседи имени в этом же ряду).
+    seamNameText: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
+    // Тот же стиль, что был у RoundPanel/RoadBonusPanel#styles.value (см.
+    // их докстринги) — визуальное единообразие сохранено, хотя сам рендер
+    // теперь инлайн через FramedSquare, не через эти компоненты (те остались
+    // на PersonPanel, используются landscape/web-раскладкой в PlayerInfoPanel).
+    // Используется в styles.turnBannerSideCol (раунд/ход/бонус рядом с
+    // баннером хода, см. headerContent) — переехал туда вместе с колонкой
+    // 2026-10-11, сам стиль текста не менялся.
+    seamRoundValue: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.h2 },
+    seamBonusValue: { color: colors.success, fontWeight: 'bold', fontSize: font.h2 },
     // Блок дороги (кнопки навигации | сетка) — ВСЕГДА строка (кнопки колонкой
     // слева, дорога справа, по прямому запросу пользователя, 2026-08-31,
     // третий заход — было выше/ниже), дорога всегда вертикальная независимо
@@ -2794,9 +3137,6 @@ const styles = StyleSheet.create({
     // должны сжиматься), не наоборот — иначе длинный текст с результатом
     // броска мог бы вытолкнуть кнопки за пределы баннера.
     collisionTextColumn: { flex: 1 },
-    // Чуть тусклее основного текста — вспомогательная информация, не
-    // основной вопрос баннера.
-    collisionRollText: { color: colors.textOnDark, fontSize: font.tiny, opacity: 0.75, marginTop: 2 },
     collisionBtnText: { fontSize: font.tiny, fontWeight: '600' },
     // Баннер хода/столкновения/сдвига трассы — headerContent PlayerInfoPanel
     // В ОБЕИХ раскладках (портретная и альбомная), между переключателем
@@ -2805,21 +3145,61 @@ const styles = StyleSheet.create({
     // position:'absolute' блок НАД панелью (перекрывал переключатель) — по
     // прямому запросу пользователя, 2026-09-26, встроен туда же, где уже был
     // портретный вариант (тогда panelTurnBanner и turnBanner были двумя
-    // идентичными по сути стилями, слиты в один). minHeight+justifyContent —
-    // плитка ЗАФИКСИРОВАНА под 3 строки (см. TURN_BANNER_MIN_HEIGHT) и больше
-    // не "прыгает" по высоте между "Твой ход"/подсказкой/коллизией/сдвигом
-    // трассы — контент короче трёх строк просто центрируется внутри, а не
-    // растягивает контейнер.
+    // идентичными по сути стилями, слиты в один). height (было minHeight,
+    // см. ниже)+justifyContent — плитка ЗАФИКСИРОВАНА под 3 строки (см.
+    // TURN_BANNER_MIN_HEIGHT) и больше не "прыгает" по высоте между "Твой
+    // ход"/подсказкой/коллизией/сдвигом трассы — контент короче трёх строк
+    // просто центрируется внутри, а не растягивает контейнер.
     // 2026-09-28 — плоская заливка (backgroundColor/borderRadius) убрана:
     // фон и скруглённые уголки теперь рисует `FramePanel` (см. её рендер
     // рядом с onTurnBannerLayout выше, position:'absolute' поверх ЭТОГО же
     // View — сам `turnBanner` остаётся обычным flow-контейнером с паддингом,
     // FramePanel не участвует в раскладке).
+    // height, НЕ minHeight + overflow:'hidden' (2026-10-11, прямое
+    // уточнение пользователя после живого бага на реальном устройстве —
+    // "не должна менять размер ВНЕ ЗАВИСИМОСТИ от того, что отображается,
+    // нужно уметь уместить всё что угодно, не меняя размера") — `minHeight`
+    // это только ПОЛ, а не потолок: если контенту (например двухстрочный
+    // коллизионный текст + кнопки) не хватало места, бокс всё равно рос.
+    // Теперь высота ЖЁСТКО фиксирована — контент, которому не хватает места,
+    // обрезается (`overflow:'hidden'`), а не раздвигает рамку. Это также
+    // попутно устраняет и сам баг с раздутой панелью (см. turnBannerRow
+    // ниже, 'flex-start') — при фиксированной height turnBanner больше
+    // физически не может сообщить onLayout'у "завышенный" размер, которым
+    // раньше подпитывалась колонка раунд/ход/бонус.
     turnBanner: {
         paddingVertical: spacing.sm, paddingHorizontal: spacing.md,
         marginTop: spacing.xs,
-        minHeight: TURN_BANNER_MIN_HEIGHT, justifyContent: 'center',
+        height: TURN_BANNER_MIN_HEIGHT, justifyContent: 'center', overflow: 'hidden',
     },
+    // turnBannerRow/turnBannerFlex/turnBannerSideCol (2026-10-11, по прямому
+    // запросу пользователя) — ТОЛЬКО портретный headerContent (см. место
+    // рендера): баннер хода теперь делит строку с колонкой раунд/ход/бонус
+    // справа от него (бывшей частью строки под швом, см. CLAUDE.md). Строка
+    // несёт marginTop, который раньше был на самом turnBanner (см.
+    // turnBannerFlex — сбрасывает его в 0, чтобы не удвоился) — так верх
+    // баннера и верх колонки квадратов совпадают. Ширина/высота колонки —
+    // явные пропы (turnBannerSideSize), не стиль.
+    // alignItems:'flex-start' (ЖИВОЙ БАГ, 2026-10-11, найден пользователем
+    // на реальном устройстве при коллизии — баннер "Твой ход" ЗАМЕТНО
+    // вырос, хотя раньше был жёстко зафиксирован под 3 строки) — БЕЗ этого
+    // (дефолт flexbox-строки — 'stretch') turnBanner и turnBannerSideCol
+    // образуют циклическую зависимость высоты: turnBannerSideCol сам
+    // высотой с turnBannerSize.height (измеренной высоты БАННЕРА, см.
+    // turnBannerSideSize выше), а 'stretch' тянет turnBanner вверх до
+    // высоты СВОЕГО соседа по ряду (turnBannerSideCol) — если в какой-то
+    // момент баннер был выше обычного (например длинный коллизионный текст
+    // на 2 строки) или колонка уже "раздулась" на предыдущем рендере,
+    // stretch держит баннер завышенным даже когда актуальный контент
+    // (например короткие "Использовать"/"Перебросить") уже не требует такой
+    // высоты — измеренная turnBannerSize так и остаётся завышенной, подпитывая
+    // саму себя дальше. 'flex-start' отключает stretch — turnBanner высотой
+    // ТОЛЬКО от своего контента/minHeight (как и было задумано, см.
+    // TURN_BANNER_MIN_HEIGHT), turnBannerSideCol подстраивается ПОД него, не
+    // наоборот.
+    turnBannerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, marginTop: spacing.xs },
+    turnBannerFlex: { flex: 1, marginTop: 0 },
+    turnBannerSideCol: { flexDirection: 'column' },
     turnTitle: { color: colors.textOnDarkSecondary, fontSize: font.small, fontWeight: 'bold' },
     // color тут больше не используется (PulseText сам управляет цветом, см.
     // выше) — оставлен как безопасный дефолт на случай, если PulseText

@@ -557,6 +557,25 @@ export const PERSON_PANEL_BACKGROUND = require('../assets/images/ui/pers_panel/p
 export const PERSON_PANEL_BACKGROUND_CORNER = require('../assets/images/ui/pers_panel/person_panel_background_corner.png');
 
 /**
+ * Rocker-switch переключатель игрока (2026-10-04 — присланы/перекрашены
+ * пользователем, НЕ интегрированы в код тогда; 2026-10-10 — интеграция,
+ * см. PlayerSwitchPanel.js). Родной размер каждого файла 337×537 (один и тот
+ * же для всех вариантов — безопасно считать общий аспект). `on` — по цвету
+ * игрока (тот же вокабуляр фронта, что и PLAYER_COLOR_HEX — 'red'/'blue'/
+ * 'purple'/'yellow'); `offCyan` — реальный игрок в партии, но сейчас не
+ * выбран; `blocked` — слот, в котором в ЭТОЙ партии вообще нет игрока
+ * (например 2 из 4 при игре на двоих).
+ */
+export const SWITCH_ON = {
+  red: require('../assets/images/ui/pers_panel/switch_on_red.png'),
+  blue: require('../assets/images/ui/pers_panel/switch_on_blue.png'),
+  purple: require('../assets/images/ui/pers_panel/switch_on_purple.png'),
+  yellow: require('../assets/images/ui/pers_panel/switch_on_yellow.png'),
+};
+export const SWITCH_OFF_CYAN = require('../assets/images/ui/pers_panel/switch_off_cyan.png');
+export const SWITCH_OFF_BLOCKED = require('../assets/images/ui/pers_panel/switch_off_blocked.png');
+
+/**
  * Иконка занятости жетона повреждения (RunnerCard) — по прямому решению
  * пользователя (2026-09-19), НОВЫЙ дизайн отказывается от 5 отдельных типов
  * жетона (Вмятина/Рикошет/Занос/Ракета/Аномалия, см. DAMAGE_TOKENS выше —

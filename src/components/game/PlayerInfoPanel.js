@@ -11,8 +11,9 @@ import RoadBonusPanel from './RoadBonusPanel';
 import RoundPanel from './RoundPanel';
 import PulseText from '../ui/PulseText';
 import PulseHighlight from '../ui/PulseHighlight';
-import PersonPanel from '../ui/PersonPanel';
+import PersonPanel, { NOTCH_RADIUS as PERSON_PANEL_NOTCH_RADIUS } from '../ui/PersonPanel';
 import FramePanel, { frameNotchRadius } from '../ui/FramePanel';
+import NeonGlow from '../ui/NeonGlow';
 import {
     PLAYER_ABILITIES,
     PLAYER_ABILITY_ORDER,
@@ -125,9 +126,33 @@ export default function PlayerInfoPanel({
     // шагом/активным бегуном.
     roadBonusValue = null,
     // gameRound — game.round с GameBoardScreen (2026-10-01, прямой запрос
-    // пользователя "над атлетом сделай новую панель, там покажи номер
-    // раунда") — см. RoundPanel.js за докстрингом этого поля на бэке.
+    // пользователя "над атлетом сделай номер раунда") — см. RoundPanel.js
+    // за докстрингом этого поля на бэке.
     gameRound = null,
+    // flatBackground (2026-10-10) — ТОЛЬКО портретный native-вызов
+    // (GameBoardScreen.js, useMobileNavButtons). Помимо своего прямого
+    // названия (убирает полупрозрачный чёрный фон панели, #00000055 —
+    // заливка приходит СНАРУЖИ, от GameBoardScreen#panelFrameWrap, см.
+    // styles.panelFlat ниже), флаг заодно гасит ДВА блока, переехавших в
+    // этом же заходе из панели на отдельную строку под швом дороги/панели
+    // (GameBoardScreen.js#PlayerSwitchPanel): сам переключатель игроков
+    // (switcher) и ряд "Раунд/Ход/Бонус" (reaperNode, см. его докстринг —
+    // переехал на рамку дороги) — три РАЗНЫХ визуальных изменения, но все
+    // три происходят ТОЛЬКО вместе, ровно в этом одном вызове, так что
+    // заводить три отдельных пропа было бы избыточно. На landscape/
+    // веб-портрете проп не передаётся (false) — там всё как было.
+    flatBackground = false,
+    // switchRowHeight (2026-10-10) — ТОЛЬКО вместе с flatBackground: высота
+    // плавающей строки (стрелки/переключатели/имя+настройки/лог), которую
+    // GameBoardScreen.js рисует ПОВЕРХ панели, сразу под стыком с дорогой
+    // (см. её докстринг у места рендера). Та строка — `position:'absolute'`,
+    // не участвует в layout этого компонента и НЕ уменьшает `height` проп
+    // сама по себе — поэтому тут резервируется пустой зазор РОВНО этой
+    // высоты В НАЧАЛЕ body (до headerContent/баннера хода), чтобы реальный
+    // контент панели не оказался визуально ПОД плавающей строкой (та же
+    // ошибка уже была — живая жалоба "фон панели навигации налезает на
+    // панель с ходом", см. историю этого захода в CLAUDE.md).
+    switchRowHeight = 0,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -943,6 +968,17 @@ export default function PlayerInfoPanel({
             style={[styles.dATile, compactColumns && styles.dATileCompact, compactColumns && styles.dATileRow]}
         >
             <PersonPanel size={dATileSize} />
+            {/* NeonGlow (2026-10-11, по прямому запросу пользователя — "по
+                краям PersonPanel... и панели усилений/кубиков хода") — см.
+                докстринг компонента за тем, почему не настоящий blur-тень.
+                ТОЛЬКО на этой, корневой плитке (dATile) — по прямому
+                уточнению пользователя убрано с вложенного diceTrayWrap
+                (FramePanel внутри неё), свечение должно быть только у
+                корневых панелей, не у вложенных. radius —
+                PERSON_PANEL_NOTCH_RADIUS, тот же константный радиус, что
+                PersonPanel сам использует для своего скругления (дефолт
+                FRAME_SCALE, targetCornerSize тут не передаётся). */}
+            <NeonGlow size={dATileSize} radius={PERSON_PANEL_NOTCH_RADIUS} />
             <View
                 onLayout={onDiceTrayLayout}
                 style={[
@@ -1027,8 +1063,13 @@ export default function PlayerInfoPanel({
     );
 
     return (
-        <View ref={panelRootRef} onLayout={measurePanelOrigin} style={[styles.panel, { width, height }]}>
+        <View
+            ref={panelRootRef}
+            onLayout={measurePanelOrigin}
+            style={[styles.panel, flatBackground && styles.panelFlat, { width, height }]}
+        >
             <View style={styles.body}>
+                {flatBackground && switchRowHeight > 0 && <View style={{ height: switchRowHeight }} />}
                 {!switcherAtBottom && switcher}
 
                 {/* headerContent — место баннера хода в портретной раскладке
@@ -1087,7 +1128,13 @@ export default function PlayerInfoPanel({
                                 по высоте (RunnerCard.js#cardCompact), низ ряда
                                 бегунов теперь ВСЕГДА ровно у низа columnsH. */}
                             <View style={styles.leftColumnContent}>
-                                {reaperNode}
+                                {/* flatBackground (2026-10-10) — native-портрет:
+                                    раунд/ход/бонус переехали на рамку дороги
+                                    (GameBoardScreen.js), тут их больше нет —
+                                    runnerRow (flex:1) остаётся единственным
+                                    ребёнком и сам растягивается на всю высоту
+                                    колонки, карточки бегунов крупнее. */}
+                                {!flatBackground && reaperNode}
                                 <View style={styles.runnerRow} onLayout={onRunnerRowLayout}>{runnerCards}</View>
                             </View>
                         </View>
@@ -1151,7 +1198,10 @@ export default function PlayerInfoPanel({
                     </ScrollView>
                 )}
 
-                {switcherAtBottom && switcher}
+                {/* flatBackground (2026-10-10) — native-портрет: переключатель
+                    переехал в PlayerSwitchPanel (GameBoardScreen.js, строка
+                    под швом дороги/панели), тут его больше нет. */}
+                {switcherAtBottom && !flatBackground && switcher}
             </View>
 
             {/* Ghost перетаскиваемого кубика — ВЕБ (legacy `Animated`, этот
@@ -1222,6 +1272,20 @@ const styles = StyleSheet.create({
         borderRadius: radius.lg,
         padding: spacing.md,
     },
+    // См. докстринг пропа flatBackground — отменяет свой полупрозрачный фон
+    // (заливка приходит снаружи, от GameBoardScreen#panelFrameWrap) и
+    // скругление (внешняя заливка уже прямоугольная, край в край экрана —
+    // своё скругление поверх нее смотрелось бы вырезом).
+    // paddingTop:0 (2026-10-10, живая жалоба "зазор остался" — настоящая
+    // причина нашлась только тут, НЕ в elevation/тени, как предполагалось
+    // раньше) — `panel` выше задаёт padding:spacing.md НА ВСЕ стороны,
+    // `panelFlat` его не трогал — зарезервированный зазор под плавающую
+    // строку (switchRowHeight, первый child body) оказывался СНАЧАЛА внутри
+    // этого паддинга, то есть фактически стартовал на 15px НИЖЕ, чем
+    // рассчитывала сама строка снаружи (та исходит из нулевого паддинга).
+    // Горизонтальный/нижний padding НЕ трогаем — они не участвуют в этой
+    // математике, менять их не просили.
+    panelFlat: { backgroundColor: 'transparent', borderRadius: 0, paddingTop: 0 },
     // 'fixed' — только веб (см. dragGhost); на native этот стиль определяется,
     // но никогда не применяется (JSX за Platform.OS==='web'), 'absolute' —
     // просто безопасный фолбэк на случай ошибки в этом условии.

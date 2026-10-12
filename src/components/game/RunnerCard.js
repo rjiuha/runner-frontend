@@ -5,6 +5,7 @@ import RunnerToken from './RunnerToken';
 import PulseHighlight from '../ui/PulseHighlight';
 import PersonPanel, { NOTCH_RADIUS } from '../ui/PersonPanel';
 import FramePanel from '../ui/FramePanel';
+import NeonGlow from '../ui/NeonGlow';
 import {
     DAMAGE_SLOT_ICONS,
     FRAME_PANEL_BACKGROUND,
@@ -54,12 +55,11 @@ import { colors, font, spacing } from '../../theme';
  *
  * "Ход"/"Накат" — один слот кубика (diceSlot) показывает АКТИВНОЕ значение
  * (rollDiceValue в приоритете — во время наката runner.dice уже 0, не null,
- * `??` его не заменит). Счётчик накатов "×N" — сколько накатов ЕЩЁ доступно
- * в этом раунде (2 − runner.rollMoves, НЕ то же самое, что rollDiceValue) —
- * 2026-09-20, по прямому запросу пользователя ПЕРЕЕХАЛ из уголка-бейджа
- * ПОВЕРХ слота кубика в ОТДЕЛЬНЫЙ элемент под ним (rollCount/rollCountCompact
- * в styles) — раньше и это, и слот кубика были одним визуальным пятном,
- * пользователь попросил развести.
+ * `??` его не заменит). Счётчик накатов ("×N"/"Н:N" — сколько накатов ЕЩЁ
+ * доступно в этом раунде) — убран из карточки целиком (2026-10-10, по
+ * прямому запросу пользователя), вся история его перемещений (из бейджа
+ * поверх кубика в отдельный элемент и т.д.) — только в
+ * CLAUDE_DONE_TASKS.md, AS-IS его в разметке больше нет.
  *
  * Бонус хода (roadBonus проп, число|null) — 2026-09-20. С 2026-09-24 бэк
  * (коммит 59aea0f) отдаёт per-runner Runner::$trackGain в Runner::toArray()
@@ -68,8 +68,15 @@ import { colors, font, spacing } from '../../theme';
  * не только во время чужого шага ROAD_BONUS) — сюда по-прежнему приходит
  * готовое число|null, сам проп/рендер не изменился.
  *
- * Текстовая строка статуса убрана — уничтоженный бегун виден через
- * `cardDestroyed` (приглушение всей карточки).
+ * Текстовая строка статуса убрана — уничтоженный бегун виден через пустую
+ * аватарку (2026-10-10, по прямому запросу пользователя — рамка карточки
+ * остаётся полностью непрозрачной, `RunnerToken` просто не рендерится при
+ * `destroyed`). Две предыдущие попытки — `opacity` на всей карточке, потом
+ * полупрозрачный скрим поверх неё — обе отменены: `opacity` на Android
+ * ломался из-за наложенных друг на друга полупрозрачных слоёв PersonPanel
+ * (каждый слой получал затемнение НЕЗАВИСИМО, итог заметно непрозрачнее в
+ * местах с несколькими слоями — угол/грань), а скрим поверх (следующая
+ * попытка) на реальном Android визуально не дал заметной разницы вообще.
  */
 const DOUBLE_TAP_MS = 300;
 const AVATAR_SIZE = 64;
@@ -78,11 +85,56 @@ const DAMAGE_ICON_SIZE = 22;
 // Вертикальная раскладка (compact) — заметно меньше горизонтальной: три
 // такие плитки должны уместиться в РЯД по ширине левой колонки, тогда как
 // горизонтальная плитка рассчитана на ВСЮ ширину колонки (см. докстринг
-// файла). Пропорция аватар/кубик (44/64≈0.6875) сохранена, как и в
-// обычной раскладке.
+// файла).
 const AVATAR_SIZE_COMPACT = 44;
-const DICE_SIZE_COMPACT = 30;
+// Высота фрейма аватарки — АДАПТИВНАЯ (2026-10-11, по прямому запросу
+// пользователя: "сделать так, чтобы высота этого фрейма и размер бегуна
+// различались в зависимости от экрана телефона, но никогда ×2 от ширины
+// фрейма... сначала увеличивается размер аватарки, максимально ×2 от
+// ширины фрейма, а после, если высота позволяет, отметки о повреждении
+// становятся больше" — порог позже скорректирован тем же пользователем:
+// "хотя не х2 по высоте, пусть будет 1.75"). Приоритет роста контента
+// сверх МИНИМАЛЬНОГО (NATURAL_CONTENT_HEIGHT_COMPACT, аватар-квадрат,
+// мелкий ряд жетонов) при наличии свободного места — СНАЧАЛА высота
+// аватарки растёт от ×1 (квадрат) до ×AVATAR_HEIGHT_SCALE_MAX, ТОЛЬКО
+// ПОТОМ (когда аватарка уже у потолка) остаток места идёт на
+// canShowBigDamage (крупные жетоны столбиком, см. её докстринг ниже) —
+// вычисление обоих шагов см. avatarHeightScale/canShowBigDamage в теле
+// компонента. Ширина (AVATAR_SIZE_COMPACT) никогда не меняется — попытка
+// уменьшить ЕЁ отдельно на 25% была ОШИБКОЙ прошлого захода этого же дня
+// (см. CLAUDE_DONE_TASKS.md 2026-10-11) — пользователь на самом деле
+// хотел не меньший фрейм, а чтобы персонаж НЕ ВЫЛЕЗАЛ ЗА ПРЕДЕЛЫ своего
+// фрейма — решение см. styles.avatarBoxCompact#overflow и порядок рендера
+// FramePanel в месте рендера ниже (рисуется ДВАЖДЫ — кайма поверх
+// персонажа), не размер. Сама картинка персонажа (RunnerToken `size`)
+// растёт ПРОПОРЦИОНАЛЬНО (и по ширине тоже, по прямому выбору
+// пользователя — не ужимать картинку отдельно от фрейма) — то, что не
+// помещается в границы фрейма при росте, обрезается (`overflow:'hidden'`
+// ИМЕННО на самом `avatarBoxCompact`, не на всей карточке — не тот же
+// клип, что у `styles.cardCompact`, тот трогать по-прежнему не просили).
+const AVATAR_HEIGHT_SCALE_MIN = 1;
+const AVATAR_HEIGHT_SCALE_MAX = 1.75;
+// Фрейм слота кубика хода — РАВЕН ШИРИНЕ фрейма аватарки (2026-10-10, по
+// прямому запросу пользователя; раньше был меньше — 30, своя отдельная
+// пропорция 44/64≈0.6875 "как в обычной раскладке" — теперь не действует).
+// Фрейм бонуса дороги, который раньше был тут же (тот же размер), убран
+// из карточки целиком 2026-10-11. Размер кубика — ВСЕГДА фиксирован
+// (НЕ участвует в адаптивном росте аватарки/жетонов выше — пользователь
+// описал порядок роста без него, "фрейм с кол-вом ходов должен быть
+// внизу" неизменным).
+const DICE_SIZE_COMPACT = AVATAR_SIZE_COMPACT;
 const DAMAGE_ICON_SIZE_COMPACT = 14;
+// Крупный вариант жетонов (2026-10-10, по прямому запросу пользователя) —
+// когда в колонке ЕСТЬ свободное место сверх натурального контента (см.
+// canShowBigDamage ниже), жетоны рисуются КРУПНЕЕ (тот же DAMAGE_ICON_SIZE,
+// что уже использует горизонтальная/landscape раскладка — не придумывать
+// новое число) и СТОЛБИКОМ, а не в ряд. `DAMAGE_ROW_BIG_EXTRA_H` — на сколько
+// ПРЕДВИДЕТСЯ вырасти высота ряда жетонов относительно текущего компактного
+// (2×DAMAGE_ICON_SIZE + зазор 4, минус текущая высота ряда
+// DAMAGE_ICON_SIZE_COMPACT) — нужно, чтобы решить, хватит ли реально
+// доступной высоты карточки под увеличенный вариант, а не просто под
+// натуральный компактный.
+const DAMAGE_ROW_BIG_EXTRA_H = DAMAGE_ICON_SIZE * 2 + 4 - DAMAGE_ICON_SIZE_COMPACT;
 // Натуральная высота контента компактной карточки ПРИ sizeScale=1 — 2026-10-01.
 // Разбор живой жалобы "содержимое выпирает за пределы панели": ПЕРВЫЙ заход
 // (тем же вечером) был `Math.max(runnerRowH, MIN_CARD_HEIGHT_COMPACT)` —
@@ -96,26 +148,28 @@ const DAMAGE_ICON_SIZE_COMPACT = 14;
 // считает `sizeScale = Math.min(1, (cardHeight - паддинг) / NATURAL_CONTENT_
 // HEIGHT_COMPACT)` — НИКОГДА не увеличивает контент сверх натурального
 // размера (растягивать контент крупнее уже отдельно и явно отвергалось
-// пользователем 2026-09-30), только уменьшает, когда коробка теснее.
-// Сумма реальных констант при sizeScale=1: 44(аватар)+1+14(жетоны)+
-// 12(текст наката)+1+30(кубик)+30(бонус дороги) = 132.
-export const NATURAL_CONTENT_HEIGHT_COMPACT = 132;
+// пользователем 2026-09-30), только уменьшает, когда коробка теснее —
+// это по-прежнему так, НО с 2026-10-11 это МИНИМАЛЬНАЯ натуральная высота
+// (аватар-квадрат, AVATAR_HEIGHT_SCALE_MIN, мелкий ряд жетонов), не
+// максимальная — рост СВЕРХ нёё (высота аватарки → жетоны крупнее)
+// реализован ОТДЕЛЬНЫМ механизмом внутри самого компонента (см.
+// avatarHeightScale/canShowBigDamage ниже), sizeScale тут ни при чём, его
+// семантика "никогда не растягивать" не нарушается — он просто отсчитывается
+// от нового, меньшего базиса. Сумма реальных констант при sizeScale=1,
+// avatarHeightScale=AVATAR_HEIGHT_SCALE_MIN: 44(аватар-квадрат)+1+
+// 14(жетоны, мелкий ряд)+1+44(кубик) = 104.
+export const NATURAL_CONTENT_HEIGHT_COMPACT = 104;
 // paddingVertical у cardCompact (см. её стиль ниже) — тоже нужен снаружи,
 // чтобы PlayerInfoPanel.js могла вычесть его из cardHeight и получить
 // реально доступную контенту высоту (colInner#height:'100%' — это высота
 // content-box, УЖЕ без паддинга родителя).
 export const RUNNER_CARD_COMPACT_PADDING_V = spacing.sm;
-// Бонус хода — 2026-09-30, по прямому запросу пользователя: раньше это была
-// голая строка "+N", рендерившаяся ТОЛЬКО когда roadBonus не null — та самая
-// причина, почему натуральная высота карточки различалась между бегунами
-// (нашёл сам пользователь, живьём: "вижу, что это связано с наличием у test
-// скаута бонуса дороги"). Теперь — такой же ВСЕГДА видимый квадрат-фрейм,
-// как у слота кубика хода (diceBoxCompact/DICE_SIZE_COMPACT), с прочерком
-// вместо числа, когда бонуса нет — карточка занимает одну и ту же высоту
-// независимо от того, есть сейчас бонус или нет. Размер — ТОТ ЖЕ, что и у
-// фрейма кубика хода (2026-09-30, по прямому запросу пользователя), не своя
-// отдельная константа — оба слота визуально одного веса.
-const ROAD_BONUS_SIZE_COMPACT = DICE_SIZE_COMPACT;
+// Бонус хода — был здесь (квадрат-фрейм "+N", 2026-09-30) до 2026-10-11,
+// убран из compact-карточки ЦЕЛИКОМ по прямому запросу пользователя
+// ("удали бонус, фрейм не нужен") — освободившееся место отдано аватарке
+// (см. AVATAR_HEIGHT_SCALE_MIN/MAX выше). Landscape-раскладка не тронута —
+// там `roadBonus` остаётся голой зелёной строкой "+N" (не фреймом), см. её
+// рендер ниже, это не входило в объём запроса.
 // Platform.OS не меняется в течение жизни приложения — модульная константа,
 // не пересчитывается на каждый рендер. См. isAndroid ниже (имя бегуна
 // скрыто, кружки урона вертикально — по прямому запросу пользователя,
@@ -134,7 +188,12 @@ const isAndroid = Platform.OS === 'android';
 // набора (обычный/compact) — оба стабильны по той же причине.
 const AVATAR_FRAME_SIZE = { width: AVATAR_SIZE, height: AVATAR_SIZE };
 const DICE_FRAME_SIZE = { width: DICE_SIZE, height: DICE_SIZE };
-const AVATAR_FRAME_SIZE_COMPACT = { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT };
+// Аватарка в compact БОЛЬШЕ не имеет стабильной module-level size-константы
+// (в отличие от AVATAR_FRAME_SIZE/DICE_FRAME_SIZE/DICE_FRAME_SIZE_COMPACT
+// выше/ниже) — её высота с 2026-10-11 АДАПТИВНАЯ (avatarHeightScale, см.
+// докстринг AVATAR_HEIGHT_SCALE_MIN/MAX), пересчитывается в теле компонента
+// через useMemo с реальными зависимостями, не может быть "одним и тем же
+// объектом всегда", как раньше.
 const DICE_FRAME_SIZE_COMPACT = { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT };
 
 // Отдаём паддинг карточки наружу (2026-09-26) — PlayerInfoPanel.js считает
@@ -147,13 +206,14 @@ export const RUNNER_CARD_COMPACT_PADDING_H = spacing.xs;
 
 /**
  * Максимальный `sizeScale`, при котором `avatarBoxCompact` (шириной
- * AVATAR_SIZE_COMPACT*scale) ещё гарантированно помещается в СВОЮ карточку —
- * используется PlayerInfoPanel.js при авто-РОСТЕ compact-колонки (2026-09-26,
- * по прямому запросу пользователя — "растянуть контент крупнее", см. её
- * докстринг leftScale/leftGrow). Три карточки стоят плотно в ряд (`flex:1`,
- * без запаса по ширине сверх этого), а сам аватар — ФИКСИРОВАННОГО пиксельного
- * размера (не ужимается вместе с flex-родителем) — без этой проверки рост мог
- * бы вытолкнуть аватар за границы своей карточки (наезд на соседние).
+ * AVATAR_SIZE_COMPACT*scale) ещё гарантированно помещается в СВОЮ
+ * карточку — используется PlayerInfoPanel.js при авто-РОСТЕ compact-колонки
+ * (2026-09-26, по прямому запросу пользователя — "растянуть контент
+ * крупнее", см. её докстринг leftScale/leftGrow). Три карточки стоят плотно
+ * в ряд (`flex:1`, без запаса по ширине сверх этого), а сам аватар —
+ * ФИКСИРОВАННОГО пиксельного размера (не ужимается вместе с flex-родителем)
+ * — без этой проверки рост мог бы вытолкнуть аватар за границы своей
+ * карточки (наезд на соседние).
  * `cardContentWidth` — ширина ОДНОЙ карточки уже БЕЗ padding (вызывающая
  * сторона сама вычитает RUNNER_CARD_COMPACT_PADDING_H*2).
  */
@@ -212,24 +272,52 @@ function RunnerCard({
     // 1 (по умолчанию) — обычная раскладка/без роста, размеры как раньше.
     sizeScale = 1,
 }) {
-    // useMemo — та же причина, что и у AVATAR_FRAME_SIZE_COMPACT (стабильная
-    // ссылка объекта для React.memo у FramePanel, см. её докстринг) — но
-    // размер теперь не всегда одна и та же module-level константа, а
-    // ПЕРЕСЧИТЫВАЕТСЯ от sizeScale. Меняется редко (только когда PlayerInfoPanel
-    // пересчитывает leftGrow — при изменении высоты колонки/контента, НЕ на
-    // каждый рендер), useMemo с [sizeScale] отдаёт ТУ ЖЕ ссылку между
-    // рендерами, пока sizeScale не изменился — свойство React.memo не рушится.
+    // Размер АВАТАРКИ меняется от sizeScale (та же логика, что и раньше —
+    // ужимается, когда коробка теснее минимума, см. NATURAL_CONTENT_
+    // HEIGHT_COMPACT) — ширина (avatarSizeCompact) всегда участвует и в
+    // расчёте высоты (нет отдельного "height scale от sizeScale").
     const avatarSizeCompact = Math.round(AVATAR_SIZE_COMPACT * sizeScale);
     const diceSizeCompact = Math.round(DICE_SIZE_COMPACT * sizeScale);
     const damageIconSizeCompact = Math.round(DAMAGE_ICON_SIZE_COMPACT * sizeScale);
+    // Адаптивный РОСТ сверх минимума (2026-10-11, см. докстринг AVATAR_
+    // HEIGHT_SCALE_MIN/MAX выше за полным объяснением приоритета) — ТОЛЬКО
+    // когда sizeScale===1 (контент уже помещается хотя бы в минимальном
+    // виде — при тесной коробке речь об увеличении сверх минимума не идёт
+    // вообще, та же оговорка, что уже была у canShowBigDamage раньше).
+    // `extraH` — весь запас места сверх NATURAL_CONTENT_HEIGHT_COMPACT.
+    // Приоритет 1 — высота аватарки: растёт от AVATAR_HEIGHT_SCALE_MIN до
+    // AVATAR_HEIGHT_SCALE_MAX, "съедая" до avatarGrowBudget запаса.
+    // Приоритет 2 (canShowBigDamage, ниже) — ТОЛЬКО остаток ПОСЛЕ того, как
+    // аватарка уже выросла до потолка.
+    const extraH = sizeScale === 1 && cardHeight != null
+        ? Math.max(0, cardHeight - RUNNER_CARD_COMPACT_PADDING_V * 2 - NATURAL_CONTENT_HEIGHT_COMPACT)
+        : 0;
+    const avatarGrowBudget = Math.round(avatarSizeCompact * (AVATAR_HEIGHT_SCALE_MAX - AVATAR_HEIGHT_SCALE_MIN));
+    const avatarGrowUsed = Math.min(extraH, avatarGrowBudget);
+    const avatarHeightScale = AVATAR_HEIGHT_SCALE_MIN
+        + (avatarGrowBudget > 0 ? avatarGrowUsed / avatarGrowBudget : 0) * (AVATAR_HEIGHT_SCALE_MAX - AVATAR_HEIGHT_SCALE_MIN);
+    const extraHAfterAvatar = extraH - avatarGrowUsed;
+    const avatarFrameHeightCompact = Math.round(avatarSizeCompact * avatarHeightScale);
+    // Картинка персонажа (RunnerToken#size) — растёт ПРОПОРЦИОНАЛЬНО (той же
+    // кратностью), не только по высоте, см. докстринг AVATAR_HEIGHT_SCALE_MIN.
+    const avatarImageSizeCompact = Math.round(avatarSizeCompact * avatarHeightScale);
     const avatarFrameSizeCompact = useMemo(
-        () => (sizeScale === 1 ? AVATAR_FRAME_SIZE_COMPACT : { width: avatarSizeCompact, height: avatarSizeCompact }),
-        [sizeScale, avatarSizeCompact],
+        () => ({ width: avatarSizeCompact, height: avatarFrameHeightCompact }),
+        [avatarSizeCompact, avatarFrameHeightCompact],
     );
     const diceFrameSizeCompact = useMemo(
         () => (sizeScale === 1 ? DICE_FRAME_SIZE_COMPACT : { width: diceSizeCompact, height: diceSizeCompact }),
         [sizeScale, diceSizeCompact],
     );
+    // Крупные жетоны столбиком — ТОЛЬКО когда аватарка уже выросла до своего
+    // потолка (AVATAR_HEIGHT_SCALE_MAX, см. приоритет выше) И после этого
+    // остаётся ЕЩЁ как минимум DAMAGE_ROW_BIG_EXTRA_H свободного места (см.
+    // её докстринг) — не просто "не ужалось", а "есть реальный запас СВЕРХ
+    // уже максимально выросшей аватарки".
+    const canShowBigDamage =
+        sizeScale === 1 &&
+        avatarGrowUsed >= avatarGrowBudget &&
+        extraHAfterAvatar >= DAMAGE_ROW_BIG_EXTRA_H;
     const display = RUNNER_DISPLAY[runner.type];
     // Жетоны повреждения — считаются НАПРЯМУЮ от runner.status (2026-09-24, по
     // прямому запросу пользователя), не от накопленной истории событий:
@@ -407,7 +495,6 @@ function RunnerCard({
     // runner.dice уже 0 (не null), moveDiceValue тоже будет 0 — без явного
     // приоритета накат-значение было бы не видно.
     const diceValue = rollDiceValue ?? moveDiceValue;
-    const rollsAvailable = Math.max(0, 2 - (runner.rollMoves ?? 0));
 
     // Иконка жетона (горизонтальная раскладка) — родной DAMAGE_ICON_SIZE,
     // если помещается; иначе жмётся под реально измеренную ширину infoCol
@@ -430,7 +517,6 @@ function RunnerCard({
             style={[
                 compact ? styles.cardCompact : styles.card,
                 compact && cardHeight != null && { height: cardHeight },
-                destroyed && styles.cardDestroyed,
             ]}
             onPress={handlePress}
             activeOpacity={0.8}
@@ -448,6 +534,14 @@ function RunnerCard({
             hitSlop={compact ? { top: 6, bottom: 6, left: 2, right: 2 } : undefined}
         >
             <PersonPanel size={cardSize} />
+            {/* NeonGlow (2026-10-11, по прямому запросу пользователя — "для
+                personPanel не вижу свечения") — тот же приём, что уже стоит
+                у dATile/баннера хода/кнопок в GameBoardScreen.js, см.
+                докстринг компонента. radius — NOTCH_RADIUS, тот же
+                константный радиус, что PersonPanel тут и так уже использует
+                (cardSize рисуется БЕЗ targetCornerSize, дефолтный
+                FRAME_SCALE). */}
+            <NeonGlow size={cardSize} radius={NOTCH_RADIUS} />
             {/* borderRadius — та же величина, что у PersonPanel.js#styles.wrap
                 (радиус, по которому та обрезает свою заливку под скруглённой
                 декоративной дугой) — та же причина/фикс, что и в
@@ -462,23 +556,52 @@ function RunnerCard({
                 // по центру → имя (скрыто на Android) → жетоны в ряд → слот
                 // кубика снизу.
                 <View style={styles.colInner}>
-                    <View style={[styles.avatarBoxCompact, sizeScale !== 1 && { width: avatarSizeCompact, height: avatarSizeCompact }]}>
+                    <View style={[styles.avatarBoxCompact, { width: avatarSizeCompact, height: avatarFrameHeightCompact }]}>
                         <FramePanel
                             size={avatarFrameSizeCompact}
                             backgroundSource={FRAME_PANEL_BACKGROUND}
                             backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
                             backgroundTileSize={60}
                         />
-                        <RunnerToken
-                            type={runner.type}
-                            status={runner.status}
-                            avatar
-                            color={color}
-                            size={avatarSizeCompact}
-                            imageScale={0.85}
-                            selected={active}
-                            showRing={false}
+                        {/* Уничтоженный бегун — аватарка пустая (см. докстринг
+                            файла/destroyed выше, 2026-10-10 — по прямому
+                            запросу пользователя ЗАМЕНИЛО попытки затемнения
+                            всей карточки, рамка остаётся полностью
+                            непрозрачной, пропадает только сам бегун). */}
+                        {!destroyed && (
+                            <RunnerToken
+                                type={runner.type}
+                                status={runner.status}
+                                avatar
+                                color={color}
+                                size={avatarImageSizeCompact}
+                                imageScale={0.85}
+                                showRing={false}
+                            />
+                        )}
+                        {/* Декоративная кайма ЕЩЁ РАЗ, ПОВЕРХ персонажа
+                            (2026-10-11, по прямому запросу пользователя —
+                            персонаж растёт пропорционально и может уткнуться
+                            в край бокса, скрыв тонкие грани/уголки рамки под
+                            собой) — `showBackground={false}` (новый проп,
+                            см. FramePanel.js докстринг) рисует ТОЛЬКО кайму,
+                            без фона — тот уже дала ПЕРВАЯ FramePanel выше,
+                            под персонажем, дублировать фон тут не нужно. */}
+                        <FramePanel
+                            size={avatarFrameSizeCompact}
+                            backgroundSource={FRAME_PANEL_BACKGROUND}
+                            backgroundCornerSource={FRAME_PANEL_BACKGROUND_CORNER}
+                            backgroundTileSize={60}
+                            showBackground={false}
                         />
+                        {/* `selected` (RunnerToken) НЕ передаём — это тот же
+                            вращающийся зелёный пунктирный halo, что и у
+                            выбранного бегуна на доске (см. её докстринг,
+                            HALO_SCALE/HALO_SPIN_MS), 2026-10-11 убран
+                            с карточки по прямому запросу пользователя —
+                            activeRing (цветная рамка карточки) И tintColor
+                            (подсветка) этажом выше остаются, их уже
+                            достаточно, чтобы показать выбор на панели. */}
                     </View>
                     {/* Имя убрано из compact-раскладки ЦЕЛИКОМ (2026-10-01) —
                         раньше пряталось только `!isAndroid`, из-за чего веб на
@@ -487,51 +610,41 @@ function RunnerCard({
                         от платформы, а не от реально доступного места, живая
                         жалоба пользователя. compact сам по себе уже означает
                         "тесно", независимо от платформы. */}
-                    <View style={styles.damageRowCompact}>
+                    <View style={canShowBigDamage ? styles.damageRowCompactBig : styles.damageRowCompact}>
                         {[0, 1].map((i) => (
                             <Image
                                 key={i}
                                 source={slots[i] ? DAMAGE_SLOT_ICONS.filled : DAMAGE_SLOT_ICONS.empty}
                                 resizeMode="contain"
                                 style={[
-                                    styles.damageIconCompact,
-                                    sizeScale !== 1 && { width: damageIconSizeCompact, height: damageIconSizeCompact },
-                                    i === 1 && styles.damageIconCompactGap,
+                                    canShowBigDamage ? styles.damageIconCompactBig : styles.damageIconCompact,
+                                    !canShowBigDamage && sizeScale !== 1 && { width: damageIconSizeCompact, height: damageIconSizeCompact },
+                                    i === 1 && (canShowBigDamage ? styles.damageIconCompactBigGap : styles.damageIconCompactGap),
                                 ]}
                             />
                         ))}
                     </View>
-                    {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой НАД слотом кубика
-                        хода (2026-09-20, по прямому запросу пользователя "не
-                        кружочком рядом с фреймом кубика, а отдельно" — раньше
-                        был уголком-бейджем ПОВЕРХ diceBoxCompact; 2026-09-30,
-                        по прямому запросу пользователя, переставлен ВЫШЕ
-                        самого фрейма, было под ним). "Накаты:N" вместо "×N" —
-                        тоже 2026-09-30, для ясности подписи. */}
-                    {/* "Н:N" вместо "Накаты:N" (2026-10-01, живая жалоба —
-                        не помещалось в одну строку на сжатом sizeScale). */}
-                    <Text style={styles.rollCountCompact} noGlobalTint>Н:{rollsAvailable}</Text>
+                    {/* Гибкий спейсер (2026-10-11, по прямому запросу
+                        пользователя — "фрейм хода должен быть ВСЕГДА прибит
+                        к низу панели") — поглощает любой излишек высоты,
+                        который приоритетный рост аватарки/жетонов выше НЕ
+                        расходует целиком (например, запаса не хватает на
+                        полный шаг canShowBigDamage, но он всё равно есть) —
+                        без спейсера такой остаток оставался бы пустотой
+                        МЕЖДУ жетонами и кубиком, а не гарантированно внизу
+                        под кубиком. flex:1 — у ОСТАЛЬНЫХ детей colInner
+                        высота natural (не flex), только этот элемент тянется. */}
+                    <View style={styles.compactSpacer} />
+                    {/* Счётчик накатов убран целиком (2026-10-10, по прямому
+                        запросу пользователя). */}
                     <View style={[styles.diceBoxCompact, sizeScale !== 1 && { width: diceSizeCompact, height: diceSizeCompact }]}>
                         <FramePanel size={diceFrameSizeCompact} />
                         <Text style={styles.diceValueCompact} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
                     </View>
-                    {/* Бонус хода — см. roadBonus проп/докстринг файла и
-                        ROAD_BONUS_SIZE_COMPACT выше — ВСЕГДА видимый квадрат-
-                        фрейм (аналогично слоту кубика хода), не голая строка:
-                        прочерк вместо значения, когда бонуса сейчас нет,
-                        чтобы карточка не меняла высоту от его наличия.
-                        sizeScale — тот же diceSizeCompact/diceFrameSizeCompact
-                        (2026-10-01, ROAD_BONUS_SIZE_COMPACT === DICE_SIZE_COMPACT,
-                        та же база, тот же масштаб) — без этого при сжатии
-                        контента (см. NATURAL_CONTENT_HEIGHT_COMPACT) кубик
-                        уменьшался бы, а бонус дороги рядом — нет, визуально
-                        расходились бы в размере. */}
-                    <View style={[styles.roadBonusBoxCompact, sizeScale !== 1 && { width: diceSizeCompact, height: diceSizeCompact }]}>
-                        <FramePanel size={diceFrameSizeCompact} />
-                        <Text style={styles.roadBonusValueCompact} noGlobalTint>
-                            {roadBonus != null ? `+${roadBonus}` : '—'}
-                        </Text>
-                    </View>
+                    {/* Бонус хода — убран из compact-карточки целиком
+                        (2026-10-11, по прямому запросу пользователя "удали
+                        бонус, фрейм не нужен"), см. докстринг у
+                        AVATAR_HEIGHT_SCALE_MIN выше. */}
                 </View>
             ) : (
                 // Горизонтальная раскладка (альбомная) — аватар слева, имя+
@@ -560,16 +673,18 @@ function RunnerCard({
                             "contain" — картинка не будет искажена (если ассет не
                             квадратный, letterbox по короткой стороне). imageScale=1 (в
                             точности размер рамки) → уменьшили на ~10% (0.9) → ещё на 5% (0.85). */}
-                        <RunnerToken
-                            type={runner.type}
-                            status={runner.status}
-                            avatar
-                            color={color}
-                            size={AVATAR_SIZE}
-                            imageScale={0.85}
-                            selected={active}
-                            showRing={false}
-                        />
+                        {!destroyed && (
+                            <RunnerToken
+                                type={runner.type}
+                                status={runner.status}
+                                avatar
+                                color={color}
+                                size={AVATAR_SIZE}
+                                imageScale={0.85}
+                                selected={active}
+                                showRing={false}
+                            />
+                        )}
                     </View>
 
                     <View
@@ -612,14 +727,8 @@ function RunnerCard({
                             <FramePanel size={DICE_FRAME_SIZE} />
                             <Text style={styles.diceValue} noGlobalTint>{diceValue != null ? diceValue : '—'}</Text>
                         </View>
-                        {/* Счётчик накатов — ОТДЕЛЬНОЙ строкой ПОД слотом кубика
-                            (2026-09-20, по прямому запросу пользователя "не
-                            кружочком рядом с фреймом кубика, а отдельно") —
-                            раньше был уголком-бейджем ПОВЕРХ diceBox (тот
-                            приём держал diceCol в пределах высоты аватара —
-                            теперь колонка кубика немного выше него, пользователь
-                            явно попросил переезд, это осознанный компромисс). */}
-                        <Text style={styles.rollCount} noGlobalTint>×{rollsAvailable}</Text>
+                        {/* Счётчик накатов убран целиком (2026-10-10, по прямому
+                            запросу пользователя). */}
                         {/* Бонус хода — см. roadBonus проп/докстринг файла — ТОЛЬКО
                             когда данные реально пришли с бэка, иначе пусто. */}
                         {roadBonus != null && (
@@ -668,7 +777,6 @@ const styles = StyleSheet.create({
         // элементы панели.
         overflow: 'hidden',
     },
-    cardDestroyed: { opacity: 0.45 },
     // borderRadius — та же величина, что у PersonPanel.js#styles.wrap
     // (NOTCH_RADIUS, см. её докстринг 2026-09-26 — глубина диагональной
     // фаски декоративного уголка, не весь размер его бокса).
@@ -693,40 +801,57 @@ const styles = StyleSheet.create({
     diceCol: { alignItems: 'center', justifyContent: 'center', width: DICE_SIZE + spacing.xs },
     diceBox: { width: DICE_SIZE, height: DICE_SIZE, alignItems: 'center', justifyContent: 'center' },
     diceValue: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
-    // Счётчик накатов — отдельной строкой ПОД слотом кубика (см. коммент у
-    // места рендера), не бейджем поверх него.
-    rollCount: { color: colors.textOnDarkSecondary, fontWeight: 'bold', fontSize: 11, marginTop: 2 },
     // Бонус хода — зелёный (colors.success), тот же язык, что уже красит
-    // кнопку "Бонус +N" в баннере хода (GameBoardScreen.js) — отличает его
-    // от нейтрального накат-счётчика рядом.
+    // кнопку "Бонус +N" в баннере хода (GameBoardScreen.js).
     roadBonus: { color: colors.success, fontWeight: 'bold', fontSize: 11, marginTop: 1 },
 
     // --- Вертикальная раскладка (compact) ---
-    // height:'100%'+justifyContent:'center' (2026-10-01) — та же пара, что
-    // уже даёт центрирование у ReaperCard.js#styles.row: карточка теперь
-    // может быть выше своего натурального контента (см. cardCompact#
-    // height:'100%' выше) — сам стек (аватар→жетоны→кубик→бонус дороги)
-    // остаётся натурального размера и центрируется по вертикали в
-    // получившемся боксе, а не липнет к верху с пустотой снизу.
-    colInner: { alignItems: 'center', justifyContent: 'center', width: '100%', height: '100%' },
-    avatarBoxCompact: { width: AVATAR_SIZE_COMPACT, height: AVATAR_SIZE_COMPACT, alignItems: 'center', justifyContent: 'flex-end' },
-    // marginTop у всей цепочки ниже (damageRow/diceBox/roadBonusBox) — ужата
-    // 2026-09-30 (см. докстринг у cardCompact#paddingVertical выше) под
-    // выросший на весь размер кубика roadBonus-квадрат. `nameCompact` (имя
+    // justifyContent:'flex-start' (2026-10-10, по прямому запросу
+    // пользователя — "группу элементов к верху"; история до этого — 'center',
+    // см. CLAUDE_DONE_TASKS.md). С 2026-10-11 кубик хода ВСЕГДА прижат к
+    // НИЗУ отдельно, через `styles.compactSpacer` (flex:1) МЕЖДУ жетонами и
+    // кубиком (см. место рендера) — justifyContent тут уже почти не играет
+    // роли (spacer сам поглощает весь остаток), оставлен как есть для ясности
+    // поведения, если spacer когда-нибудь уберут.
+    colInner: { alignItems: 'center', justifyContent: 'flex-start', width: '100%', height: '100%' },
+    // Гибкий распорок между жетонами и кубиком хода (2026-10-11, см.
+    // докстринг у места рендера) — единственный flex-ребёнок colInner,
+    // поглощает ЛЮБОЙ излишек высоты коробки, не израсходованный приоритетным
+    // ростом аватарки/жетонов выше, гарантируя, что кубик хода всегда у
+    // самого низа панели, а не "где-то после выросшего контента".
+    compactSpacer: { flex: 1 },
+    // width/height — ВСЕГДА переопределены инлайн в месте рендера
+    // (avatarSizeCompact/avatarFrameHeightCompact, адаптивные — см.
+    // докстринг AVATAR_HEIGHT_SCALE_MIN/MAX), тут только безопасный
+    // fallback на случай, если инлайн-override почему-то не применится.
+    // justifyContent:'flex-end' прижимает картинку (RunnerToken, которая
+    // при росте становится заметно крупнее самого бокса что по ширине, что
+    // отчасти по высоте) к НИЗУ фрейма — "ноги на месте". overflow:'hidden'
+    // (2026-10-11, по прямому запросу пользователя — "чтобы невмещающиеся
+    // части не были видны на фрейме") — ЛОКАЛЬНЫЙ клип ИМЕННО этого бокса,
+    // не тот же самый `overflow:'hidden'`, что у styles.cardCompact (вся
+    // карточка, см. её комментарий) — тот трогать не просили, этот
+    // обрезает персонажа ровно по границе ЕГО фрейма.
+    avatarBoxCompact: {
+        width: AVATAR_SIZE_COMPACT,
+        height: AVATAR_SIZE_COMPACT,
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        overflow: 'hidden',
+    },
+    // marginTop у цепочки ниже (damageRow/diceBox) — ужата 2026-09-30 (см.
+    // докстринг у cardCompact#paddingVertical выше). `nameCompact` (имя
     // бегуна) убран как стиль вместе с текстом, который его использовал —
     // см. 2026-10-01 в месте рендера.
     damageRowCompact: { flexDirection: 'row', marginTop: 1 },
     damageIconCompact: { width: DAMAGE_ICON_SIZE_COMPACT, height: DAMAGE_ICON_SIZE_COMPACT },
     damageIconCompactGap: { marginLeft: 4 },
+    // Крупный вариант (canShowBigDamage, см. докстринг в компоненте) —
+    // столбиком, не в ряд; размер — DAMAGE_ICON_SIZE (как у landscape-
+    // раскладки), не свой отдельный.
+    damageRowCompactBig: { flexDirection: 'column', marginTop: 1 },
+    damageIconCompactBig: { width: DAMAGE_ICON_SIZE, height: DAMAGE_ICON_SIZE },
+    damageIconCompactBigGap: { marginTop: 4 },
     diceBoxCompact: { width: DICE_SIZE_COMPACT, height: DICE_SIZE_COMPACT, alignItems: 'center', justifyContent: 'center', marginTop: 1 },
     diceValueCompact: { color: colors.textOnDark, fontWeight: 'bold', fontSize: 12 },
-    rollCountCompact: { color: colors.textOnDarkSecondary, fontWeight: 'bold', fontSize: 9, marginTop: 0 },
-    roadBonusBoxCompact: {
-        width: ROAD_BONUS_SIZE_COMPACT,
-        height: ROAD_BONUS_SIZE_COMPACT,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginTop: 0,
-    },
-    roadBonusValueCompact: { color: colors.success, fontWeight: 'bold', fontSize: 10 },
 });
