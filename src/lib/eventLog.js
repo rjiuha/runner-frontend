@@ -37,7 +37,8 @@ export function describeEvent(e) {
         case 'game_track_updated':
             return `Новый фрагмент трассы №${e.trackNumber}${e.withFinish ? ' (это финишный!)' : ''}`;
         case 'game_cell_updated':
-            return `Клетка (сегм.${e.cell?.segment}, ${e.cell?.row}/${e.cell?.column}) → ${e.cell?.type}`;
+            // 2026-10-14: бэк переименовал row/column → positionX/positionY.
+            return `Клетка (сегм.${e.cell?.segment}, ${e.cell?.positionX}/${e.cell?.positionY}) → ${e.cell?.type}`;
         case 'game_finish':
             return `Игра завершена, статус: ${e.status}`;
         case 'player_out':
@@ -69,21 +70,29 @@ export function describeEvent(e) {
         case 'ability_heal':
             return `Лечение: бегун ${e.runner?.id} → ${e.runner?.status}`;
         case 'ability_reaper':
+            // 2026-10-14: бэк переименовал attack → attackDirection.
             return `Жнец выставлен: сегм.${e.reaper?.segment}, (${e.reaper?.positionX}/${e.reaper?.positionY})`
-                + (e.attack ? `, атака ${dir(e.attack)}` : '');
+                + (e.attackDirection ? `, атака ${dir(e.attackDirection)}` : '');
         case 'runner_save':
             return `Бегун ${e.runnerId?.id} (${e.runnerId?.type}) → сегм.${e.runnerId?.segment}, `
                 + `(${e.runnerId?.positionX}/${e.runnerId?.positionY}), очков ${e.runnerId?.dice ?? e.runnerId?.rollDice ?? '—'}`;
         case 'runner_damage':
             return `Бегун ${e.runnerId?.id} повреждён → статус ${e.runnerId?.status}`;
         case 'runner_destroy':
-            return `Бегун ${e.runnerId?.id} уничтожен` + (e.reason ? ` (причина: ${e.reason})` : '');
+            // 2026-10-14: reason теперь всегда DestroyReason-enum ('terrain' вместо
+            // прежних прямых 'fire'/'acid'/'wall'/'edge') — конкретная клетка, если
+            // причина terrain, лежит отдельно в terrainType.
+            return `Бегун ${e.runnerId?.id} уничтожен`
+                + (e.reason ? ` (причина: ${e.reason}${e.terrainType ? `/${e.terrainType}` : ''})` : '');
         case 'runner_ball':
             return `Появился шар (бегун ${e.runnerId?.id})`;
         case 'danger':
             return `Опасность: ${e.danger}`;
         case 'collision':
-            return `Столкновение: ${e.collision}, направление ${dir(e.direction)}`;
+            // 2026-10-14: бэк заменил enum collision (LOWER/TOP) + сырые runnerId/
+            // otherRunnerId на явные flyingRunnerId/stayingRunnerId/resolution.
+            return `Столкновение: летит ${e.flyingRunnerId}, направление ${dir(e.direction)}`
+                + (e.resolution === 'pending' ? ` — ждём решения игрока ${e.decisionPlayerId}` : '');
         case 'damage':
             return `Урон: ${e.damage}`;
         case 'ricochet':
@@ -95,7 +104,8 @@ export function describeEvent(e) {
         case 'anomaly':
             return `Аномалия → ${dir(e.direction)}`;
         case 'attack':
-            return `Выстрел (${e.attack}) по бегуну ${e.target}: ${e.hit ? 'попал' : 'промах'}`;
+            // 2026-10-14: бэк переименовал target → targetId.
+            return `Выстрел (${e.attack}) по бегуну ${e.targetId}: ${e.hit ? 'попал' : 'промах'}`;
         // 'ghost_pass' убран 2026-09-26 — такого события на бэке нет и не было
         // (см. lib/ghostPairs.js за полным разбором), реальное имя — ниже.
         case 'ghost_consumed':

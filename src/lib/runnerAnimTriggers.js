@@ -4,14 +4,18 @@ import { forwardNeighbors, neighborPosition } from './hexDirection';
 import { RUNNER_TYPES } from '../constants/GameConstants';
 
 /**
- * 2026-09-18: бэк добавил явное поле `reason` к `runner_destroy`
- * (RunnerDestroyEvent — `wall`, `edge`, `fire`, `acid`, `damage`, `reaper`,
- * `track_shift`, `unclaimed`, см. README backend'а) — терминальная поза
- * гибели на клетке fire/acid теперь берётся НАПРЯМУЮ из него, а не гадается
- * по типу клетки под последней известной позицией. Экспортируется —
- * GameBoardScreen.js использует ТУ ЖЕ проверку для гейта pendingDeathRunnerIds.
+ * 2026-09-18: бэк добавил явное поле `reason` к `runner_destroy` — терминальная
+ * поза гибели на клетке fire/acid берётся НАПРЯМУЮ из него, а не гадается по
+ * типу клетки под последней известной позицией.
+ *
+ * 2026-10-14: бэк ввёл `DestroyReason` enum — `reason` теперь ВСЕГДА один из
+ * `damage`/`reaper`/`terrain`/`surrender`/`unclaimed`/`track_shift` (раньше тип
+ * местности — `wall`/`edge`/`fire`/`acid` — лежал прямо в `reason`), а сама
+ * клетка смерти — в НОВОМ отдельном поле `terrainType`, которое заполнено
+ * только при `reason === 'terrain'`. Экспортируется — GameBoardScreen.js
+ * использует ту же проверку для гейта pendingDeathRunnerIds.
  */
-export const DEATH_KIND_BY_REASON = { fire: 'burn', acid: 'acid' };
+export const DEATH_KIND_BY_TERRAIN = { fire: 'burn', acid: 'acid' };
 
 // Ловушка Жнеца (см. 'bomb' ниже) — жертва проигрывает 'destroyed' ТОЛЬКО
 // ПОСЛЕ того, как Жнец доиграет СВОЮ 'bomb'-анимацию (по прямому запросу
@@ -66,8 +70,10 @@ const REAPER_TRACK_SHIFT_FLY_OFF_ROWS = 10;
  *
  * **Пара при коллизии (кто "победитель", кого ждать перед fly)** — раньше
  * реконструировалась эвристикой `pushedFromCandidate` (кто ещё стоял на
- * старой клетке). Теперь `CollisionEvent` несёт `runnerId`/`otherRunnerId`
- * явно (см. `2_backend_todo.md`, п.2.3) — GameBoardScreen.js передаёт их
+ * старой клетке). Теперь `CollisionEvent` несёт явные роли — с 2026-10-14
+ * это `flyingRunnerId`/`stayingRunnerId` (были `runnerId`/`otherRunnerId`
+ * до редизайна контракта) — GameBoardScreen.js переводит их в пару
+ * `{runnerId: flyingRunnerId, otherRunnerId: stayingRunnerId}` и передаёт
  * сюда через `animHelpers.collisionPair` (сохраняется на 'collision'-item,
  * потребляется на следующем `runner_save` с `reason:'collision'` В ТОМ ЖЕ
  * бандле). "Победитель" (кого ждать через `onceStepDone`) — просто ДРУГОЙ
@@ -245,10 +251,10 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
         }
 
         // "Смерть" на клетке типа fire/acid — терминальная поза 'burn'/'acid'
-        // ВМЕСТО обычной 'destroyed', причина смерти уже названа в e.reason
-        // (DEATH_KIND_BY_REASON выше).
-        if (e.event === 'runner_destroy' && lastKnownPosition) {
-            const deathKind = DEATH_KIND_BY_REASON[e.reason];
+        // ВМЕСТО обычной 'destroyed'. reason:'terrain' + отдельное поле
+        // e.terrainType (DEATH_KIND_BY_TERRAIN выше, см. её докстринг).
+        if (e.event === 'runner_destroy' && e.reason === 'terrain' && lastKnownPosition) {
+            const deathKind = DEATH_KIND_BY_TERRAIN[e.terrainType];
             if (deathKind) {
                 triggerPatch(deathKind, { toPosition: lastKnownPosition });
                 return;
@@ -285,20 +291,21 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
     if (e.event === 'ability_reaper') {
         // Первая (и единственная) установка Жнеца на трассу — "прилетает"
         // сбоку, из-за края трассы, случайно слева или справа. Если игрок
-        // сразу выстрелил при размещении (e.attack — направление) — вторым
-        // шагом очереди играем 'attack'.
+        // сразу выстрелил при размещении (e.attackDirection — направление,
+        // переименовано бэком из e.attack 2026-10-14) — вторым шагом очереди
+        // играем 'attack'.
         const side = Math.random() < 0.5 ? 'east' : 'west';
         const toPosition = { segment: e.reaper.segment, positionX: e.reaper.positionX, positionY: e.reaper.positionY };
         trigger(e.reaper.id, 'start', { side, toPosition, runnerType: RUNNER_TYPES.REAPER });
 
-        if (e.attack) {
+        if (e.attackDirection) {
             // Жнец не двигается, целится через ту же hex-клетку из СВОЕЙ
             // свежепоставленной позиции — она уже целиком в e.reaper, не
             // нужно смотреть в game-стейт (в отличие от step_shoot ниже,
             // где стрелка нужно ещё найти по id).
-            const target = neighborPosition(e.reaper, e.attack);
+            const target = neighborPosition(e.reaper, e.attackDirection);
             trigger(e.reaper.id, 'attack', {
-                direction: e.attack,
+                direction: e.attackDirection,
                 depthChanged: target ? target.positionX !== e.reaper.positionX : false,
                 targetLaneShifted: target ? target.positionY % 2 === 0 : false,
             });

@@ -37,7 +37,7 @@ import { useBoardScroll } from '../hooks/useBoardScroll';
 import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
-import { handleSequenceItem, DEATH_KIND_BY_REASON } from '../lib/runnerAnimTriggers';
+import { handleSequenceItem, DEATH_KIND_BY_TERRAIN } from '../lib/runnerAnimTriggers';
 import { identifyGhostConsumption } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
@@ -51,7 +51,6 @@ import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import { ROUTES } from '../navigation/routes';
 import {
-    BACKEND_TO_FRONTEND_PLAYER_COLOR,
     BOARD_LAYOUT, GAME_STATUS, MOBILE_FRAME_BLEED,
     PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STATUS, PLAYER_STEP,
     RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
@@ -102,11 +101,23 @@ const BOARD_READY_DELAY_MS = 500;
 // лишнего запаса поверх минимального показа самой позы.
 const COLLISION_ANIM_DELAY_MS = 1400;
 
-// Collision — PHP int-backed enum на бэке (Enum/Collision.php: LOWER=1/TOP=2),
-// json_encode сериализует backed enum напрямую в число (не строку). Нужна
-// collisionFlyingRunnerLabel (см. тело компонента) для формулы TOP→runnerId/
-// LOWER→otherRunnerId, см. её докстринг за разбором StepCollisionService.
-const COLLISION_TOP = 2;
+// 2026-10-15, по прямому запросу пользователя: GameFinishModal не должен
+// показываться, пока доигрывает терминальная поза ПОСЛЕДНЕГО погибшего
+// бегуна И её голосовой комментарий (COMMENT_SOUNDS.destroyed, deathCommentOnStart
+// ниже) — раньше гейт (pendingDeathRunnerIds) снимался РОВНО в момент старта
+// позы, синхронно с запуском комментария, то есть диалог мог появиться, пока
+// комментарий ещё играет. Запас сверх старта терминальной позы — для короткой
+// голосовой реплики достаточно, тот же порядок величины, что у
+// REAPER_BOMB_TO_DESTROYED_DELAY_MS (useRunnerAnimations.js) для похожего
+// случая "дождаться доигрывания короткого клипа".
+const DEATH_FINISH_GATE_SETTLE_MS = 1800;
+
+// 2026-10-14: бэк унифицировал CollisionEvent — вместо enum `collision`
+// (LOWER/TOP) + сырых `runnerId`/`otherRunnerId` теперь явные
+// `flyingRunnerId`/`stayingRunnerId`. Старая формула TOP→runnerId/
+// LOWER→otherRunnerId (найденная чтением StepCollisionService, см.
+// историю в CLAUDE_DONE_TASKS.md 2026-10-11/10-12) больше не нужна —
+// "кто улетит" приходит готовым полем.
 
 // Высота баннера "Твой ход"/столкновение/сдвиг трассы — ЗАФИКСИРОВАНА под 3
 // строки (заголовок + подсказка + опциональная вторая строка вроде "Бросок:
@@ -501,8 +512,10 @@ export default function GameBoardScreen({ route, navigation }) {
     // бэку, 2026-09-26) — тот код был мёртвым, убран при переходе на
     // бандлинг событий (2026-09-27, см. reduceAndLog).
     const gameStartSoundPlayedRef = useRef(false);
-    // Звук победы (2026-10-14) — тот же приём "сыграть РОВНО один раз", что у
-    // gameStartSoundPlayedRef выше, см. эффект рядом с winnerPlayer ниже.
+    // Звук финала (victory/lost, 2026-10-14/2026-10-15) — тот же приём
+    // "сыграть РОВНО один раз", что у gameStartSoundPlayedRef выше, общий
+    // гейт на ОБА звука (локальный зритель слышит либо один, либо другой,
+    // никогда оба) — см. эффект рядом с hasDeathAnimPlaying.
     const gameFinishSoundPlayedRef = useRef(false);
     const playOneShot = useCallback((player, source) => {
         if (!source) return;
@@ -581,19 +594,28 @@ export default function GameBoardScreen({ route, navigation }) {
             // услышал бы этот эффект.
             const suppressAnim = kind === 'start' && Date.now() < reaperStartSkipUntilRef.current;
             // Гейт для GameFinishModal (см. hasDeathAnimPlaying/
-            // pendingDeathRunnerIds выше) — как только acid/burn-поза
-            // РЕАЛЬНО начинает играть (не когда её только поставили в
-            // очередь, см. useRunnerAnimations), снимаем runnerId из
-            // pendingDeathRunnerIds — дальше hasDeathAnimPlaying отражает её
-            // через runnerAnim.anims сам.
-            const deathOnStart = (kind === 'acid' || kind === 'burn')
+            // pendingDeathRunnerIds выше) — как только терминальная поза
+            // (acid/burn/destroyed) РЕАЛЬНО начинает играть (не когда её
+            // только поставили в очередь, см. useRunnerAnimations), снимаем
+            // runnerId из pendingDeathRunnerIds — дальше hasDeathAnimPlaying
+            // отражает её через runnerAnim.anims сам. 2026-10-15: раньше было
+            // ТОЛЬКО acid/burn (обычная 'destroyed' вообще не гейтилась —
+            // диалог мог перекрыть её на лету) и снималось МГНОВЕННО вместе
+            // со стартом голосового комментария (deathCommentOnStart ниже,
+            // та же combinedOnStart) — диалог мог появиться, пока комментарий
+            // ещё играет. Теперь: 'destroyed' тоже гейтит, и снятие отложено
+            // на DEATH_FINISH_GATE_SETTLE_MS сверх старта позы — запас на
+            // комментарий.
+            const deathOnStart = (kind === 'acid' || kind === 'burn' || kind === 'destroyed')
                 ? () => {
-                    setPendingDeathRunnerIds((prev) => {
-                        if (!prev.has(runnerId)) return prev;
-                        const next = new Set(prev);
-                        next.delete(runnerId);
-                        return next;
-                    });
+                    setTimeout(() => {
+                        setPendingDeathRunnerIds((prev) => {
+                            if (!prev.has(runnerId)) return prev;
+                            const next = new Set(prev);
+                            next.delete(runnerId);
+                            return next;
+                        });
+                    }, DEATH_FINISH_GATE_SETTLE_MS);
                 }
                 : undefined;
             // Снятие заморозки клетки (см. heldCells/releaseHeldCellOnStart
@@ -632,11 +654,12 @@ export default function GameBoardScreen({ route, navigation }) {
             const deathCommentOnStart = (kind === 'destroyed' || kind === 'acid' || kind === 'burn')
                 ? () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed))
                 : undefined;
-            // Фоновый эффект гибели на acid/burn-клетке (2026-10-14, по
-            // прямому запросу пользователя) — синхронно с deathCommentOnStart
-            // выше, но ТОЛЬКО для этих двух kind (не для destroyed по другим
-            // причинам — выстрел/ловушка Жнеца и т.п., там он неуместен).
-            const radiationOnStart = (kind === 'acid' || kind === 'burn')
+            // Фоновый эффект гибели на acid-клетке (2026-10-14, по прямому
+            // запросу пользователя) — синхронно с deathCommentOnStart выше.
+            // 2026-10-15, живой тест: изначально был заведён и на 'burn' тоже
+            // — живая проверка показала, что звук радиации на огне неуместен
+            // (это звук именно кислотного/радиоактивного поражения), убран.
+            const radiationOnStart = kind === 'acid'
                 ? () => playOneShot(sfxSound, RADIATION_SOUND)
                 : undefined;
             // Voice-реплика бегуна (см. pendingVoiceLineRef выше) — поставлена
@@ -705,15 +728,11 @@ export default function GameBoardScreen({ route, navigation }) {
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
     // пользователя, 2026-09-10: баннер "Использовать/Перебросить" не
     // показывал, ЧТО именно произойдёт при "Использовать", решение
-    // принималось вслепую. `CollisionEvent` несёт `{collision, direction,
-    // runnerId, otherRunnerId}` — все четыре сохраняются и читаются (см.
-    // collisionFlyingRunnerLabel в теле компонента за точной формулой
-    // TOP/LOWER→runnerId/otherRunnerId, найденной чтением
-    // StepCollisionService на бэке, read-only). Первая версия этой формулы
-    // (2026-10-11, "не мой участник отлетит") была НЕВЕРНОЙ — живая жалоба
-    // пользователя поймала конкретный случай (бэк показал Атлета, отлетел
-    // Танк) — исправлена в тот же день на формулу, основанную на
-    // `collision`, не на владельце.
+    // принималось вслепую. 2026-10-14: бэк унифицировал `CollisionEvent` —
+    // несёт готовые `flyingRunnerId`/`stayingRunnerId`/`direction` (+`from`/
+    // `to`/`resolution`/`decisionPlayerId`, из которых фронт пока использует
+    // только `direction` и id участников) — храним их 1-в-1, без формулы
+    // TOP/LOWER (история формулы — CLAUDE_DONE_TASKS.md, 2026-10-11/10-12).
     const [pendingCollisionRoll, setPendingCollisionRoll] = useState(null);
     // Восстановление из персистентного game.pendingCollision — см. эффект
     // ПОСЛЕ объявления `game` (useMercure ниже), а не тут: `game` ещё не
@@ -738,18 +757,28 @@ export default function GameBoardScreen({ route, navigation }) {
                 pushLog(e);
 
                 if (e.event === 'collision') {
-                    pendingCollisionPair = { runnerId: e.runnerId, otherRunnerId: e.otherRunnerId };
+                    // lib/runnerAnimTriggers.js#handleSequenceItem ждёт пару
+                    // в старых именах runnerId/otherRunnerId — тут просто
+                    // переводим новые явные поля бэка в эту форму.
+                    pendingCollisionPair = { runnerId: e.flyingRunnerId, otherRunnerId: e.stayingRunnerId };
                 }
 
                 // Детекция ДО handleSequenceItem (см. докстринг у
                 // pendingDeathRunnerIds выше) — порядок важен: если очередь
-                // анимаций у этого бегуна сейчас пуста, acid/burn стартует
-                // СИНХРОННО прямо внутри вызова ниже (advanceQueue зовёт
-                // onStart сразу же), и deathOnStart уже успеет убрать runnerId
-                // из этого Set к моменту, когда управление сюда вернётся —
-                // если добавлять ПОСЛЕ вызова, эта ранняя отписка произошла
-                // бы РАНЬШЕ подписки, и флаг завис бы навсегда.
-                if (e.event === 'runner_destroy' && DEATH_KIND_BY_REASON[e.reason]) {
+                // анимаций у этого бегуна сейчас пуста, терминальная поза
+                // стартует СИНХРОННО прямо внутри вызова ниже (advanceQueue
+                // зовёт onStart сразу же), и deathOnStart уже успеет
+                // (с задержкой DEATH_FINISH_GATE_SETTLE_MS) убрать runnerId
+                // из этого Set — если добавлять ПОСЛЕ вызова, эта подписка
+                // случилась бы позже самого вызова onStart. 2026-10-15:
+                // раньше гейтилась ТОЛЬКО terrain-смерть (acid/burn) —
+                // расширено на ЛЮБУЮ настоящую гибель (обычный 'destroyed' от
+                // урона/ловушки тоже должен держать диалог). Жнец исключён —
+                // для него `runner_destroy` означает "вернулся в руку"
+                // (триггерит 'fly', не терминальную позу, см.
+                // lib/runnerAnimTriggers.js) — deathOnStart для него НИКОГДА
+                // не вызовется, добавление навсегда зависло бы в Set.
+                if (e.event === 'runner_destroy' && e.runnerId?.type !== RUNNER_TYPES.REAPER) {
                     setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
                 }
                 handleSequenceItem(current, e, triggerWithSound, {
@@ -771,7 +800,8 @@ export default function GameBoardScreen({ route, navigation }) {
                 // снимок ЭТОГО шага цепочки, сам редьюсер применится строкой
                 // ниже). cellId — тот же формат, что и BoardGrid/lib/board.
                 if (e.event === 'game_cell_updated' && e.cell) {
-                    const { segment, row: positionX, column: positionY } = e.cell;
+                    // 2026-10-14: бэк переименовал row/column → positionX/positionY (унификация Cell).
+                    const { segment, positionX, positionY } = e.cell;
                     const cellId = cellKey({ segment, positionX, positionY });
                     // См. minePendingRef ниже — если непосредственно ПЕРЕД
                     // этим вскрытием (в ЭТОЙ ЖЕ цепочке) пришёл транзиент
@@ -819,11 +849,19 @@ export default function GameBoardScreen({ route, navigation }) {
                 }
                 // Voice-реплика — ставится в очередь (pendingVoiceLineRef), как
                 // только для бегуна РЕАЛЬНО появляются зелёные клетки хода (шаг
-                // игрока становится MOVE), но проигрывается НЕ тут — см.
-                // triggerWithSound#voiceLineOnStart, 2026-10-12, по прямому
-                // запросу пользователя: раньше звучала сразу в этот момент,
-                // ДО фактической постановки/хода бегуна, что при выходе из
-                // резерва воспринималось как "звук раньше анимации". Диффим
+                // игрока становится MOVE). 2026-10-12 (по прямому запросу
+                // пользователя): раньше звучала сразу в этот момент, ДО
+                // фактической постановки/хода бегуна — при ПЕРВОМ выходе из
+                // резерва (сам 'start' происходит ВНУТРИ последующего MOVE-
+                // действия, runner.segment тут ещё null) это читалось как
+                // "звук раньше анимации" → отложили до triggerWithSound#
+                // voiceLineOnStart (играет на onStart реальной 'start'-позы).
+                // 2026-10-15 (живой тест, уточнение пользователя): это
+                // откладывание нужно ТОЛЬКО для первого выхода — на следующих
+                // раундах бегун УЖЕ стоит на трассе (`runner.segment != null`
+                // здесь, в момент самого перехода SELECT→MOVE, задолго до
+                // следующего реального шага), и реплика должна звучать сразу
+                // на подтверждении выбора, не ждать анимацию хода. Диффим
                 // player.step ДО/ПОСЛЕ применения ЭТОГО шага цепочки. Для
                 // ЛЮБОГО игрока — все клиенты партии слышат один и тот же
                 // выбор (реплика выбирается тут же, на этом клиенте, детерминизм
@@ -833,7 +871,14 @@ export default function GameBoardScreen({ route, navigation }) {
                     if (player.step === PLAYER_STEP.MOVE && prevPlayer?.step !== PLAYER_STEP.MOVE && player.activeRunner != null) {
                         const runner = nextState.runners?.find((r) => String(r.id) === String(player.activeRunner));
                         const source = runner ? pickActiveSoundSource(runner.type, runner.status) : null;
-                        if (source) pendingVoiceLineRef.current[runner.id] = source;
+                        if (!source) continue;
+                        if (runner.segment != null) {
+                            // Уже на трассе — не первый выход, играем сразу.
+                            playOneShot(voiceSound, source);
+                        } else {
+                            // Ещё в резерве — отложить до onStart самой 'start'-позы.
+                            pendingVoiceLineRef.current[runner.id] = source;
+                        }
                     }
                 }
 
@@ -844,13 +889,11 @@ export default function GameBoardScreen({ route, navigation }) {
                     minePendingRef.current = true;
                 }
                 if (e.event === 'collision') {
-                    // runnerId/otherRunnerId — раньше тут сохранялись ТОЛЬКО
-                    // collision/direction, хотя CollisionEvent несёт оба id
-                    // (простое упущение при первой реализации этого стейта,
-                    // id просто не докинули в объект) — все 4 поля нужны
-                    // collisionFlyingRunnerLabel (см. pendingCollisionRoll
-                    // выше за полным разбором формулы).
-                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction, runnerId: e.runnerId, otherRunnerId: e.otherRunnerId });
+                    setPendingCollisionRoll({
+                        flyingRunnerId: e.flyingRunnerId,
+                        stayingRunnerId: e.stayingRunnerId,
+                        direction: e.direction,
+                    });
                     if (!collisionCommentPlayedRef.current) {
                         collisionCommentPlayedRef.current = true;
                         playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
@@ -900,10 +943,11 @@ export default function GameBoardScreen({ route, navigation }) {
                     minePendingRef.current = true;
                 }
                 if (e.event === 'collision') {
-                    // Тот же фикс, что и в reduce() выше — runnerId/
-                    // otherRunnerId раньше терялись и тут (отдельный путь
-                    // для version-less бандлов, см. докстринг onTransient).
-                    setPendingCollisionRoll({ collision: e.collision, direction: e.direction, runnerId: e.runnerId, otherRunnerId: e.otherRunnerId });
+                    setPendingCollisionRoll({
+                        flyingRunnerId: e.flyingRunnerId,
+                        stayingRunnerId: e.stayingRunnerId,
+                        direction: e.direction,
+                    });
                     if (!collisionCommentPlayedRef.current) {
                         collisionCommentPlayedRef.current = true;
                         playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
@@ -943,17 +987,17 @@ export default function GameBoardScreen({ route, navigation }) {
     // требовал решения. Guard `!pendingCollisionRoll` — не перезаписывает
     // значение, уже выставленное транзиентом в этом же тике (обычный живой
     // путь продолжает работать как раньше, этот эффект — только фолбэк).
-    // `lowRunnerId`/`topRunnerId` от бэка — те же роли, что раньше
-    // приходилось выводить из `runnerId`/`otherRunnerId` транзиента (см.
-    // collisionFlyingRunnerLabel ниже по файлу) — runnerId≡topRunnerId,
-    // otherRunnerId≡lowRunnerId, маппинг сохранён для совместимости с уже
-    // работающей формулой. Должен идти ПОСЛЕ объявления `game` выше (см.
+    // 2026-10-14: `game.pendingCollision` — та же форма, что и live-
+    // транзиент `collision` (`CollisionEvent::describe()` на бэке, один
+    // конструктор на оба места) — `flyingRunnerId`/`stayingRunnerId` берутся
+    // отсюда напрямую, без перевода из старых lowRunnerId/topRunnerId.
+    // Должен идти ПОСЛЕ объявления `game` выше (см.
     // комментарий у pendingCollisionRoll за разбором TDZ-краша, который
     // раньше был на этом месте).
     useEffect(() => {
         if (pendingCollisionRoll || !game?.pendingCollision) return;
-        const { lowRunnerId, topRunnerId, collision, direction } = game.pendingCollision;
-        setPendingCollisionRoll({ collision, direction, runnerId: topRunnerId, otherRunnerId: lowRunnerId });
+        const { flyingRunnerId, stayingRunnerId, direction } = game.pendingCollision;
+        setPendingCollisionRoll({ flyingRunnerId, stayingRunnerId, direction });
     }, [game?.pendingCollision, pendingCollisionRoll]);
 
     const {
@@ -1308,26 +1352,13 @@ export default function GameBoardScreen({ route, navigation }) {
         return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
     }, [runners, pendingSelect]);
 
-    // Тип бегуна, который реально отлетит при столкновении — ПЕРВАЯ ПОПЫТКА
-    // (2026-10-11, "не мой участник = он отлетит") была НЕВЕРНОЙ, живая
-    // жалоба подтвердила ("видел Атлет, отлетел Танк") — роль не зависит от
-    // владельца. Настоящая формула найдена чтением `StepCollisionService::
-    // run()` на бэке (read-only, обработчик /collision с accept:true):
-    // `collision===LOWER → move($lowRunner)`, `collision===TOP →
-    // move($topRunner)`. А `CollisionEvent.runnerId`/`.otherRunnerId` —
-    // ВСЕГДА `topRunner`/`lowRunner` соответственно (порядок параметров в
-    // `Collision::runnerCollision()`→`saveCollision()`→`new CollisionEvent
-    // (..., $runner->getId(), $runner2->getId())` на бэке — $runner
-    // (первый) всегда становится topRunner, $runner2 (второй) — lowRunner,
-    // НЕЗАВИСИМО от того, кто из них физически крупнее — имена low/top тут
-    // не про размер). Значит: TOP → летит runnerId, LOWER → летит
-    // otherRunnerId — ни "мой/чужой", ни размер тут вообще не при чём.
+    // Тип бегуна, который реально отлетит при столкновении — бэк теперь
+    // называет его явно (`flyingRunnerId`, см. CollisionEvent выше), старая
+    // формула TOP/LOWER→runnerId/otherRunnerId (история в
+    // CLAUDE_DONE_TASKS.md 2026-10-11/10-12) больше не нужна.
     const collisionFlyingRunnerLabel = useMemo(() => {
         if (!pendingCollisionRoll) return null;
-        const flyingId = pendingCollisionRoll.collision === COLLISION_TOP
-            ? pendingCollisionRoll.runnerId
-            : pendingCollisionRoll.otherRunnerId;
-        const runner = runners.find((r) => String(r.id) === String(flyingId));
+        const runner = runners.find((r) => String(r.id) === String(pendingCollisionRoll.flyingRunnerId));
         if (!runner) return null;
         return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
     }, [runners, pendingCollisionRoll]);
@@ -1339,22 +1370,17 @@ export default function GameBoardScreen({ route, navigation }) {
                 name: p.user?.username ?? `Игрок ${p.id}`,
                 // Цвет — с бэка (RunnerPlayer.color, случайно и без повторов
                 // назначается при создании партии). Индекс — фолбэк на случай
-                // партий, созданных до появления этого поля.
-                // BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color —
-                // 2026-10-01, см. её докстринг в GameConstants.js: ЕДИНСТВЕННАЯ
-                // точка перевода "green" (бэк) → "purple" (фронт), дальше по
-                // коду (PlayerInfoPanel.js и т.д.) "green" уже нигде не
-                // встречается, только готовый hex.
-                color: PLAYER_COLOR_HEX[BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color]
-                    ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
+                // партий, созданных до появления этого поля. 2026-10-14: бэк
+                // сам переименовал слот green→purple — перевод имени
+                // (BACKEND_TO_FRONTEND_PLAYER_COLOR) больше не нужен, см.
+                // докстринг PLAYER_COLOR_HEX в GameConstants.js.
+                color: PLAYER_COLOR_HEX[p.color] ?? PLAYER_COLORS[i % PLAYER_COLORS.length],
                 // colorKey — 2026-10-10, нужен PlayerSwitchPanel (переключатель
                 // игроков, см. его докстринг): выбор нужного switch_on_<key>
                 // ассета требует имени цвета ('red'/'blue'/'purple'/'yellow'),
-                // а не уже готового hex, который несёт `color` выше. Тот же
-                // перевод "green"(бэк)→"purple"(фронт), просто без финального
-                // шага в hex — фолбэк на 'red', если цвет не распознан
-                // (партии до появления этого поля, см. комментарий у `color`).
-                colorKey: BACKEND_TO_FRONTEND_PLAYER_COLOR[p.color] ?? p.color ?? 'red',
+                // а не уже готового hex, который несёт `color` выше. Фолбэк на
+                // 'red', если цвет не распознан (партии до появления этого поля).
+                colorKey: p.color ?? 'red',
                 dice: [p.dice1, p.dice2, p.dice3, p.dice4],
                 ability: p.ability,
                 // step — 2026-09-20, нужен PlayerInfoPanel/RunnerCard, чтобы
@@ -1362,6 +1388,9 @@ export default function GameBoardScreen({ route, navigation }) {
                 // (не обязательно "моего" — панель переключаемая, см.
                 // roadBonusValue ниже).
                 step: p.step,
+                // 2026-10-14: бэк добавил счётчик ходов раунда — закрывает
+                // заглушку "Ход"/"—" в reaperRow (PlayerInfoPanel.js).
+                turnsTaken: p.turnsTaken ?? null,
                 activeRunnerId: p.activeRunner ?? null,
                 // displayRunners, не runners — см. её докстринг (жетоны урона
                 // не должны мигать раньше анимации на доске).
@@ -1402,16 +1431,6 @@ export default function GameBoardScreen({ route, navigation }) {
         () => gamePlayers.find((p) => p.status === PLAYER_STATUS.WINNER) ?? null,
         [gamePlayers],
     );
-    // Звук победы (2026-10-14, по прямому запросу пользователя) — играет РОВНО
-    // один раз, ТОЛЬКО наблюдающему игроку, который сам и победил (для
-    // проигравшего отдельного финишного звука нет — его выбывание уже
-    // озвучено через COMMENT_SOUNDS.lost раньше, см. onTransient/reduce выше).
-    useEffect(() => {
-        if (winnerPlayer && myPlayer && winnerPlayer.id === myPlayer.id && !gameFinishSoundPlayedRef.current) {
-            gameFinishSoundPlayedRef.current = true;
-            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.victory));
-        }
-    }, [winnerPlayer, myPlayer, playOneShot, commentSound]);
     const goToMainMenu = useCallback(() => {
         navigation.reset({ index: 0, routes: [{ name: ROUTES.MAIN_MENU }] });
     }, [navigation]);
@@ -1734,14 +1753,15 @@ export default function GameBoardScreen({ route, navigation }) {
             // считаем сами (danger исключён по прямому запросу пользователя,
             // 2026-09-15 — жетон опасности под клеткой ещё не вскрыт, ставить
             // туда Жнеца не должно быть можно).
-            // positionX ТОЛЬКО 0-5 (не 0-7, как у обычных клеток) — живой тест,
-            // 2026-09-08, поймал реальный баг: бэк отклоняет размещение Жнеца в
-            // последних 2 колонках сегмента отдельной валидацией DTO
-            // ("details.positionX: This value should be between 0 and 5"),
-            // раньше подсветка ошибочно предлагала все 8 колонок.
+            // 2026-10-14: бэк развернул диапазоны DetailsReaperDTO обратно на
+            // стандартные (positionX 0..7 — ряд, positionY 0..5 — дорожка, та
+            // же унификация Cell, что и везде) — раньше (см. CLAUDE_ARCHIVE.md,
+            // 2026-09-08) они были перевёрнуты (positionX ограничен 0..5), и
+            // подсветка нарочно резала последние 2 колонки, чтобы не предлагать
+            // клетки, которые бэк всё равно отклонит. Теперь полный диапазон.
             const cells = new Set();
             for (let segment = 0; segment < totalBlocks; segment++) {
-                for (let positionX = 0; positionX <= 5; positionX++) {
+                for (let positionX = 0; positionX <= 7; positionX++) {
                     for (let positionY = 0; positionY <= 5; positionY++) {
                         const pos = { segment, positionX, positionY };
                         const type = rawCellType(game, segment, positionX, positionY);
@@ -1834,11 +1854,34 @@ export default function GameBoardScreen({ route, navigation }) {
     // 2026-09-12: без этого была гонка ("диалог мелькнул, потом анимация,
     // потом диалог снова появился") — anims отражает ТОЛЬКО уже играющий
     // шаг, а acid/burn мог ещё стоять в очереди позади предыдущего.
+    // 2026-10-15: расширено на 'destroyed' — обычная (не terrain) гибель
+    // раньше вообще не гейтилась тут (см. докстринг pendingDeathRunnerIds
+    // add-сайта выше).
     const hasDeathAnimPlaying = useMemo(
-        () => Object.values(runnerAnim.anims).some((a) => a?.kind === 'acid' || a?.kind === 'burn')
+        () => Object.values(runnerAnim.anims).some((a) => a?.kind === 'acid' || a?.kind === 'burn' || a?.kind === 'destroyed')
             || pendingDeathRunnerIds.size > 0,
         [runnerAnim.anims, pendingDeathRunnerIds],
     );
+    // Звук финала (victory/lost) — 2026-10-14 изначально победа играла сразу
+    // по факту смены статуса игрока на 'winner', не дожидаясь самого диалога
+    // (и без звука поражения вовсе). 2026-10-15, по прямому запросу
+    // пользователя: ОБА звука должны звучать РОВНО в момент, когда реально
+    // показывается GameFinishModal — т.е. после того, как доиграла терминальная
+    // поза последнего погибшего бегуна (hasDeathAnimPlaying) и сдвиг трассы
+    // (trackShiftPhase), та же пара условий, что и у самого `visible` модалки
+    // ниже (см. рендер). `gameFinishSoundPlayedRef` — один и тот же "once"-
+    // гейт на обе ветки (локальный зритель либо выиграл, либо нет — никогда
+    // не оба сразу).
+    useEffect(() => {
+        if (!winnerPlayer || !myPlayer || gameFinishSoundPlayedRef.current) return;
+        if (game.status !== GAME_STATUS.FINISH || trackShiftPhase || hasDeathAnimPlaying) return;
+        gameFinishSoundPlayedRef.current = true;
+        if (winnerPlayer.id === myPlayer.id) {
+            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.victory));
+        } else {
+            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
+        }
+    }, [winnerPlayer, myPlayer, game.status, trackShiftPhase, hasDeathAnimPlaying, playOneShot, commentSound]);
     const moveSound = useAudioPlayer(FALLBACK_MOVE_SOUND);
     useEffect(() => {
         moveSound.loop = true;
@@ -2257,10 +2300,13 @@ export default function GameBoardScreen({ route, navigation }) {
             }
             if (pendingAbility?.ability !== 'heal') return;
             if (runner.playerId !== myPlayer?.id) return; // лечить можно только своих бегунов
-            // Лечение чинит НЕИСПРАВНОГО (broken) бегуна — это как раз его смысл (см. правила
-            // "Если этот бегун был неисправен, он становится исправным"). Нельзя вылечить
-            // только уничтоженного (destroyed) — этот статус необратим.
-            if (runner.status === RUNNER_STATUS.DESTROYED) return;
+            // 2026-10-15, живой баг (пользователь, подтверждено бэком —
+            // "Runner status must be broken or damaged"): гейт отсекал только
+            // DESTROYED, пропуская HEALTHY (нечего лечить) — тап по здоровому
+            // бегуну уходил на бэк и падал 400-й. Снимает один жетон
+            // повреждения — валидная цель ровно DAMAGED/BROKEN, ни HEALTHY
+            // (нечего снимать), ни DESTROYED (уже не на трассе).
+            if (runner.status !== RUNNER_STATUS.DAMAGED && runner.status !== RUNNER_STATUS.BROKEN) return;
             const { diceIndex } = pendingAbility;
             runAction(() =>
                 runnerGameApi
@@ -2925,9 +2971,10 @@ export default function GameBoardScreen({ route, navigation }) {
                 тогда показываем результат. game.status уже реально FINISH всё это
                 время (редьюсер применяет мгновенно, как и везде в проекте) — гейтится
                 только ПОКАЗ модалки, не сам факт завершения игры. Гейт hasDeathAnimPlaying
-                (2026-09-12, тот же принцип) — тем же способом ждём, пока не доиграет
-                терминальная поза burn/acid (гибель на клетке wall), если она случилась
-                ровно тем же ходом, что и победа. */}
+                (2026-09-12, расширено 2026-10-15 на обычный 'destroyed') — тем же способом
+                ждём, пока не доиграет терминальная поза (burn/acid/destroyed), если она
+                случилась ровно тем же ходом, что и победа — звук victory/lost (см. эффект
+                рядом с hasDeathAnimPlaying выше) звучит СИНХРОННО с этим же условием. */}
             <GameFinishModal
                 visible={game.status === GAME_STATUS.FINISH && !trackShiftPhase && !hasDeathAnimPlaying}
                 winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
@@ -2993,6 +3040,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     )}
                     roadBonusValue={game.trackGain}
                     gameRound={game.round}
+                    turnsPerRound={game.turnsPerRound}
                 />
             )}
 
@@ -3169,22 +3217,33 @@ export default function GameBoardScreen({ route, navigation }) {
                                     см. её докстринг ниже). Только useMobileNavButtons
                                     — в остальных случаях (веб-портрет) этой колонки
                                     тут не было и не появляется, раунд/ход/бонус там
-                                    по-прежнему не показываются вообще (см. TODO в
-                                    CLAUDE.md про ход). Высота каждого квадрата —
-                                    РОВНО ⅓ измеренной высоты баннера
-                                    (turnBannerSideSize), без зазоров между ними —
-                                    сумма трёх точно равна высоте баннера. */}
+                                    по-прежнему не показываются вообще (отдельная
+                                    раскладка, не входит в объём этого TODO). Высота
+                                    каждого квадрата — РОВНО ⅓ измеренной высоты
+                                    баннера (turnBannerSideSize), без зазоров между
+                                    ними — сумма трёх точно равна высоте баннера. */}
                                 {useMobileNavButtons && (
                                     <View style={[styles.turnBannerSideCol, { width: turnBannerSideSize }]}>
+                                        {/* Раунд/Ход — оба 0-индексные на бэке (`game.round`,
+                                            `player.turnsTaken`, растёт на каждом `select`, т.е.
+                                            "сколько уже НАЧАТО", не "номер текущего") — по
+                                            прямому решению пользователя 2026-10-14 (живой тест
+                                            на эмуляторе) UI прибавляет 1 к обоим при показе,
+                                            "Ход" — просто номер (не "X/3", turnsPerRound в
+                                            подпись не идёт). Тот же приём — PlayerInfoPanel.js
+                                            #displayRound/#turnsLabel (landscape/веб-раскладка). */}
                                         <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
                                             <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
-                                                {game.round != null ? game.round : '-'}
+                                                {game.round != null ? game.round + 1 : '-'}
                                             </Text>
                                         </FramedSquare>
-                                        {/* "Ход" — заглушка до появления поля с бэка,
-                                            см. TODO в CLAUDE.md. */}
                                         <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
-                                            <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>-</Text>
+                                            <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
+                                                {(() => {
+                                                    const turnsTaken = players.find((p) => p.id === activePlayerId)?.turnsTaken;
+                                                    return turnsTaken != null ? turnsTaken + 1 : '-';
+                                                })()}
+                                            </Text>
                                         </FramedSquare>
                                         <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
                                             <Text style={[styles.seamBonusValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
@@ -3197,6 +3256,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         )}
                         roadBonusValue={game.trackGain}
                         gameRound={game.round}
+                        turnsPerRound={game.turnsPerRound}
                     />
                 </View>
             )}

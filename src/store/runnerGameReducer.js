@@ -26,9 +26,9 @@ function patchPlayerRunners(game, runnerPatches) {
 }
 
 /**
- * game_cell_updated шлёт {segment, row, column} — row/column это positionX(0-7)/positionY(0-5)
- * (см. Cell::getRow()/getColumn() и TrackSegment::getCellInfo($row,$col) на бэке), то есть те же
- * индексы, что и в самом grid[][] сегмента — патчим напрямую по ним, без перестановки осей.
+ * 2026-10-14: бэк унифицировал клетку под общий тип Cell — game_cell_updated теперь шлёт
+ * {segment, positionX, positionY} (было {segment, row, column}), те же индексы, что и в самом
+ * grid[][] сегмента — патчим напрямую по ним, без перестановки осей.
  */
 function patchCell(game, cell) {
     const key = SEGMENT_KEY_BY_INDEX[cell.segment];
@@ -36,7 +36,7 @@ function patchCell(game, cell) {
     if (!key || !segment?.grid) return game;
 
     const grid = segment.grid.map((line, x) =>
-        x === cell.row ? line.map((v, y) => (y === cell.column ? cell.type : v)) : line,
+        x === cell.positionX ? line.map((v, y) => (y === cell.positionY ? cell.type : v)) : line,
     );
     return { ...game, [key]: { ...segment, grid } };
 }
@@ -116,8 +116,9 @@ export function runnerGameReducer(game, e) {
         // сразу после успешного /select — без этого случая runner.dice не
         // обновлялся до следующего runner_save (при первом MOVE), и подтверждённый
         // выбор визуально выглядел как "кубик откатился обратно" (см. CLAUDE.md).
-        // ⚠ поля игрока тут БЕЗ подчёркивания (dice1, не dice_1 как в остальных
-        // player_*-событиях) — сверено построчно с StepSelectionEvent.php.
+        // 2026-10-14: бэк переименовал dice_1..4 → dice1..4 во ВСЕХ
+        // player_*/ability_*-событиях (раньше это поле было camelCase только
+        // тут, у step_selection — остальные ниже обновлены тем же заходом).
         case 'step_selection': {
             const withPlayer = patchPlayer(game, e.player.id, {
                 step: e.player.step,
@@ -143,10 +144,10 @@ export function runnerGameReducer(game, e) {
 
         case 'player_reset': {
             const withPlayer = patchPlayer(game, e.player.id, {
-                dice1: e.player.dice_1,
-                dice2: e.player.dice_2,
-                dice3: e.player.dice_3,
-                dice4: e.player.dice_4,
+                dice1: e.player.dice1,
+                dice2: e.player.dice2,
+                dice3: e.player.dice3,
+                dice4: e.player.dice4,
                 ability: e.player.ability,
             });
             return patchPlayerRunners(withPlayer, e.player.runners ?? []);
@@ -184,10 +185,10 @@ export function runnerGameReducer(game, e) {
             return patchRunner(
                 patchPlayer(game, e.player.id, {
                     ability: e.player.ability,
-                    dice1: e.player.dice_1,
-                    dice2: e.player.dice_2,
-                    dice3: e.player.dice_3,
-                    dice4: e.player.dice_4,
+                    dice1: e.player.dice1,
+                    dice2: e.player.dice2,
+                    dice3: e.player.dice3,
+                    dice4: e.player.dice4,
                 }),
                 e.runner,
             );
@@ -195,10 +196,10 @@ export function runnerGameReducer(game, e) {
         case 'ability_ghost':
             return patchPlayer(game, e.player.id, {
                 ability: e.player.ability,
-                dice1: e.player.dice_1,
-                dice2: e.player.dice_2,
-                dice3: e.player.dice_3,
-                dice4: e.player.dice_4,
+                dice1: e.player.dice1,
+                dice2: e.player.dice2,
+                dice3: e.player.dice3,
+                dice4: e.player.dice4,
             });
 
         // 2026-09-26: раньше этот case отсутствовал вообще (падало в default) —
@@ -217,10 +218,10 @@ export function runnerGameReducer(game, e) {
             return patchRunner(
                 patchPlayer(game, e.player.id, {
                     ability: e.player.ability,
-                    dice1: e.player.dice_1,
-                    dice2: e.player.dice_2,
-                    dice3: e.player.dice_3,
-                    dice4: e.player.dice_4,
+                    dice1: e.player.dice1,
+                    dice2: e.player.dice2,
+                    dice3: e.player.dice3,
+                    dice4: e.player.dice4,
                 }),
                 e.runner,
             );
@@ -229,10 +230,10 @@ export function runnerGameReducer(game, e) {
             return patchRunner(
                 patchPlayer(game, e.player.id, {
                     ability: e.player.ability,
-                    dice1: e.player.dice_1,
-                    dice2: e.player.dice_2,
-                    dice3: e.player.dice_3,
-                    dice4: e.player.dice_4,
+                    dice1: e.player.dice1,
+                    dice2: e.player.dice2,
+                    dice3: e.player.dice3,
+                    dice4: e.player.dice4,
                 }),
                 { id: e.reaper.id, positionX: e.reaper.positionX, positionY: e.reaper.positionY, segment: e.reaper.segment },
             );

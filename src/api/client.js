@@ -178,16 +178,18 @@ export async function request(path, options = {}) {
                 await clearTokens();
                 onAuthLost?.();
             }
+            // 2026-10-14: бэк перешёл на единый конверт ApiExceptionSubscriber —
+            // {"error":{"code","message","status","details"?}}, не голую строку
+            // {"error":"..."} как раньше. data?.error теперь объект почти везде
+            // под /api (RunnerGame/Lobby/auth-ошибки) — старый data?.error как
+            // текст больше не приходит, фолбэки оставлены только на случай
+            // ответа, не прошедшего через конверт (например самого Symfony).
+            const errorEnvelope = data?.error;
             const err = new ApiError(
                 response.status,
-                data?.code ?? data?.error ?? null,
-                // data?.error — ключ, который реально используют ВСЕ контроллеры
-                // бэка (RunnerGameController/LobbyController — return $this->json(['error'
-                // => $e->getMessage()], $e->getCode())), а не 'message'/'detail' —
-                // до этой правки реальный текст ошибки (напр. "It's not your turn
-                // now"/"Wrong step for action") никогда не долетал до пользователя,
-                // ApiError.userMessage всегда падал в generic "Ошибка 404".
-                data?.error ?? data?.message ?? data?.detail ?? `Ошибка ${response.status}`,
+                (typeof errorEnvelope === 'object' ? errorEnvelope?.code : null) ?? null,
+                (typeof errorEnvelope === 'object' ? errorEnvelope?.message : errorEnvelope)
+                    ?? data?.message ?? data?.detail ?? `Ошибка ${response.status}`,
                 data,
             );
             log(`<- ${method} ${path} ${response.status} FAIL (${Date.now() - startedAt}мс):`, err.userMessage);

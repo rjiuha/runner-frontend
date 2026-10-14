@@ -629,14 +629,10 @@ const PLAYER_BLUE = '#2e3192';
 // фиолетовым, независимо от того, что PLAYER_COLOR_HEX называл его "green").
 // Значение снято ЖИВЬЁМ с пикселей уже готового аватара на эмуляторе
 // (adb screencap + прямой замер, не выдумано) — совпадает с историческим
-// #8b2fe0 из старых заметок CLAUDE.md. По прямому запросу пользователя —
-// вместо перекраски ассетов (дорого, их сотни) фронт теперь называет этот
-// слот ПРАВИЛЬНЫМ именем — "purple", а не "green". Бэк по-прежнему шлёт
-// строку "green" (PlayerColor.php не менялся, трогать чужой репозиторий
-// нельзя) — перевод "green"→"purple" происходит РОВНО В ОДНОЙ точке,
-// на границе (см. BACKEND_TO_FRONTEND_PLAYER_COLOR ниже + место её
-// применения в GameBoardScreen.js), дальше по фронту "green" нигде не
-// встречается — только "purple".
+// #8b2fe0 из старых заметок CLAUDE.md. 2026-10-14: бэк сам переименовал этот
+// слот PlayerColor::GREEN → PlayerColor::PURPLE (с миграцией данных) — строка
+// с бэка теперь буквально "purple", перевод BACKEND_TO_FRONTEND_PLAYER_COLOR
+// ниже стал не нужен, но ключ PLAYER_COLOR_HEX здесь остаётся "purple" же.
 const PLAYER_PURPLE = '#8b2fe0';
 
 /** Цвета для визуального различения бегунов разных игроков на общей доске (фолбэк по индексу) */
@@ -647,8 +643,8 @@ export const PLAYER_COLORS = [colors.danger, PLAYER_BLUE, PLAYER_PURPLE, colors.
  * Бэк сам случайно и без повторов раздаёт эти 4 цвета игрокам при создании партии
  * (RunnerGameFactory::createGame) и отдаёт их строкой в RunnerPlayer.color — как в
  * GET /api/runner_game, так и во всех событиях, где публикуется игрок целиком.
- * Ключ "purple" тут — ВНУТРЕННЕЕ имя фронта (см. докстринг PLAYER_PURPLE выше),
- * бэк называет этот же слот "green" — перевод см. BACKEND_TO_FRONTEND_PLAYER_COLOR.
+ * С 2026-10-14 бэк сам называет этот слот "purple" (см. докстринг PLAYER_PURPLE
+ * выше) — отдельного перевода имени больше не требуется.
  */
 export const PLAYER_COLOR_HEX = {
   red: colors.danger,
@@ -656,17 +652,6 @@ export const PLAYER_COLOR_HEX = {
   yellow: colors.warning,
   purple: PLAYER_PURPLE,
 };
-
-/**
- * Перевод цвета игрока с вокабуляра бэка на вокабуляр фронта — ЕДИНСТВЕННАЯ
- * точка, где строка "green" (бэк) превращается в "purple" (фронт), см.
- * докстринг PLAYER_PURPLE выше. Применяется РОВНО один раз, в
- * GameBoardScreen.js, при разборе списка игроков партии — дальше по коду
- * (PlayerInfoPanel.js, RunnerCard.js, DiceTray.js и т.д.) читают уже готовый
- * hex (PLAYER_COLOR_HEX), а не эту строку, так что перевод достаточно
- * применить один раз на входе.
- */
-export const BACKEND_TO_FRONTEND_PLAYER_COLOR = { green: 'purple' };
 
 /** Статус партии — зеркалит GameStatus (бэк, Service/Game/Enum/GameStatus.php) */
 export const GAME_STATUS = {

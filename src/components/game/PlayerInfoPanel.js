@@ -19,6 +19,7 @@ import {
     PLAYER_ABILITY_ORDER,
     PLAYER_STEP,
     RUNNER_ORDER,
+    RUNNER_STATUS,
 } from '../../constants/GameConstants';
 import { colors, font, radius, spacing } from '../../theme';
 
@@ -129,6 +130,11 @@ export default function PlayerInfoPanel({
     // пользователя "над атлетом сделай номер раунда") — см. RoundPanel.js
     // за докстрингом этого поля на бэке.
     gameRound = null,
+    // turnsPerRound — лимит ходов за раунд (game.turnsPerRound, бэк, 2026-10-14
+    // — RunnerGameService::MAX_STEP, сейчас 3). Используется только для
+    // квадрата "Ход" ниже (activePlayer.turnsTaken/turnsPerRound) — счётчик
+    // ходов РАУНДА, не версия API.
+    turnsPerRound = null,
     // flatBackground (2026-10-10) — ТОЛЬКО портретный native-вызов
     // (GameBoardScreen.js, useMobileNavButtons). Помимо своего прямого
     // названия (убирает полупрозрачный чёрный фон панели, #00000055 —
@@ -689,14 +695,18 @@ export default function PlayerInfoPanel({
     // НАД квадратом — та же идея, что подпись типа бегуна у RunnerCard
     // (`styles.name`, та — сбоку, тут — сверху, по прямому запросу
     // пользователя "тайтлы пусть будут над панельками ходов и раундов", было
-    // под квадратом первой версией этого же захода). "Ход" временно ВСЕГДА
-    // заглушка
-    // ("—", RoundPanel с round=null) — по признанию самого пользователя,
-    // точного счётчика "X из 3 ходов за раунд" бэк пока не отдаёт (только 4
-    // кубика на раунд, dice1..4, без разметки, сколько из них на движение, а
-    // сколько на усиление, см. запрос бэкендеру в отдельном файле) — как
-    // только бэк пришлёт нужное поле, заменить `round={null}` на реальное
-    // значение (TODO в CLAUDE.md).
+    // под квадратом первой версией этого же захода). "Ход" — 2026-10-14, бэк
+    // добавил `gamePlayers[].turnsTaken`/корневой `turnsPerRound` (запрос был
+    // отправлен раньше, заглушка "—" висела с 2026-10-01). Оба поля 0-индексные
+    // на бэке (`turnsTaken` растёт на каждом `select`, т.е. "сколько уже
+    // НАЧАТО", не "номер текущего"; `round` аналогично с нуля) — по прямому
+    // решению пользователя 2026-10-14 (живой тест на эмуляторе, "раунд/ход не
+    // может быть 0", "надо показывать просто номер хода") UI прибавляет 1 к
+    // ОБОИМ при отображении, `turnsPerRound` в саму подпись не идёт (не
+    // "X/3", просто номер) — сырые поля в сторе/пропах не трогаем, +1 только
+    // тут, на границе рендера.
+    const displayRound = gameRound != null ? gameRound + 1 : null;
+    const turnsLabel = activePlayer.turnsTaken != null ? activePlayer.turnsTaken + 1 : null;
     const roadBonusPanelSize = cardWidth != null
         ? cardWidth
         : compactColumns
@@ -711,14 +721,13 @@ export default function PlayerInfoPanel({
                 {!isAndroid && (
                     <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Раунд</Text>
                 )}
-                <RoundPanel round={gameRound} panelSize={roadBonusPanelSize} />
+                <RoundPanel round={displayRound} panelSize={roadBonusPanelSize} />
             </View>
             <View style={styles.reaperCell}>
                 {!isAndroid && (
                     <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Ход</Text>
                 )}
-                {/* Заглушка до ответа бэкендера — см. докстринг выше. */}
-                <RoundPanel round={null} panelSize={roadBonusPanelSize} />
+                <RoundPanel round={turnsLabel} panelSize={roadBonusPanelSize} />
             </View>
             <View style={styles.reaperCell}>
                 {!isAndroid && (
@@ -771,7 +780,13 @@ export default function PlayerInfoPanel({
                 turnActive={isActivePlayerTurn && String(runner.id) === String(activePlayer.activeRunnerId)}
                 pulseHighlight={runnersHighlight && canSelectRunner(runner.id)}
                 pending={isPending}
-                healTarget={isMyPanel && pendingAbility?.ability === 'heal'}
+                // 2026-10-15, живой баг (пользователь): подсвечивались ВСЕ три
+                // карточки зелёным независимо от статуса — бэк же отклоняет
+                // цель с "Runner status must be broken or damaged" (бегун
+                // destroyed — не на трассе вообще, healthy — нечего лечить).
+                // Подсветка сверена с ЭТИМ ЖЕ условием.
+                healTarget={isMyPanel && pendingAbility?.ability === 'heal'
+                    && (runner.status === RUNNER_STATUS.DAMAGED || runner.status === RUNNER_STATUS.BROKEN)}
                 onPress={onRunnerCardPress}
                 onDoubleTap={onRunnerCardDoubleTap}
                 moveDiceValue={moveDiceValue}

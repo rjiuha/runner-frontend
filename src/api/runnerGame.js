@@ -2,6 +2,24 @@
 import { request } from './client';
 import { normalizeRunnerGame } from './normalize';
 
+// 2026-10-14: бэк добавил идемпотентность на /runner_game/move
+// (MoveDto::$clientActionId, до 64 символов, рекомендован UUID) — повтор с
+// тем же id, что у последнего ПРИМЕНЁННОГО хода игрока, отвечает ok и ничего
+// не двигает второй раз. Нет готовой UUID-либы в зависимостях (`uuid`/
+// `expo-crypto` не установлены) — для ключа идемпотентности криптостойкость
+// не нужна, достаточно практической уникальности, свой generateClientActionId()
+// не тянет новую зависимость. В проекте пока нет retry-обёртки над запросами
+// (runAction в GameBoardScreen.js вызывает move() РОВНО один раз на тап) —
+// id генерируется внутри самого вызова, один на один HTTP-запрос; если
+// появится повторный тап/ретрай ЭТОГО ЖЕ действия, id нужно будет генерировать
+// на уровне вызывающего кода и передавать сюда, не тут.
+function generateClientActionId() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+    });
+}
+
 /**
  * Зеркало RunnerGameController. GET не принимает id — бек сам находит
  * активную партию текущего пользователя (аналогично lobbyApi.mine()).
@@ -23,7 +41,10 @@ export const runnerGameApi = {
         request('/runner_game/select', { method: 'POST', body: { runnerId, dice, type } }),
 
     move: (firstPosition, direction) =>
-        request('/runner_game/move', { method: 'POST', body: { firstPosition, direction } }),
+        request('/runner_game/move', {
+            method: 'POST',
+            body: { firstPosition, direction, clientActionId: generateClientActionId() },
+        }),
 
     // Шаг ROAD_BONUS: предлагается, только если бегун ни разу не сходил с дороги
     // за весь ход (см. PLAYER_STEP.ROAD_BONUS) — accept выдаёт бегуну
