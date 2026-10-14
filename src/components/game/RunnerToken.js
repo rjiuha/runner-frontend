@@ -45,18 +45,41 @@ const IS_WEB = Platform.OS === 'web';
 // должны прогревать один и тот же набор файлов по нескольку раз.
 const prewarmedCombos = new Set();
 
-// Вращающийся пунктирный ореол вокруг активного бегуна (см. selected проп) —
-// по прямому запросу пользователя, 2026-09-09, ВМЕСТО прежней белой рамки-
-// кружка/квадрата ("как иногда делают в играх") — выбран из 5 живых
-// вариантов (сравнивались в отдельном Artifact-макете), пользователь выбрал
-// именно этот: стабильное вращение пунктирной рамки, БЕЗ мерцания —
-// "силовое поле", не "дыхание". HALO_SCALE — во сколько раз ореол крупнее
-// самого кольца (не обрезается — у ring нет overflow:hidden), уменьшен на
-// ~20% (1.35→1.08) по прямому запросу пользователя тем же днём, единообразно
-// для Android и веба (платформенного сплита тут нет и не было). HALO_SPIN_MS —
-// время ОДНОГО полного оборота (360°).
-const HALO_SCALE = 1.08;
-const HALO_SPIN_MS = 3000;
+// Кольцо-эллипс под ногами активного бегуна (см. selected проп) — 2026-10-14,
+// по прямому запросу пользователя, ЗАМЕНА прежнего вращающегося пунктирного
+// ореола вокруг ВСЕГО токена (тот выбирался 2026-09-09 из 5 живых вариантов,
+// см. CLAUDE.md за историей) на "наземное" кольцо-эллипс, пульсирующее
+// размером (выбор между "эллипс вокруг бегуна"/"эллипс под ногами" —
+// пользователь взял форму первого (кольцо: рамка+полупрозрачная заливка),
+// но положение второго (у основания, не вокруг всего тела) — макеты
+// сравнивались через mcp__visualize). Две живые правки по факту (2026-10-14,
+// продолжение) после первой версии:
+//  1) "ноги должны быть в ЦЕНТРЕ эллипса, не просто эллипс под бегуном" —
+//     центр по Y теперь в точке SELECT_FEET_Y (см. ringTop ниже), не просто
+//     "у низа кольца". Токены на доске ВСЕГДА `imageAlign="bottom"`
+//     (BoardGrid.js передаёт `selected` только там, где `anchorBottom`/
+//     `imageAlign` жёстко `true`/`'bottom'`) — низ самого КОЛЬЦА (`size`)
+//     совпадает с низом image-бокса персонажа, НО не с визуальными ступнями
+//     — у спрайта есть прозрачный отступ по низу кадра, живой фидбек
+//     пользователя (ровно по низу кольца — "расположение стало ещё ниже")
+//     подтвердил, что нужна поправка выше формального края — SELECT_FEET_Y
+//     подбирается по факту, пока не совпадёт визуально.
+//  2) "форма как буханка хлеба + контурный край" — простой прямоугольник с
+//     `borderRadius: height/2` при width≫height даёт "стадион" (плоские
+//     бока, полукруглые торцы), НЕ истинный эллипс — отсюда и вид, и то, что
+//     обводка явно трассирует эти плоские грани. Фикс — классический приём
+//     "растянутая окружность": базовая форма — КРУГ (сторона = SELECT_RING_
+//     HEIGHT*size), `transform: scaleX` растягивает его до нужной ширины.
+//     Математически растянутый круг — это точный эллипс (в отличие от
+//     borderRadius-прямоугольника), см. JSX ниже.
+// SELECT_PULSE_MS — время ОДНОЙ половины цикла (рост ИЛИ сжатие), MIN/MAX —
+// крайние масштабы.
+const SELECT_RING_WIDTH = 0.92;
+const SELECT_RING_HEIGHT = 0.34;
+const SELECT_RING_ASPECT = SELECT_RING_WIDTH / SELECT_RING_HEIGHT;
+const SELECT_PULSE_MS = 900;
+const SELECT_PULSE_MIN = 0.82;
+const SELECT_PULSE_MAX = 1.18;
 
 /**
  * Иконка бегуна в цветном кольце владельца. Один и тот же компонент рисует
@@ -102,6 +125,15 @@ const HALO_SPIN_MS = 3000;
  * быть даже БОЛЬШЕ кольца (imageScale > 1), выходя за его пределы — это
  * осознанный эффект, не баг.
  *
+ * `selectRingYOffset` (px, по умолчанию 0) — 2026-10-14. BoardGrid иногда
+ * сдвигает ВЕСЬ токен (картинку+кольцо) своим внешним `transform`
+ * (сейчас — только у Скаута на Android, "на 10% сегмента ниже остальных
+ * типов", чисто под особенности спрайта) — этот проп даёт кольцу выбора
+ * РАВНЫЙ ПО МОДУЛЮ, НО ОБРАТНЫЙ сдвиг (см. ringTop ниже), чтобы оно держало
+ * один и тот же уровень "земли" независимо от типа бегуна — только
+ * картинка персонажа подстраивается под особенности своего спрайта, само
+ * кольцо-эллипс остаётся консистентным между типами.
+ *
  * `showRing` — цветной кружок-обводка (цвет игрока + полупрозрачная заливка).
  * По умолчанию `false` (2026-09-09, по прямому запросу пользователя — "убери
  * кружок контурный с плитки вообще": раньше был `true` для карточек в панели,
@@ -111,12 +143,14 @@ const HALO_SPIN_MS = 3000;
  * default-`true` был бы мёртвым/вводящим в заблуждение, дефолт синхронизирован
  * с фактическим использованием). `selected`
  * (сейчас выбран для хода/выстрела) — другая, никак не связанная с цветом
- * игрока сущность, рисуется независимо от `showRing`: вращающийся зелёный
- * пунктирный ореол ВОКРУГ кольца (см. HALO_SCALE/HALO_SPIN_MS выше), а не
- * рамка ПО кольцу — до 2026-09-09 тут была белая рамка+тень, убрана по
- * прямому запросу пользователя (заодно избавляет от известного Android-бага
- * с elevation+прямоугольной тенью на View без фона — эффект больше не
- * использует shadow/elevation вообще).
+ * игрока сущность, рисуется независимо от `showRing`: зелёное кольцо-эллипс
+ * У НОГ, пульсирующее размером (см. константы SELECT_RING_WIDTH/
+ * SELECT_PULSE_MIN и соседние выше), не рамка ПО кольцу — до 2026-09-09 тут
+ * была белая рамка+тень, затем (до
+ * 2026-10-14) вращающийся пунктирный ореол вокруг всего кольца, оба убраны
+ * по прямым запросам пользователя (заодно избавляет от известного
+ * Android-бага с elevation+прямоугольной тенью на View без фона — эффект
+ * больше не использует shadow/elevation вообще).
  *
  * `imageAlign` — 'center' (по умолчанию) или 'bottom'. Определяет, как
  * картинка (которая может быть БОЛЬШЕ кольца, см. imageScale выше)
@@ -128,7 +162,7 @@ const HALO_SPIN_MS = 3000;
  * внутреннее позиционирование картинки относительно кольца.
  */
 function RunnerToken({
-    type, status, color = '#fff', size = 32, selected = false, anim = null, avatar = false, imageScale = 0.68,
+    type, status, color = '#fff', size = 32, selected = false, selectRingYOffset = 0, anim = null, avatar = false, imageScale = 0.68,
     showRing = false, imageAlign = 'center', style, runnerId = null, onAnimStepEnd,
 }) {
     const display = RUNNER_DISPLAY[type];
@@ -202,34 +236,36 @@ function RunnerToken({
     }, [desiredGifSource, committedGifSource]);
     const renderedGifSource = IS_WEB ? (committedGifSource ?? desiredGifSource) : desiredGifSource;
 
-    // Вращение ореола — ОДИН Animated.Value, растёт линейно 0→1 и сразу
-    // зацикливается (не туда-обратно, как было бы у пульса) — стабильное
-    // вращение БЕЗ мерцания, по прямому выбору пользователя из 5 живых
-    // вариантов. Останавливается и сбрасывается, когда selected становится
-    // false — Animated.loop сам не остановится, если не вызвать .stop()
-    // явно (и не начнёт с произвольного угла при повторном выборе).
-    // useNativeDriver:true — rotate-transform им поддерживается нативно (не
-    // layout-свойство). ТОЛЬКО native (Android/iOS) — на вебе живьём
-    // подтверждено (2026-09-09, после фикса ниже), что RN `Animated`
-    // (JS-driven, т.к. useNativeDriver на вебе не поддерживается) на этом
-    // конкретном стеке не прогрессирует вообще (проверено полностью
-    // изолированным тестом вне этого компонента — голый Animated.Value,
-    // тот же результат): значение застревает на 0 бесконечно, колбэк
-    // .start(cb) не срабатывает НИКОГДА. Причина НЕ установлена окончательно
-    // (подозрение — визуальный движок именно в среде разработки/тестирования
-    // не даёт rAF прогрессировать), но раз пользователь подтвердил статичность
-    // и в СВОЁМ реальном браузере — решение: не полагаться на JS Animated для
-    // веба вообще, см. ветку web в JSX ниже.
-    const haloSpin = useRef(new Animated.Value(0)).current;
+    // Пульсация кольца-эллипса (растёт→сжимается→растёт, зациклено) — ОДИН
+    // непрерывный `Animated.loop(Animated.timing(0→1))` + `interpolate` в
+    // треугольную волну (0→MAX→0, см. selectScale ниже), а НЕ
+    // `Animated.loop(Animated.sequence([up, down]))` — живой баг, 2026-10-14:
+    // с sequence+loop на границе цикла (ровно в MIN-точке) анимация ВИДИМО
+    // "исчезает и появляется" вместо плавного разворота — известная
+    // особенность `Animated.loop` при зацикливании СОСТАВНОЙ (sequence)
+    // native-driven анимации (хендовер между итерациями даёт скачок/сброс
+    // на один кадр). Один непрерывный `timing` в цикле — ТОТ ЖЕ приём, что
+    // уже доказанно без мерцания работает у вращения ореола (см. история
+    // выше) — зацикливает сам по себе, без хендовера между составными
+    // кусками, разворот тут делает interpolate, не сама Animated-анимация.
+    // JS `Animated` ПОДТВЕРЖДЁННО не прогрессирует на вебе на этом стеке
+    // (живой тест, 2026-09-09) — на вебе крутится чистый CSS `@keyframes`
+    // (см. ветку web в JSX ниже), тут только native (Android/iOS).
+    // useNativeDriver:true — scale-transform им поддерживается нативно.
+    const selectPulse = useRef(new Animated.Value(0)).current;
     useEffect(() => {
         if (!selected || Platform.OS === 'web') return undefined;
-        haloSpin.setValue(0);
+        selectPulse.setValue(0);
         const anim = Animated.loop(
-            Animated.timing(haloSpin, { toValue: 1, duration: HALO_SPIN_MS, useNativeDriver: true }),
+            Animated.timing(selectPulse, { toValue: 1, duration: SELECT_PULSE_MS * 2, useNativeDriver: true }),
         );
         anim.start();
         return () => anim.stop();
-    }, [selected, haloSpin]);
+    }, [selected, selectPulse]);
+    const selectScale = selectPulse.interpolate({
+        inputRange: [0, 0.5, 1],
+        outputRange: [SELECT_PULSE_MIN, SELECT_PULSE_MAX, SELECT_PULSE_MIN],
+    });
 
     // Прогрев (2026-09-25, по прямому запросу пользователя — живая жалоба
     // "еле заметное мигание при смене idle на move", подтверждённая живьём
@@ -279,8 +315,23 @@ function RunnerToken({
             if (uri) Image.prefetch(uri).catch(() => {});
         }
     }, [type, status, colorKey]);
-    const haloRotate = haloSpin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-    const haloSize = size * HALO_SCALE;
+    // Базовая форма — КРУГ со стороной ringH (не ringW×ringH-прямоугольник,
+    // см. докстринг SELECT_RING_* выше за тем, почему) — `scaleX` растягивает
+    // его в истинный эллипс. Центр по Y — SELECT_FEET_Y (живая подстройка,
+    // 2026-10-14): низ самого кольца (`size`, imageAlign='bottom') оказался
+    // НИЖЕ реальных ступней персонажа — у спрайта есть прозрачный отступ по
+    // низу кадра, ступни визуально выше, чем формальный край кольца.
+    // Понижать/повышать это число по живому фидбеку, пока не совпадёт.
+    const SELECT_FEET_Y = 0.67;
+    const ringH = size * SELECT_RING_HEIGHT;
+    const ringLeft = (size - ringH) / 2;
+    // selectRingYOffset (2026-10-14, см. докстринг пропа выше) — гасит
+    // ВНЕШНИЙ translateY, который BoardGrid иногда накладывает на ВЕСЬ
+    // токен целиком (сейчас — только у Скаута на Android, "спрайт на 10%
+    // сегмента ниже остальных типов"), чтобы кольцо держало один и тот же
+    // уровень "земли" независимо от типа — само же изображение персонажа
+    // (не кольцо) эту внешнюю правку всё ещё получает как прежде.
+    const ringTop = size * SELECT_FEET_Y - ringH / 2 + selectRingYOffset;
 
     return (
         <View
@@ -318,29 +369,29 @@ function RunnerToken({
                 тапы по токену.
 
                 Platform.OS==='web' — ПЛОСКИЙ View со static CSS-анимацией
-                (styles.haloWeb, animationKeyframes), НЕ Animated.View — см.
-                комментарий у haloSpin выше про то, почему JS Animated не
-                прогрессирует на этом вебе. animationKeyframes — официальный
-                API react-native-web (0.21+), тот же приём, что их
-                собственный ActivityIndicator использует для спиннера
+                (styles.selectRingWeb, animationKeyframes), НЕ Animated.View
+                — см. комментарий у selectPulse выше про то, почему JS
+                Animated не прогрессирует на этом вебе. animationKeyframes —
+                официальный API react-native-web (0.21+), тот же приём, что
+                их собственный ActivityIndicator использует для спиннера
                 (node_modules/react-native-web/.../ActivityIndicator) —
-                вращение целиком на браузерном CSS-движке, JS/rAF не нужен. */}
+                пульсация целиком на браузерном CSS-движке, JS/rAF не нужен. */}
             {Platform.OS === 'web' ? (
                 <View
                     pointerEvents="none"
                     style={[
-                        styles.haloWeb,
+                        styles.selectRingWeb,
                         {
                             position: 'absolute',
-                            left: (size - haloSize) / 2,
-                            top: (size - haloSize) / 2,
-                            width: haloSize,
-                            height: haloSize,
-                            borderRadius: haloSize / 2,
-                            borderWidth: 3,
-                            borderStyle: 'dashed',
+                            left: ringLeft,
+                            top: ringTop,
+                            width: ringH,
+                            height: ringH,
+                            borderRadius: ringH / 2,
+                            borderWidth: 2,
                             borderColor: colors.success,
-                            opacity: selected ? 0.85 : 0,
+                            backgroundColor: 'rgba(46,204,113,0.18)',
+                            opacity: selected ? 0.9 : 0,
                         },
                     ]}
                 />
@@ -349,16 +400,16 @@ function RunnerToken({
                     pointerEvents="none"
                     style={{
                         position: 'absolute',
-                        left: (size - haloSize) / 2,
-                        top: (size - haloSize) / 2,
-                        width: haloSize,
-                        height: haloSize,
-                        borderRadius: haloSize / 2,
-                        borderWidth: 3,
-                        borderStyle: 'dashed',
+                        left: ringLeft,
+                        top: ringTop,
+                        width: ringH,
+                        height: ringH,
+                        borderRadius: ringH / 2,
+                        borderWidth: 2,
                         borderColor: colors.success,
-                        opacity: selected ? 0.85 : 0,
-                        transform: [{ rotate: haloRotate }],
+                        backgroundColor: 'rgba(46,204,113,0.18)',
+                        opacity: selected ? 0.9 : 0,
+                        transform: [{ scaleX: SELECT_RING_ASPECT }, { scale: selectScale }],
                     }}
                 />
             )}
@@ -438,19 +489,25 @@ const styles = StyleSheet.create({
     ringBottom: {
         justifyContent: 'flex-end',
     },
-    // Вращение ореола НА ВЕБЕ — чистый CSS `@keyframes`, тот же приём, что
-    // react-native-web использует в своём собственном ActivityIndicator.
-    // `animationKeyframes` — web-only ключ StyleSheet (react-native-web
-    // 0.21+), молча игнорируется на native — там вращает Animated.loop (см.
-    // JSX выше). Не зависит от JS Animated/rAF вообще — крутит браузерный
-    // compositor.
-    haloWeb: {
+    // Пульсация кольца-эллипса НА ВЕБЕ — чистый CSS `@keyframes`, тот же
+    // приём, что react-native-web использует в своём собственном
+    // ActivityIndicator. `animationKeyframes` — web-only ключ StyleSheet
+    // (react-native-web 0.21+), молча игнорируется на native — там пульсирует
+    // Animated.loop (см. JSX выше). Не зависит от JS Animated/rAF вообще —
+    // работает на браузерном compositor.
+    selectRingWeb: {
+        // scaleX(SELECT_RING_ASPECT) — ПОСТОЯННЫЙ множитель, растягивающий
+        // базовый круг в истинный эллипс (см. докстринг SELECT_RING_* выше),
+        // scale(...) ПОВЕРХ него — та же пульсация размера, что и на native
+        // (комбинация transform-функций в CSS применяется в указанном
+        // порядке, как и массив transform в RN).
         animationKeyframes: [{
-            '0%': { transform: 'rotate(0deg)' },
-            '100%': { transform: 'rotate(360deg)' },
+            '0%': { transform: `scaleX(${SELECT_RING_ASPECT}) scale(${SELECT_PULSE_MIN})` },
+            '50%': { transform: `scaleX(${SELECT_RING_ASPECT}) scale(${SELECT_PULSE_MAX})` },
+            '100%': { transform: `scaleX(${SELECT_RING_ASPECT}) scale(${SELECT_PULSE_MIN})` },
         }],
-        animationDuration: `${HALO_SPIN_MS}ms`,
-        animationTimingFunction: 'linear',
+        animationDuration: `${SELECT_PULSE_MS * 2}ms`,
+        animationTimingFunction: 'ease-in-out',
         animationIterationCount: 'infinite',
     },
 });

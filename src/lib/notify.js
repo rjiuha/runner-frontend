@@ -40,14 +40,20 @@ export function notify(title, message) {
     });
 }
 
-/** Подтверждение действия (выход, покинуть лобби) */
-export function confirm(title, message, onConfirm, confirmLabel = 'Да') {
+/**
+ * Подтверждение действия (выход, покинуть лобби). `cancelLabel` — опционален
+ * (2026-10-14, по прямому запросу пользователя для диалога "Выйти без
+ * сохранения?" в GameSettingsModal.js, где кнопка отмены по смыслу — просто
+ * возврат в настройки, не "отмена" чего-либо) — дефолт 'Отмена' не трогает
+ * остальные вызовы confirm() по проекту.
+ */
+export function confirm(title, message, onConfirm, confirmLabel = 'Да', cancelLabel = 'Отмена') {
     log(title, message ?? '');
     showModal?.({
         title,
         message,
         buttons: [
-            { label: 'Отмена', variant: 'muted' },
+            { label: cancelLabel, variant: 'muted' },
             { label: confirmLabel, variant: 'danger', onPress: onConfirm },
         ],
     });

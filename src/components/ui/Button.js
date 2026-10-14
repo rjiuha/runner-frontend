@@ -1,7 +1,10 @@
 // src/components/ui/Button.js
-import React from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { ActivityIndicator, StyleSheet, Text, TouchableOpacity } from 'react-native';
+import { useAudioPlayer } from 'expo-audio';
 import { colors, radius, spacing, font } from '../../theme';
+import { CLICK_SOUND } from '../../constants/uiSounds';
+import { useAudioSettings } from '../../hooks/useAudioSettings';
 
 const VARIANTS = {
     primary: { bg: colors.primaryTranslucent, fg: colors.textOnDark },
@@ -29,10 +32,29 @@ export default function Button({
     // иначе двойной тап отправит два POST (два лобби, два логина)
     const isBlocked = disabled || loading;
 
+    // Клик (2026-10-14, по прямому запросу пользователя — "все кнопки
+    // приложения глобально") — свой плеер прямо в Button, тот же приём, что
+    // уже используют EventLogPanel/PlayerSwitchPanel (самодостаточный
+    // компонент, без прокидывания звука через вызывающую сторону). Канал —
+    // action ("Игровые звуки"), тот же, где теперь живут остальные UI-клики
+    // (constants/uiSounds.js). TouchableOpacity сам не зовёт onPress, пока
+    // isBlocked — звук тоже не играет на заблокированную кнопку, это
+    // естественное следствие, а не отдельная проверка.
+    const audioSettings = useAudioSettings();
+    const clickSound = useAudioPlayer(CLICK_SOUND);
+    useEffect(() => {
+        clickSound.volume = audioSettings.action;
+    }, [clickSound, audioSettings.action]);
+    const handlePress = useCallback(() => {
+        clickSound.seekTo(0);
+        clickSound.play();
+        onPress?.();
+    }, [clickSound, onPress]);
+
     return (
         <TouchableOpacity
             style={[styles.base, { backgroundColor: v.bg }, isBlocked && styles.blocked, style]}
-            onPress={onPress}
+            onPress={handlePress}
             disabled={isBlocked}
             activeOpacity={0.8}
         >

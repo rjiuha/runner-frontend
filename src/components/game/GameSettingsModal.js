@@ -1,5 +1,5 @@
 // src/components/game/GameSettingsModal.js
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Button from '../ui/Button';
@@ -17,10 +17,10 @@ import { confirm } from '../../lib/notify';
 
 // Порядок строк — см. lib/audioSettings.js за разбором, что входит в каждый
 // канал (voice отделён от остальных игровых звуков по прямому запросу
-// пользователя, 2026-10-04).
+// пользователя, 2026-10-04; отдельный регулятор "Комментатор" убран
+// 2026-10-14 — объединён с "Игровые звуки", см. тот же файл).
 const ROWS = [
     { key: 'music', label: 'Фоновая музыка' },
-    { key: 'commentator', label: 'Комментатор' },
     { key: 'voice', label: 'Голоса бегунов' },
     { key: 'action', label: 'Игровые звуки' },
 ];
@@ -37,19 +37,27 @@ const ROWS = [
  */
 export default function GameSettingsModal({ visible, onClose }) {
     const settings = useAudioSettings();
-    const savedSnapshotRef = useRef(getSavedAudioSettings());
+    // 2026-10-14, реальный баг: раньше снимок жил в useRef — мутация ref'а
+    // ПОСЛЕ handleSave не вызывает ре-рендер, значит `dirty`/`handleExit`,
+    // с которыми Button уже отрендерен, остаются замкнуты на СТАРОЕ, "грязное"
+    // значение до следующего ЛЮБОГО другого ре-рендера (которого после
+    // одного только "Сохранить" может и не случиться) — живая жалоба
+    // пользователя: нажал "Сохранить", потом "Выйти" — и всё равно увидел
+    // "Выйти без сохранения?", хотя громкость реально уже записалась в
+    // storage. Перевод на useState форсирует ре-рендер сразу после commit.
+    const [savedSnapshot, setSavedSnapshot] = useState(getSavedAudioSettings());
 
     useEffect(() => {
-        if (visible) savedSnapshotRef.current = getSavedAudioSettings();
+        if (visible) setSavedSnapshot(getSavedAudioSettings());
     }, [visible]);
 
     if (!visible) return null;
 
-    const dirty = Object.keys(AUDIO_DEFAULTS).some((k) => settings[k] !== savedSnapshotRef.current[k]);
+    const dirty = Object.keys(AUDIO_DEFAULTS).some((k) => settings[k] !== savedSnapshot[k]);
 
     const handleSave = async () => {
         await commitAudioSettings();
-        savedSnapshotRef.current = getSavedAudioSettings();
+        setSavedSnapshot(getSavedAudioSettings());
     };
 
     const handleExit = () => {
@@ -57,10 +65,13 @@ export default function GameSettingsModal({ visible, onClose }) {
             onClose();
             return;
         }
+        // cancelLabel: 'Назад' (2026-10-14, по прямому запросу пользователя —
+        // ТОЛЬКО для этого диалога, не меняет дефолт 'Отмена' у остальных
+        // confirm() по проекту, см. lib/notify.js).
         confirm('Выйти без сохранения?', 'Изменения громкости не будут сохранены.', () => {
             revertAudioSettings();
             onClose();
-        }, 'Выйти');
+        }, 'Выйти', 'Назад');
     };
 
     return (

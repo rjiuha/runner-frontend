@@ -13,18 +13,22 @@ const STORAGE_KEY = 'audio_settings_v1';
  * оба места (игровые звуки в GameBoardScreen И меню-музыка в useMenuMusic)
  * читают его через useAudioSettings().
  *
- * 4 канала (см. GameSettingsModal.js):
+ * 3 канала (см. GameSettingsModal.js — был 4-й "Комментатор", слит сюда
+ * 2026-10-14, по прямому запросу пользователя):
  *  - music — фоновая музыка, И игровая (GameBoardScreen), И меню/лобби
  *    (useMenuMusic) — один и тот же регулятор на обе, это один "вид" звука
  *    с точки зрения пользователя.
- *  - commentator — голосовые комментарии результатов (constants/
- *    commentSounds.js — COMMENT_SOUNDS, канал commentSound).
  *  - voice — реплики бегунов при выборе (RUNNER_SOUNDS active/
  *    damagedActive, канал voiceSound) — ОТДЕЛЬНО от остальных игровых
  *    звуков по прямому запросу пользователя, 2026-10-04.
- *  - action — всё остальное игровое: выстрелы (shootSound), шаги
+ *  - action — ВСЁ остальное игровое: выстрелы (shootSound), шаги
  *    (moveSound), ожидание решения при столкновении (collisionSound),
- *    появление Жнеца/Мяча (startSound).
+ *    появление Жнеца/Мяча (startSound), голосовые комментарии результатов
+ *    (commentSound, constants/commentSounds.js — раньше был свой канал
+ *    "Комментатор"), общий SFX-канал мины/радиации/рикошета (sfxSound,
+ *    constants/commonSounds.js) и UI-клики переключателя/лога
+ *    (constants/uiSounds.js) — все эти, казалось бы, разные источники по
+ *    прямому решению пользователя делят ОДИН регулятор "Игровые звуки".
  *
  * Два слоя значений:
  *  - `saved` — то, что реально лежит в AsyncStorage (постоянное).
@@ -37,7 +41,6 @@ const STORAGE_KEY = 'audio_settings_v1';
  */
 export const AUDIO_DEFAULTS = Object.freeze({
     music: 0.1,
-    commentator: 1.0,
     voice: 1.0,
     action: 0.5,
 });

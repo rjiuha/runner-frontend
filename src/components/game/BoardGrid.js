@@ -2,13 +2,14 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
-    BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, HIGHLIGHT_COLOR, MINE_BLAST_IMAGES, MINE_BLAST_OFFSET,
+    BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, MINE_BLAST_IMAGES, MINE_BLAST_OFFSET,
     MINE_BLAST_SCALE, RUNNER_STATUS, RUNNER_TYPES,
 } from '../../constants/GameConstants';
 import { indexRunnersByCell, BASE_IMAGE_TYPE } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
 import { createLogger } from '../../lib/logger';
 import RunnerToken from './RunnerToken';
+import CellHighlight from './CellHighlight';
 
 // ВРЕМЕННО — диагностика "телепорт" (см. RunnerTokenSlide.js#SLIDEDBG), убрать после.
 const dbgLog = createLogger('WINDBG');
@@ -68,7 +69,6 @@ const SEGMENT_INSET = 0.06;
 // сессии: 5%→8%→12% (каждый раз "ещё на N процентных пунктов меньше картинку
 // внутри слота", т.е. +N% к зазору), только у mud — road/sand не трогали.
 const TYPE_INSET = { road: 0.05, sand: 0.05, mud: 0.12 };
-const HIGHLIGHT_BORDER_WIDTH = 1.5;
 // Линия-подсветка стыка фрагментов (см. рендер ниже) — по прямому запросу
 // пользователя, 2026-08-30, тот же цвет, что FragmentLabelStrip использует
 // для полосы этого фрагмента (FRAGMENT_COLORS[blockIndex]).
@@ -93,6 +93,7 @@ export default function BoardGrid({
     playerColorById = {},
     selectedRunnerId = null,
     highlightedCells = null,
+    highlightMode = null,
     runnerAnims = null,
     runnerVisualPositions = null,
     currentTurnPlayerId = null,
@@ -118,6 +119,13 @@ export default function BoardGrid({
     cellOverrides = null,
     onCellPress,
 }) {
+    // Подсветка легальной клетки (2026-10-14, см. CellHighlight.js) — ВСЕ
+    // клетки в highlightedCells делят ОДИН tapMode за раз (это глобальный
+    // стейт текущего шага игрока, не per-клеточный), поэтому решаем ОДИН
+    // раз на весь рендер, не внутри .map() по клеткам. 'shoot'/'reaperShoot'
+    // — прицел, всё остальное ('move'/'start'/'reaper' — любое "тапни сюда,
+    // чтобы переместиться/встать") — точка.
+    const cellHighlightKind = highlightMode === 'shoot' || highlightMode === 'reaperShoot' ? 'shoot' : 'move';
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
     // доска рисует его в позиции ТЕКУЩЕГО шага очереди, а не в реальной
     // (game-стейт уже применил её целиком) — иначе промежуточные "остановки"
@@ -343,7 +351,16 @@ export default function BoardGrid({
                 boxW: segmentW, boxH: segmentH, tokenSize,
                 anim,
                 anchorBottom: true,
-                onTop,
+                // Жнец — ВСЕГДА onTop, не только когда делит клетку с кем-то
+                // (см. комментарий выше про "заходит кто-то на его клетку") —
+                // 2026-10-14, по прямому запросу пользователя: эллипс выбора
+                // СОСЕДНЕГО бегуна (RunnerToken.js, кольцо под ногами)
+                // рисуется ВНУТРИ его собственного токена, у которого нет
+                // явного zIndex — без безусловного onTop здесь Жнец на
+                // отдельной клетке мог оказаться НИЖЕ этого эллипса в общем
+                // document order tokenOverlayLayer, если чей-то эллипс
+                // визуально заходит на его клетку.
+                onTop: onTop || runner.type === RUNNER_TYPES.REAPER,
                 enterFrom,
                 slideDurationMs,
             });
@@ -659,6 +676,11 @@ export default function BoardGrid({
                 // native одинаково (см. BOARD_TOKEN_IMAGE_SCALE выше,
                 // 2026-09-09).
                 anchorBottom: true,
+                // Жнец — ВСЕГДА onTop (см. тот же комментарий у pushSolo
+                // выше) — этот путь обходит pushSolo (единственный визуально
+                // видимый бегун на клетке, самый частый случай), onTop
+                // нужно проставить и тут отдельно.
+                onTop: topRunner.type === RUNNER_TYPES.REAPER,
                 enterFrom: enterFromByRunnerId[topRunner.id],
                 slideDurationMs: slideDurationByRunnerId[topRunner.id],
             });
@@ -737,6 +759,39 @@ export default function BoardGrid({
         }
         return items;
     }, [mineBlasts, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
+
+    // Подсветка доступной клетки (точка хода/прицел выстрела) — ОТДЕЛЬНЫЙ
+    // верхний слой НАД токенами (2026-10-14, по прямому запросу пользователя
+    // — сначала для прицела выстрела ("поверх бегунов и других персонажей и
+    // obstacle"), затем тем же заходом распространено и на точку хода: цель
+    // ХОДА тоже может быть занятой клеткой (коллизия — это именно движение
+    // НА клетку, где уже кто-то стоит), не только клетка выстрела. Токен
+    // рисуется отдельным слоем НАД сеткой (tokenOverlayLayer) — обычная
+    // подсветка внутри самой клетки неизбежно пряталась бы под ним. Та же
+    // формула пиксельной позиции, что у mineBlastOverlay выше (ячейка
+    // целиком, не якорь по низу) — свой отдельный верхний слой
+    // (cellHighlightLayer, zIndex ВЫШЕ tokenOverlayLayer, см. styles ниже).
+    const cellHighlightOverlay = useMemo(() => {
+        if (!highlightedCells) return [];
+        const items = [];
+        for (const cellId of highlightedCells) {
+            const [segStr, pYStr, pXStr] = cellId.split('-');
+            const segment = Number(segStr);
+            const positionY = Number(pYStr);
+            const positionX = Number(pXStr);
+            const globalCol = segment * BOARD_LAYOUT.COLS + positionX;
+            if (globalCol < windowStart || globalCol >= windowEnd) continue;
+            const localCol = globalCol - windowStart;
+            const x = isPortrait
+                ? positionY * segmentW
+                : localCol * segmentW + (positionY % 2 === 0 ? segmentW / 2 : 0);
+            const y = isPortrait
+                ? (cols - 1 - localCol) * segmentH + (positionY % 2 === 0 ? segmentH / 2 : 0)
+                : positionY * segmentH;
+            items.push({ key: cellId, x, y });
+        }
+        return items;
+    }, [highlightedCells, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
 
     // Линия-стык фрагментов как ОДНА непрерывная "змейка" через все дорожки,
     // не отдельные несвязанные отрезки на каждой (жалоба пользователя,
@@ -932,24 +987,6 @@ export default function BoardGrid({
                                                 }}
                                             />
                                         )}
-                                        {/* Подсветка ПОД картинкой — для всех типов с ненулевым зазором
-                                            (сейчас это все реальные типы, см. cellInset/isFullBleed выше):
-                                            её видно в этом зазоре по краю слота. */}
-                                        {highlighted && !isFullBleed && (
-                                            <View
-                                                style={{
-                                                    position: 'absolute',
-                                                    left: 0,
-                                                    top: 0,
-                                                    width: segmentW,
-                                                    height: segmentH,
-                                                    backgroundColor: `${HIGHLIGHT_COLOR}55`,
-                                                    borderWidth: HIGHLIGHT_BORDER_WIDTH,
-                                                    borderColor: HIGHLIGHT_COLOR,
-                                                }}
-                                                pointerEvents="none"
-                                            />
-                                        )}
                                         <Image
                                             source={cell.image}
                                             style={{
@@ -969,25 +1006,12 @@ export default function BoardGrid({
                                                     : null),
                                             }}
                                         />
-                                        {/* Подсветка ПОВЕРХ картинки — только для гипотетического
-                                            isFullBleed-типа (cellInset===0, сейчас таких нет — все реальные
-                                            типы идут через ветку "под картинкой" выше). Оставлено на случай
-                                            будущего типа без зазора вообще. */}
-                                        {highlighted && isFullBleed && (
-                                            <View
-                                                style={{
-                                                    position: 'absolute',
-                                                    left: 0,
-                                                    top: 0,
-                                                    width: segmentW,
-                                                    height: segmentH,
-                                                    backgroundColor: `${HIGHLIGHT_COLOR}55`,
-                                                    borderWidth: HIGHLIGHT_BORDER_WIDTH,
-                                                    borderColor: HIGHLIGHT_COLOR,
-                                                }}
-                                                pointerEvents="none"
-                                            />
-                                        )}
+                                        {/* Подсветка клетки (точка хода/прицел выстрела) здесь больше
+                                            НЕ рисуется — целиком переехала в отдельный верхний слой НАД
+                                            токенами (cellHighlightOverlay/styles.cellHighlightLayer
+                                            ниже), 2026-10-14: цель и хода, и выстрела может быть занятой
+                                            клеткой (коллизия — это движение НА клетку с чужим бегуном),
+                                            токен цели закрыл бы индикатор, сидящий внутри самой клетки. */}
                                         </Animated.View>
                                     </TouchableOpacity>
                                 );
@@ -1061,17 +1085,26 @@ export default function BoardGrid({
                         // RunnerTokenSlide, как и раньше.
                         <Animated.View
                             key={item.runnerId}
-                            style={columnOpacities ? { opacity: columnOpacities[item.col] ?? 1 } : undefined}
+                            // item.onTop (zIndex, см. styles.tokenOnTop) — 2026-10-14, перенесён
+                            // СЮДА, на внешнюю обёртку, а не на RunnerTokenSlide ниже (там он
+                            // стоял раньше и видимо НЕ работал, живая жалоба пользователя — Жнец
+                            // всё равно оставался под эллипсом соседа). Эта Animated.View —
+                            // настоящий СОСЕД по уровню внутри tokenOverlayLayer (каждый токен —
+                            // свой элемент .map()); zIndex, выставленный на RunnerTokenSlide
+                            // несколькими уровнями глубже, сравнивается только с ЕГО СОБСТВЕННЫМИ
+                            // соседями (которых там нет — он там один), а не с другими токенами
+                            // дерева — поэтому не перепрыгивал через соседнее поддерево вообще.
+                            style={[
+                                columnOpacities ? { opacity: columnOpacities[item.col] ?? 1 } : null,
+                                item.onTop && styles.tokenOnTop,
+                            ]}
                         >
                             <RunnerTokenSlide
                                 x={item.x}
                                 y={item.y}
                                 width={item.boxW}
                                 height={item.boxH}
-                                style={[
-                                    item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer,
-                                    item.onTop && styles.tokenOnTop,
-                                ]}
+                                style={item.anchorBottom ? styles.tokenLayerBottom : styles.tokenLayer}
                                 windowStart={windowStart}
                                 enterFrom={item.enterFrom}
                                 duration={item.slideDurationMs}
@@ -1097,6 +1130,26 @@ export default function BoardGrid({
                                     showRing={false}
                                     imageAlign={item.anchorBottom ? 'bottom' : 'center'}
                                     selected={item.runnerId === selectedRunnerId}
+                                    // Кольцо выбора (RunnerToken.js#selectRingYOffset) — Скаут на
+                                    // Android получает ВНЕШНИЙ сдвиг всего токена вниз на 10%
+                                    // высоты сегмента (см. translateY в style ниже, тот самый
+                                    // "на 10% ниже остальных типов") — он задуман ТОЛЬКО для
+                                    // самого спрайта (компенсирует его собственные пропорции), но
+                                    // без компенсации тащил бы заодно и эллипс-кольцо выбора, у
+                                    // которого никакой нужды "ехать" вместе со спрайтом нет —
+                                    // кольцо должно оставаться на одном и том же "уровне земли"
+                                    // независимо от типа бегуна. Передаём РАВНЫЙ ПО МОДУЛЮ, но
+                                    // ОБРАТНЫЙ сдвиг (2026-10-14, по прямому запросу пользователя
+                                    // — "адаптируй расположение эллипса для скаута, исходя из его
+                                    // особенностей по размерам") — компенсация ТОЛЬКО кольца,
+                                    // внутри RunnerToken, сам спрайт свой внешний сдвиг сохраняет
+                                    // как было. НЕ проверено живьём — число подобрано расчётом
+                                    // (точно гасит внешний translateY), не живым сравнением.
+                                    selectRingYOffset={
+                                        item.runner.type === RUNNER_TYPES.SPRINTER && Platform.OS === 'android'
+                                            ? -Math.round(segmentH * 0.1)
+                                            : 0
+                                    }
                                     anim={item.anim}
                                     style={
                                         // Скаут (SPRINTER) — на 10% высоты сегмента ниже, чем
@@ -1167,6 +1220,24 @@ export default function BoardGrid({
                     )}
                 </View>
 
+                {cellHighlightOverlay.length > 0 && (
+                    <View
+                        style={[
+                            styles.cellHighlightLayer,
+                            isPortrait
+                                ? { width: rows * segmentW, height: cols * segmentH }
+                                : { width: cols * segmentW, height: rows * segmentH },
+                        ]}
+                        pointerEvents="none"
+                    >
+                        {cellHighlightOverlay.map((item) => (
+                            <View key={item.key} style={{ position: 'absolute', left: item.x, top: item.y }}>
+                                <CellHighlight kind={cellHighlightKind} width={segmentW} height={segmentH} />
+                            </View>
+                        ))}
+                    </View>
+                )}
+
                 <View
                     style={[
                         styles.fragmentBoundaryLayer,
@@ -1219,6 +1290,12 @@ const styles = StyleSheet.create({
     // персонажи должны рисоваться ПОВЕРХ линии-стыка фрагментов, не под ней
     // (жалоба пользователя, 2026-09-01, четвёртый заход — было наоборот).
     tokenOverlayLayer: { position: 'absolute', top: 0, left: 0, zIndex: 4, elevation: 4 },
+    // Подсветка доступной клетки — точка хода/прицел выстрела (см.
+    // cellHighlightOverlay выше) — ВЫШЕ tokenOverlayLayer по прямому запросу
+    // пользователя (сначала для выстрела — "поверх бегунов и других
+    // персонажей и obstacle", затем тем же заходом и для хода — цель и
+    // того, и другого может быть занятой клеткой).
+    cellHighlightLayer: { position: 'absolute', top: 0, left: 0, zIndex: 6, elevation: 6 },
     // Взрывы мины (см. mineBlastOverlay/GameBoardScreen#mineBlasts) — СТРОГО
     // между дорогой и токенами (zIndex ниже tokenOverlayLayer=4, но выше
     // самой сетки клеток) — по прямому запросу пользователя, 2026-09-15:

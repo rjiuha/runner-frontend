@@ -42,6 +42,8 @@ import { identifyGhostConsumption } from '../lib/ghostPairs';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
 import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
 import { COMMENT_SOUNDS } from '../constants/commentSounds';
+import { LAND_MINE_SOUND, RADIATION_SOUND, RICOCHET_HIT_SOUNDS } from '../constants/commonSounds';
+import { RUNNER_PICKED_SOUND } from '../constants/uiSounds';
 import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
 import { notify, confirm } from '../lib/notify';
 import { createLogger } from '../lib/logger';
@@ -446,9 +448,9 @@ export default function GameBoardScreen({ route, navigation }) {
     const shootSound = useAudioPlayer(null);
     const startSound = useAudioPlayer(null);
     const collisionSound = useAudioPlayer(COLLISION_SOUND);
-    // "Комментарии" (2026-09-11) — звуки результатов из assets/sounds/comments/
-    // (старт партии/уничтожение/выбывание/столкновение/аномалия), см.
-    // constants/commentSounds.js. Один общий канал на все 5 категорий — тот
+    // "Комментарии" — звуки результатов из assets/sounds/action/comments/
+    // (старт партии/уничтожение/выбывание/столкновение/аномалия/победа), см.
+    // constants/commentSounds.js. Один общий канал на все категории — тот
     // же компромисс, что и у voice/shoot/start чуть выше (если два разных
     // комментария выпадут почти одновременно, второй оборвёт первый через
     // .replace() — событие редкое, специально не усложняем множеством
@@ -456,6 +458,11 @@ export default function GameBoardScreen({ route, navigation }) {
     // (см. handleCollisionPoseStart/End ниже), а не один раз коротким
     // хлопком — по прямому запросу пользователя.
     const commentSound = useAudioPlayer(null);
+    // Общий одноразовый SFX-канал (2026-10-14) — взрыв мины/эффект на acid-
+    // burn-клетке/удар рикошета (constants/commonSounds.js) — тот же
+    // компромисс "один переиспользуемый плеер", что у voice/shoot/start,
+    // эти три события физически не могут выпасть друг на друга в один момент.
+    const sfxSound = useAudioPlayer(null);
     useEffect(() => {
         collisionSound.loop = true;
     }, [collisionSound]);
@@ -466,8 +473,11 @@ export default function GameBoardScreen({ route, navigation }) {
     // показывают именно то, что реально звучит, без скрытого множителя
     // поверх. 'voice' — ТОЛЬКО реплики бегунов (active/damagedActive, по
     // прямому запросу пользователя — отдельно от остального "игрового"
-    // звука); 'action' — всё остальное небоевое-не-музыка-не-комментатор:
-    // выстрелы/ожидание решения при столкновении/шаги/появление Жнеца-Мяча.
+    // звука); 'action' — ВСЁ остальное (выстрелы/шаги/столкновение/появление
+    // Жнеца-Мяча/мины/рикошет-SFX/UI-клики, И голосовые комментарии — канал
+    // "Комментатор" объединён с "Игровыми звуками" в этот же action
+    // 2026-10-14, по прямому запросу пользователя: отдельный регулятор для
+    // озвучки результатов показался избыточным рядом с голосами бегунов).
     const audioSettings = useAudioSettings();
     useEffect(() => {
         voiceSound.volume = audioSettings.voice;
@@ -476,10 +486,9 @@ export default function GameBoardScreen({ route, navigation }) {
         shootSound.volume = audioSettings.action;
         startSound.volume = audioSettings.action;
         collisionSound.volume = audioSettings.action;
-    }, [shootSound, startSound, collisionSound, audioSettings.action]);
-    useEffect(() => {
-        commentSound.volume = audioSettings.commentator;
-    }, [commentSound, audioSettings.commentator]);
+        commentSound.volume = audioSettings.action;
+        sfxSound.volume = audioSettings.action;
+    }, [shootSound, startSound, collisionSound, commentSound, sfxSound, audioSettings.action]);
     // Считает ОДНОВРЕМЕННО активные пары столкновений (на доске теоретически
     // может быть больше одной сразу) — collisionSound останавливаем, только
     // когда ПОСЛЕДНЯЯ пара реально разошлась, не раньше.
@@ -492,6 +501,9 @@ export default function GameBoardScreen({ route, navigation }) {
     // бэку, 2026-09-26) — тот код был мёртвым, убран при переходе на
     // бандлинг событий (2026-09-27, см. reduceAndLog).
     const gameStartSoundPlayedRef = useRef(false);
+    // Звук победы (2026-10-14) — тот же приём "сыграть РОВНО один раз", что у
+    // gameStartSoundPlayedRef выше, см. эффект рядом с winnerPlayer ниже.
+    const gameFinishSoundPlayedRef = useRef(false);
     const playOneShot = useCallback((player, source) => {
         if (!source) return;
         player.replace(source);
@@ -595,7 +607,10 @@ export default function GameBoardScreen({ route, navigation }) {
             const mineCellKey = extra?.toPosition ? cellKeyFromPosition(extra.toPosition) : null;
             const mineOnStart = mineCellKey && pendingMineCellIdsRef.current.has(mineCellKey)
                 ? () => {
-                    if (pendingMineCellIdsRef.current.delete(mineCellKey)) mineBlasts.trigger(mineCellKey);
+                    if (pendingMineCellIdsRef.current.delete(mineCellKey)) {
+                        mineBlasts.trigger(mineCellKey);
+                        playOneShot(sfxSound, LAND_MINE_SOUND);
+                    }
                 }
                 : undefined;
             // Звук-комментарий смерти (2026-09-25, живая жалоба пользователя:
@@ -617,6 +632,13 @@ export default function GameBoardScreen({ route, navigation }) {
             const deathCommentOnStart = (kind === 'destroyed' || kind === 'acid' || kind === 'burn')
                 ? () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed))
                 : undefined;
+            // Фоновый эффект гибели на acid/burn-клетке (2026-10-14, по
+            // прямому запросу пользователя) — синхронно с deathCommentOnStart
+            // выше, но ТОЛЬКО для этих двух kind (не для destroyed по другим
+            // причинам — выстрел/ловушка Жнеца и т.п., там он неуместен).
+            const radiationOnStart = (kind === 'acid' || kind === 'burn')
+                ? () => playOneShot(sfxSound, RADIATION_SOUND)
+                : undefined;
             // Voice-реплика бегуна (см. pendingVoiceLineRef выше) — поставлена
             // в очередь, когда для него появились клетки хода (reduceAndLog),
             // проигрывается ТОЛЬКО тут, когда его СОБСТВЕННАЯ поза (первый
@@ -632,8 +654,8 @@ export default function GameBoardScreen({ route, navigation }) {
                     playOneShot(voiceSound, queuedVoiceLine);
                 }
                 : undefined;
-            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart || deathCommentOnStart || voiceLineOnStart)
-                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); deathCommentOnStart?.(); voiceLineOnStart?.(); }
+            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart || deathCommentOnStart || radiationOnStart || voiceLineOnStart)
+                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); deathCommentOnStart?.(); radiationOnStart?.(); voiceLineOnStart?.(); }
                 : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
             else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra);
@@ -656,7 +678,7 @@ export default function GameBoardScreen({ route, navigation }) {
             // 'destroyed'/'acid'/'burn' — см. deathCommentOnStart выше, звук
             // теперь играет через onStart, не здесь.
         },
-        [runnerAnim.trigger, playOneShot, shootSound, startSound, voiceSound, commentSound, releaseHeldCellOnStart, mineBlasts.trigger],
+        [runnerAnim.trigger, playOneShot, shootSound, startSound, voiceSound, commentSound, sfxSound, releaseHeldCellOnStart, mineBlasts.trigger],
     );
 
     // 2026-09-27 — бэк перешёл на бандлинг Mercure-событий одного игрового
@@ -674,16 +696,11 @@ export default function GameBoardScreen({ route, navigation }) {
     // реальной работе с бэком, но не даёт молча сломаться, если где-то
     // событие придёт по старинке, плоским.
     //
-    // `pendingCollisionPair`/`sawStepCollision` — контекст ОДНОЙ цепочки
-    // (одного bundle), живёт только внутри этого вызова: 'collision'-item
-    // запоминает участников (`runnerId`/`otherRunnerId`, см.
-    // lib/runnerAnimTriggers.js#handleSequenceItem за тем, зачем) для
-    // СЛЕДУЮЩЕГО в этой же цепочке 'runner_save' с reason:'collision'.
-    // `sawStepCollision` — резервный сигнал для известного бэкового пробела
-    // (ветка "Использовать" у /collision не проставляет reason вообще, см.
-    // докстринг в runnerAnimTriggers.js) — раз `step_collision`-транзиент
-    // (StepCollisionEvent) в этой цепочке был, следующий безreason'ный
-    // runner_save всё равно нужно считать отбросом (fly), не шагом (move).
+    // `pendingCollisionPair` — контекст ОДНОЙ цепочки (одного bundle), живёт
+    // только внутри этого вызова: 'collision'-item запоминает участников
+    // (`runnerId`/`otherRunnerId`, см. lib/runnerAnimTriggers.js#
+    // handleSequenceItem за тем, зачем) для СЛЕДУЮЩЕГО в этой же цепочке
+    // 'runner_save' с reason:'collision'.
 
     // Результат УЖЕ БРОШЕННОГО кубика столкновения — по прямому запросу
     // пользователя, 2026-09-10: баннер "Использовать/Перебросить" не
@@ -716,16 +733,12 @@ export default function GameBoardScreen({ route, navigation }) {
         (state, bundle) => {
             let current = state;
             let pendingCollisionPair = null;
-            let sawStepCollision = false;
             for (const item of bundle.sequence ?? [bundle]) {
                 const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
                 pushLog(e);
 
                 if (e.event === 'collision') {
                     pendingCollisionPair = { runnerId: e.runnerId, otherRunnerId: e.otherRunnerId };
-                }
-                if (e.event === 'step_collision') {
-                    sawStepCollision = true;
                 }
 
                 // Детекция ДО handleSequenceItem (см. докстринг у
@@ -743,7 +756,6 @@ export default function GameBoardScreen({ route, navigation }) {
                     onceStepDone: runnerAnim.onceStepDone,
                     completeWaitStep: runnerAnim.completeWaitStep,
                     collisionPair: pendingCollisionPair,
-                    forceKnockback: sawStepCollision,
                 });
                 // Лечение возвращает бегуна к healthy — триггерим 'heal'-
                 // анимацию (проигрывается МЕЖДУ damaged_idle и healthy_idle).
@@ -849,6 +861,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 }
                 if (e.event === 'ricochet') {
                     playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                    playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
                 }
                 if (e.event === 'attack' && e.hit === false) {
                     playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
@@ -859,7 +872,7 @@ export default function GameBoardScreen({ route, navigation }) {
             return current;
         },
         [
-            pushLog, triggerWithSound, playOneShot, commentSound, mineBlasts.trigger,
+            pushLog, triggerWithSound, playOneShot, commentSound, sfxSound, mineBlasts.trigger,
             ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
         ],
     );
@@ -901,13 +914,14 @@ export default function GameBoardScreen({ route, navigation }) {
                 }
                 if (e.event === 'ricochet') {
                     playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                    playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
                 }
                 if (e.event === 'attack' && e.hit === false) {
                     playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
                 }
             }
         },
-        [pushLog, triggerWithSound, playOneShot, commentSound],
+        [pushLog, triggerWithSound, playOneShot, commentSound, sfxSound],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -1388,6 +1402,16 @@ export default function GameBoardScreen({ route, navigation }) {
         () => gamePlayers.find((p) => p.status === PLAYER_STATUS.WINNER) ?? null,
         [gamePlayers],
     );
+    // Звук победы (2026-10-14, по прямому запросу пользователя) — играет РОВНО
+    // один раз, ТОЛЬКО наблюдающему игроку, который сам и победил (для
+    // проигравшего отдельного финишного звука нет — его выбывание уже
+    // озвучено через COMMENT_SOUNDS.lost раньше, см. onTransient/reduce выше).
+    useEffect(() => {
+        if (winnerPlayer && myPlayer && winnerPlayer.id === myPlayer.id && !gameFinishSoundPlayedRef.current) {
+            gameFinishSoundPlayedRef.current = true;
+            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.victory));
+        }
+    }, [winnerPlayer, myPlayer, playOneShot, commentSound]);
     const goToMainMenu = useCallback(() => {
         navigation.reset({ index: 0, routes: [{ name: ROUTES.MAIN_MENU }] });
     }, [navigation]);
@@ -1840,7 +1864,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // те гоняют короткие one-shot реплики поверх, музыка должна крутиться
     // непрерывно и независимо от них). BACKGROUND_MUSIC_TRACKS — статический
     // список (см. constants/backgroundMusic.js за тем, почему не директория
-    // целиком) из assets/sounds/background_music/, пока там один файл —
+    // целиком) из assets/sounds/music/, пока там один файл —
     // пользователь обещал донабрать ещё, механизм уже рассчитан на N треков.
     // Громкость — audioSettings.music (lib/audioSettings.js), тот же канал,
     // что и у меню/лобби-музыки (useMenuMusic) — приглушена относительно
@@ -2180,9 +2204,15 @@ export default function GameBoardScreen({ route, navigation }) {
         (playerId, runnerId, diceIndex) => {
             if (playerId !== myPlayer?.id || !canSelectRunner(runnerId)) return;
             const runner = runners.find((r) => r.id === runnerId);
+            // Звук дропа (2026-10-14, перенесён сюда с handleConfirmSelect —
+            // живая жалоба пользователя: runner_picked.mp3 на подтверждении
+            // "конфликтовал" с voice-репликой активации бегуна (RUNNER_SOUNDS
+            // .active, играет чуть позже через onStart — см. triggerWithSound).
+            // Тут эта реплика ещё не в игре вообще, конфликтовать не с чем.
+            playOneShot(sfxSound, RUNNER_PICKED_SOUND);
             setPendingSelect({ runnerId, diceIndex, type: runner.dice == null ? 'DICE' : 'ROLL' });
         },
-        [myPlayer?.id, canSelectRunner, runners],
+        [myPlayer?.id, canSelectRunner, runners, playOneShot, sfxSound],
     );
 
     const handleConfirmSelect = useCallback(() => {
@@ -2843,6 +2873,7 @@ export default function GameBoardScreen({ route, navigation }) {
             playerColorById={playerColorById}
             selectedRunnerId={activeRunner?.id ?? null}
             highlightedCells={highlightedCells}
+            highlightMode={tapMode}
             runnerAnims={runnerAnim.anims}
             runnerVisualPositions={runnerAnim.visualPositions}
             currentTurnPlayerId={game.playerOrder}

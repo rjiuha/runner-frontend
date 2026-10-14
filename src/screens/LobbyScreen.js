@@ -1,6 +1,7 @@
 // src/screens/LobbyScreen.js
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
+import { useAudioPlayer } from 'expo-audio';
 
 import Screen from '../components/ui/Screen';
 import Button from '../components/ui/Button';
@@ -8,6 +9,8 @@ import LoadingCard from '../components/ui/LoadingCard';
 import { lobbyApi } from '../api/lobby';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
+import { useAudioSettings } from '../hooks/useAudioSettings';
+import { SWITCH_ON_SOUND, SWITCH_OFF_SOUND } from '../constants/uiSounds';
 import { lobbyReducer } from '../store/lobbyReducer';
 import { ROUTES } from '../navigation/routes';
 import { notify } from '../lib/notify';
@@ -110,7 +113,25 @@ export default function LobbyScreen({ route, navigation }) {
         }
     }, [lobby, me, goMenu]);
 
+    // Звук "готов"/"не готов" (2026-10-14, по прямому запросу пользователя —
+    // те же файлы, что у PlayerSwitchPanel на доске) — свой плеер прямо тут
+    // (самодостаточный экран, тот же приём, что у Button.js/EventLogPanel).
+    // Играет СРАЗУ на тап (switch_on — становлюсь готов, switch_off —
+    // снимаю готовность), не дожидаясь ответа API — оптимистичная звуковая
+    // реакция, как и у click.mp3/runner_picked.mp3.
+    const audioSettings = useAudioSettings();
+    const switchOnSound = useAudioPlayer(SWITCH_ON_SOUND);
+    const switchOffSound = useAudioPlayer(SWITCH_OFF_SOUND);
+    useEffect(() => {
+        switchOnSound.volume = audioSettings.action;
+        switchOffSound.volume = audioSettings.action;
+    }, [switchOnSound, switchOffSound, audioSettings.action]);
+
     const toggleReady = async () => {
+        const becomingReady = !me.isReady;
+        const sound = becomingReady ? switchOnSound : switchOffSound;
+        sound.seekTo(0);
+        sound.play();
         setBusy(true);
         try {
             // Оптимистично НЕ обновляем: настоящий стейт придёт событием player_ready

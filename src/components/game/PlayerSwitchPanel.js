@@ -1,8 +1,11 @@
 // src/components/game/PlayerSwitchPanel.js
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Image, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useAudioPlayer } from 'expo-audio';
 import PersonPanel from '../ui/PersonPanel';
 import { SWITCH_OFF_BLOCKED, SWITCH_OFF_CYAN, SWITCH_ON } from '../../constants/GameConstants';
+import { SWITCH_ON_SOUND } from '../../constants/uiSounds';
+import { useAudioSettings } from '../../hooks/useAudioSettings';
 import { colors, font, spacing } from '../../theme';
 
 // Родной пиксельный размер ассетов (337×537, см. GameConstants.js —
@@ -88,6 +91,24 @@ function SwitchSlot({ player, active, onSelect, height }) {
  */
 export default function PlayerSwitchPanel({ players, activeId, onSelect, height }) {
     const slots = Array.from({ length: MAX_SLOTS }, (_, i) => players[i] ?? null);
+    // Звук тапа по переключателю (2026-10-14, по прямому запросу пользователя)
+    // — свой плеер прямо в компоненте (не тянем через GameBoardScreen,
+    // переключатель самодостаточен) на канале action ("Игровые звуки"),
+    // играет ТОЛЬКО при реальной смене слота, не на повторный тап по уже
+    // активному. switch_off.mp3 пока не подключён — непонятно, нужен ли
+    // парный "клац" для СТАРОГО слота, или достаточно одного switch_on.
+    const audioSettings = useAudioSettings();
+    const switchSound = useAudioPlayer(SWITCH_ON_SOUND);
+    useEffect(() => {
+        switchSound.volume = audioSettings.action;
+    }, [switchSound, audioSettings.action]);
+    const handleSelect = useCallback((id) => {
+        if (id !== activeId) {
+            switchSound.seekTo(0);
+            switchSound.play();
+        }
+        onSelect(id);
+    }, [activeId, onSelect, switchSound]);
 
     return (
         <View style={styles.row}>
@@ -96,7 +117,7 @@ export default function PlayerSwitchPanel({ players, activeId, onSelect, height 
                     key={p ? p.id : `empty-${i}`}
                     player={p}
                     active={!!p && p.id === activeId}
-                    onSelect={onSelect}
+                    onSelect={handleSelect}
                     height={height}
                 />
             ))}

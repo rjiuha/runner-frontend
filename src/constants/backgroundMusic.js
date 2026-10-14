@@ -1,17 +1,20 @@
 // src/constants/backgroundMusic.js
 /**
  * Фоновая музыка активной игровой сессии — добавлена пользователем в
- * assets/sounds/background_music/, 2026-09-11. Metro не умеет
- * require() по маске/директории целиком (та же причина, по которой
+ * assets/sounds/music/ (папка называлась background_music/ до
+ * реструктуризации 2026-10-14 — переименована в "music" по имени канала
+ * громкости, см. lib/audioSettings.js). Metro не умеет require() по
+ * маске/директории целиком (та же причина, по которой
  * SEGMENT_IMAGES/RUNNER_SOUNDS и т.п. — статические массивы require()),
  * поэтому при добавлении новой дорожки в эту папку её нужно ВРУЧНУЮ
- * дописать сюда отдельной строкой.
+ * дописать сюда отдельной строкой. game_2.mp3 лежит в папке, но сюда
+ * сознательно не включён (было так и до реструктуризации, не трогали).
  */
 export const BACKGROUND_MUSIC_TRACKS = [
-    require('../assets/sounds/background_music/game_1.mp3'),
-    require('../assets/sounds/background_music/game_3.mp3'),
-    require('../assets/sounds/background_music/game_4.mp3'),
-    require('../assets/sounds/background_music/game_5.mp3'),
+    require('../assets/sounds/music/game_1.mp3'),
+    require('../assets/sounds/music/game_3.mp3'),
+    require('../assets/sounds/music/game_4.mp3'),
+    require('../assets/sounds/music/game_5.mp3'),
 ];
 
 /**
@@ -19,8 +22,8 @@ export const BACKGROUND_MUSIC_TRACKS = [
  * Lobby, останавливается при входе в RunnerGame. См. hooks/useMenuMusic.js.
  */
 export const MENU_MUSIC_TRACKS = [
-    require('../assets/sounds/background_music/main_menu_1.mp3'),
-    require('../assets/sounds/background_music/main_menu_2.mp3'),
+    require('../assets/sounds/music/main_menu_1.mp3'),
+    require('../assets/sounds/music/main_menu_2.mp3'),
 ];
 
 /**

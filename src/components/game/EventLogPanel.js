@@ -2,8 +2,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useAudioPlayer } from 'expo-audio';
 import { colors, font, radius, spacing } from '../../theme';
 import { LOG_BUTTON_IMAGES } from '../../constants/GameConstants';
+import { LOG_TOGGLE_SOUND } from '../../constants/uiSounds';
+import { useAudioSettings } from '../../hooks/useAudioSettings';
 
 /**
  * Сворачиваемый отладочный лог Mercure-событий партии (см. lib/eventLog.js
@@ -44,8 +47,22 @@ export default function EventLogPanel({ entries, position = 'bottom-right', icon
         if (open) scrollRef.current?.scrollToEnd({ animated: true });
     }, [entries, open]);
 
+    // Звук тоггла (2026-10-14, по прямому запросу пользователя) — свой
+    // плеер прямо тут (компонент самодостаточен, как и PlayerSwitchPanel),
+    // канал action ("Игровые звуки"), играет на КАЖДОЕ открытие/закрытие.
+    const audioSettings = useAudioSettings();
+    const toggleSound = useAudioPlayer(LOG_TOGGLE_SOUND);
+    useEffect(() => {
+        toggleSound.volume = audioSettings.action;
+    }, [toggleSound, audioSettings.action]);
+    const handleToggle = () => {
+        toggleSound.seekTo(0);
+        toggleSound.play();
+        setOpen((v) => !v);
+    };
+
     const toggle = isSeam ? (
-        <TouchableOpacity onPress={() => setOpen((v) => !v)} activeOpacity={0.8}>
+        <TouchableOpacity onPress={handleToggle} activeOpacity={0.8}>
             <Image
                 source={open ? LOG_BUTTON_IMAGES.pressed : LOG_BUTTON_IMAGES.unpressed}
                 style={{ width: iconSize, height: iconSize }}
@@ -53,7 +70,7 @@ export default function EventLogPanel({ entries, position = 'bottom-right', icon
             />
         </TouchableOpacity>
     ) : (
-        <TouchableOpacity style={styles.toggle} onPress={() => setOpen((v) => !v)} activeOpacity={0.8}>
+        <TouchableOpacity style={styles.toggle} onPress={handleToggle} activeOpacity={0.8}>
             <Text style={styles.toggleText} noGlobalTint>{open ? 'Скрыть лог ▾' : `Лог событий (${entries.length}) ▸`}</Text>
         </TouchableOpacity>
     );

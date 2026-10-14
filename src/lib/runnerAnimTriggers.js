@@ -55,16 +55,14 @@ const REAPER_TRACK_SHIFT_FLY_OFF_ROWS = 10;
  * выбрать visual-вариант направления (юг/север/восток/запад) для 'move',
  * не для решения "это шаг или отброс".
  *
- * **Известный пробел бэка (НЕ наша ошибка, сообщено бэкендеру отдельно)**:
- * ветка "Использовать" при столкновении разных размеров
- * (`StepCollisionService::run()`, `accept:true`) строит `Action::TYPE_MOVE`
- * БЕЗ `reason` — единственное место во всём бэке, где отброс-движение не
- * помечено. Раз `step_collision`-транзиент (`StepCollisionEvent`) ВСЕГДА
- * приходит раньше в ТОМ ЖЕ бандле для этой конкретной ветки — используем
- * его присутствие как резервный сигнал "это всё равно отброс" (см.
- * `animHelpers.forceKnockback`, простановка — GameBoardScreen.js), а не
- * геометрию по расстоянию (та самая эвристика, которую отменяем везде
- * остальном, тут её возвращать не нужно — есть более надёжный сигнал).
+ * **ИСПРАВЛЕНО на бэке, подтверждено повторно 2026-10-14** (и бэкендером, и
+ * собственным чтением кода): ветка "Использовать" при столкновении разных
+ * размеров (`StepCollisionService::run()`, `accept:true`) теперь ВСЕГДА
+ * строит `Action::TYPE_MOVE` С `reason: 'collision'` на обеих ветках
+ * (LOWER/TOP) — резервный сигнал `animHelpers.forceKnockback`
+ * (`step_collision`-транзиент в том же бандле как признак "это всё равно
+ * отброс", нужен был на случай `e.reason == null`) убран как мёртвый код —
+ * `isVoluntaryStep` ниже теперь просто `e.reason === 'step'`.
  *
  * **Пара при коллизии (кто "победитель", кого ждать перед fly)** — раньше
  * реконструировалась эвристикой `pushedFromCandidate` (кто ещё стоял на
@@ -145,8 +143,7 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
         const neighbor = forwardNeighbors(prev).find(
             (n) => n.segment === patch.segment && n.positionX === patch.positionX && n.positionY === patch.positionY,
         );
-        const isVoluntaryStep = e.reason === 'step'
-            || (e.reason == null && !animHelpers?.forceKnockback);
+        const isVoluntaryStep = e.reason === 'step';
 
         if (isVoluntaryStep) {
             // depthChanged/targetLaneShifted — ТОЛЬКО для выбора visual-
