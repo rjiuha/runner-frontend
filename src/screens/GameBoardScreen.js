@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { Animated, Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -12,6 +12,7 @@ import RoadArea from '../components/game/RoadArea';
 import BoardGrid from '../components/game/BoardGrid';
 import FragmentLabelStrip from '../components/game/FragmentLabelStrip';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
+import GameDialogModal from '../components/game/GameDialogModal';
 import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
 import GameMenuButton from '../components/game/GameMenuButton';
@@ -72,6 +73,23 @@ const COLLISION_STUCK_TIMEOUT = 18000;
 // обычное живое событие в рамках СВОЕГО хода (обычно доли секунды), не
 // решения другого игрока.
 const STUCK_ACTION_TIMEOUT = 8000;
+
+// Пауза-буфер перед показом реального экрана партии вместо спиннера —
+// 2026-10-12, по прямому запросу пользователя ("вижу, как последовательно
+// появляются компоненты, подгоняются под экран"). Первый рендер активной
+// доски — это сразу несколько панелей (compactColumns/PlayerInfoPanel,
+// RunnerCard×N, FramePanel/PersonPanel, DicePips и т.п.), каждая меряет
+// СВОЙ контейнер через onLayout и подгоняет масштаб/размер под него — на
+// Android это может занять несколько каскадных рендеров подряд (одна
+// панель смерилась → задела layout соседней → та тоже перемерилась),
+// видимо как "дёрганье" элементов сразу после входа на экран. Честный
+// сигнал "все панели измерились" пришлось бы тянуть от каждой из них
+// отдельно (инвазивная правка по множеству файлов) — вместо этого контент
+// монтируется СРАЗУ (opacity:0, замеры идут без изменений), а спиннер
+// держится этот фиксированный буфер поверх него, затем прячется. Не
+// идеальная гарантия (как и другие "запас N мс" в проекте), но узкая и
+// безопасная правка.
+const BOARD_READY_DELAY_MS = 500;
 
 // Задержка перед показом кнопок "Использовать/Перебросить" — чтобы игрок
 // сначала УВИДЕЛ анимацию столкновения, а не решал вслепую в момент, когда
@@ -253,6 +271,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // MobileFrameOverlay ниже), та же болячка, что была у EventLogPanel
     // (см. его комментарий).
     const insets = useSafeAreaInsets();
+    // Явный размер экрана для boardReadyOverlay (см. её стиль ниже) — тот же
+    // класс Android-бага, что и у GameDialogModal (см. комментарий у
+    // roadFrameSize): position:'absolute' внутри flex:1-родителя БЕЗ явного
+    // пиксельного размера на Android ненадёжен. useWindowDimensions — не
+    // onLayout, а системный размер окна, тут это уместно (оверлей и должен
+    // закрыть именно весь экран, не какой-то конкретный дочерний контейнер).
+    const windowDimensions = useWindowDimensions();
     const { user, isLoading: authLoading } = useAuth();
     const gameId = route?.params?.gameId ?? null;
     // См. LobbyScreen.js — true, только если сюда попали ПРЯМО из
@@ -490,6 +515,19 @@ export default function GameBoardScreen({ route, navigation }) {
     // резерва/спавн Мяча) позже в этой же партии.
     const reaperStartSkipUntilRef = useRef(0);
 
+    // Voice-реплика бегуна — ОТЛОЖЕНА до момента, когда его собственная поза
+    // РЕАЛЬНО начинает играть ('start'/'move', через onStart в
+    // triggerWithSound ниже), а не до момента появления доступных клеток
+    // (2026-10-12, по прямому запросу пользователя — "звук должен играть в
+    // момент анимации старта, а не когда появились клетки хода"; раньше это
+    // звучало сразу по смене player.step на MOVE, см. комментарий на месте
+    // старой записи ниже). { [runnerId]: soundSource } — звук УЖЕ выбран
+    // (pickActiveSoundSource) в момент постановки в очередь, не в момент
+    // проигрывания — статус бегуна на момент выбора реплики (damaged-вариант)
+    // не должен зависеть от того, сколько времени реплика прождала своей
+    // очереди.
+    const pendingVoiceLineRef = useRef({});
+
     // Оборачивает runnerAnim.trigger — сам визуальный триггер не трогаем
     // (lib/runnerAnimTriggers.js ничего не знает о звуке), тут ТОЛЬКО решаем,
     // что доп. проиграть по kind. Тип бегуна для 'attack' ищем в текущем
@@ -579,8 +617,23 @@ export default function GameBoardScreen({ route, navigation }) {
             const deathCommentOnStart = (kind === 'destroyed' || kind === 'acid' || kind === 'burn')
                 ? () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed))
                 : undefined;
-            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart || deathCommentOnStart)
-                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); deathCommentOnStart?.(); }
+            // Voice-реплика бегуна (см. pendingVoiceLineRef выше) — поставлена
+            // в очередь, когда для него появились клетки хода (reduceAndLog),
+            // проигрывается ТОЛЬКО тут, когда его СОБСТВЕННАЯ поза (первый
+            // выход из резерва — 'start', обычный ход — 'move') реально
+            // начинает играть. 'wait'/'fly'/прочие служебные kind её не
+            // потребляют (она ждёт следующего подходящего). once — достаём и
+            // сразу чистим, чтобы повторные накаты тем же бегуном в ЭТОМ же
+            // ходу не переигрывали реплику заново.
+            const queuedVoiceLine = (kind === 'start' || kind === 'move') ? pendingVoiceLineRef.current[runnerId] : null;
+            const voiceLineOnStart = queuedVoiceLine
+                ? () => {
+                    delete pendingVoiceLineRef.current[runnerId];
+                    playOneShot(voiceSound, queuedVoiceLine);
+                }
+                : undefined;
+            const combinedOnStart = (deathOnStart || cellReleaseOnStart || mineOnStart || deathCommentOnStart || voiceLineOnStart)
+                ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); deathCommentOnStart?.(); voiceLineOnStart?.(); }
                 : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
             else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra);
@@ -603,7 +656,7 @@ export default function GameBoardScreen({ route, navigation }) {
             // 'destroyed'/'acid'/'burn' — см. deathCommentOnStart выше, звук
             // теперь играет через onStart, не здесь.
         },
-        [runnerAnim.trigger, playOneShot, shootSound, startSound, commentSound, releaseHeldCellOnStart, mineBlasts.trigger],
+        [runnerAnim.trigger, playOneShot, shootSound, startSound, voiceSound, commentSound, releaseHeldCellOnStart, mineBlasts.trigger],
     );
 
     // 2026-09-27 — бэк перешёл на бандлинг Mercure-событий одного игрового
@@ -645,6 +698,12 @@ export default function GameBoardScreen({ route, navigation }) {
     // Танк) — исправлена в тот же день на формулу, основанную на
     // `collision`, не на владельце.
     const [pendingCollisionRoll, setPendingCollisionRoll] = useState(null);
+    // Восстановление из персистентного game.pendingCollision — см. эффект
+    // ПОСЛЕ объявления `game` (useMercure ниже), а не тут: `game` ещё не
+    // существует в этой точке скоупа (TDZ-краш "Cannot access 'game' before
+    // initialization" на каждом рендере — живой баг, найден на вебе сразу
+    // после добавления, 2026-10-12, не ловится статической сборкой бандла,
+    // только реальным рендером компонента).
     // Одноразовый комментарий (collision_*.wav) — ЗАЩИТА от двойного/
     // запоздалого звука (звук должен звучать синхронно с транзиентом
     // 'collision', не ждать цикл рендера BoardGrid). `collisionCommentPlayedRef`
@@ -746,16 +805,23 @@ export default function GameBoardScreen({ route, navigation }) {
                     const activeCount = (nextState.gamePlayers ?? []).filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
                     if (activeCount !== 1) playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
                 }
-                // Voice-реплика — когда для бегуна РЕАЛЬНО появляются зелёные
-                // клетки хода, т.е. шаг игрока становится MOVE. Диффим
-                // player.step ДО/ПОСЛЕ применения ЭТОГО шага цепочки. Играем
-                // для ЛЮБОГО игрока — все клиенты партии слышат один и тот
-                // же выбор.
+                // Voice-реплика — ставится в очередь (pendingVoiceLineRef), как
+                // только для бегуна РЕАЛЬНО появляются зелёные клетки хода (шаг
+                // игрока становится MOVE), но проигрывается НЕ тут — см.
+                // triggerWithSound#voiceLineOnStart, 2026-10-12, по прямому
+                // запросу пользователя: раньше звучала сразу в этот момент,
+                // ДО фактической постановки/хода бегуна, что при выходе из
+                // резерва воспринималось как "звук раньше анимации". Диффим
+                // player.step ДО/ПОСЛЕ применения ЭТОГО шага цепочки. Для
+                // ЛЮБОГО игрока — все клиенты партии слышат один и тот же
+                // выбор (реплика выбирается тут же, на этом клиенте, детерминизм
+                // между клиентами тут не нужен — это не игровой стейт).
                 for (const player of nextState.gamePlayers ?? []) {
                     const prevPlayer = current.gamePlayers?.find((p) => p.id === player.id);
                     if (player.step === PLAYER_STEP.MOVE && prevPlayer?.step !== PLAYER_STEP.MOVE && player.activeRunner != null) {
                         const runner = nextState.runners?.find((r) => String(r.id) === String(player.activeRunner));
-                        if (runner) playOneShot(voiceSound, pickActiveSoundSource(runner.type, runner.status));
+                        const source = runner ? pickActiveSoundSource(runner.type, runner.status) : null;
+                        if (source) pendingVoiceLineRef.current[runner.id] = source;
                     }
                 }
 
@@ -793,7 +859,7 @@ export default function GameBoardScreen({ route, navigation }) {
             return current;
         },
         [
-            pushLog, triggerWithSound, playOneShot, voiceSound, commentSound, mineBlasts.trigger,
+            pushLog, triggerWithSound, playOneShot, commentSound, mineBlasts.trigger,
             ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
         ],
     );
@@ -850,6 +916,31 @@ export default function GameBoardScreen({ route, navigation }) {
         reduce: reduceAndLog,
         onTransient,
     });
+
+    // Восстановление pendingCollisionRoll из персистентного
+    // game.pendingCollision (бэк, 2026-10-12, по нашему предложению —
+    // `RunnerGameViewModel::buildPendingCollision()`, те же данные, что
+    // несёт транзиент `collision`, но читаются из сохранённого
+    // `RunnerGameMove`, см. README бэка "Ожидающее столкновение"). Раньше
+    // это значение существовало ТОЛЬКО как транзиентное событие — клиент,
+    // пропустивший его (реконнект/холодный старт экрана ПОСЛЕ того, как
+    // коллизия уже началась), навсегда оставался без данных для диалога
+    // ("Заруба! Жду результат…" бесконечно), хотя game.extraTurnPlayer уже
+    // требовал решения. Guard `!pendingCollisionRoll` — не перезаписывает
+    // значение, уже выставленное транзиентом в этом же тике (обычный живой
+    // путь продолжает работать как раньше, этот эффект — только фолбэк).
+    // `lowRunnerId`/`topRunnerId` от бэка — те же роли, что раньше
+    // приходилось выводить из `runnerId`/`otherRunnerId` транзиента (см.
+    // collisionFlyingRunnerLabel ниже по файлу) — runnerId≡topRunnerId,
+    // otherRunnerId≡lowRunnerId, маппинг сохранён для совместимости с уже
+    // работающей формулой. Должен идти ПОСЛЕ объявления `game` выше (см.
+    // комментарий у pendingCollisionRoll за разбором TDZ-краша, который
+    // раньше был на этом месте).
+    useEffect(() => {
+        if (pendingCollisionRoll || !game?.pendingCollision) return;
+        const { lowRunnerId, topRunnerId, collision, direction } = game.pendingCollision;
+        setPendingCollisionRoll({ collision, direction, runnerId: topRunnerId, otherRunnerId: lowRunnerId });
+    }, [game?.pendingCollision, pendingCollisionRoll]);
 
     const {
         orientation,
@@ -1016,6 +1107,35 @@ export default function GameBoardScreen({ route, navigation }) {
         }),
         [runners, runnerAnim.anims],
     );
+
+    // Гейт первого показа активной доски — см. BOARD_READY_DELAY_MS выше.
+    // Реального "событие size settled" тут нет, поэтому НЕ привязан к
+    // смене `game`/версии — выставляется РОВНО один раз за жизнь этого
+    // маунта экрана (реконнект/новые версии game НЕ должны снова прятать
+    // уже показанный экран под спиннер).
+    const [boardReady, setBoardReady] = useState(false);
+    useEffect(() => {
+        if (boardReady) return undefined;
+        const t = setTimeout(() => setBoardReady(true), BOARD_READY_DELAY_MS);
+        return () => clearTimeout(t);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Реальный замер roadFrameWrap через onLayout НА САМОМ ФЛОУ-ЭЛЕМЕНТЕ
+    // (не на абсолютном потомке) — см. "Известные грабли RN/Android" в
+    // CLAUDE.md: "onLayout на абсолютно спозиционированном элементе внутри
+    // родителя с AUTO-высотой на Android может стабильно вернуть 0"/
+    // ошибочно схлопнуться. 2026-10-12, живой баг: GameDialogModal мерился
+    // ЧЕРЕЗ roadContainerW/H (computed-значения, НЕ фактический размер
+    // дороги — roadContainerW явно ИСКЛЮЧАЕТ labelStripW, см.
+    // useBoardLayout.js#boardBudgetW) — карточка оказывалась уже всей
+    // дороги и прижата влево, не по центру. Настоящий размер — только
+    // через onLayout этого реального View.
+    const [roadFrameSize, setRoadFrameSize] = useState(null);
+    const handleRoadFrameLayout = useCallback((e) => {
+        const { width, height } = e.nativeEvent.layout;
+        setRoadFrameSize((prev) => (prev?.width === width && prev?.height === height ? prev : { width, height }));
+    }, []);
 
     const [activePlayerId, setActivePlayerId] = useState(null);
     // { ability: 'heal'|'reaper', diceIndex } — ждём второй тап (карточка/клетка), см. шапку файла
@@ -2443,24 +2563,25 @@ export default function GameBoardScreen({ route, navigation }) {
             <PulseText active baseColor={colors.textOnDark} toColor={colors.success} style={styles.turnTitleMine}>
                 Твой ход
             </PulseText>
-            {pendingReaperPlacement && !busy ? (
-                // Три фазы одного и того же баннера, тот же приём турн-хинт-
-                // строки (текст+кнопки справа), что у pendingSelect/
-                // showRoadBonusChoice/showAbilitySkip — 2026-10-11, по
-                // прямому запросу пользователя: ДВА последовательных диалога
-                // ПОСЛЕ "прилёта" (до этого — approach-фаза, как и раньше,
-                // "Без выстрела"/"Отмена" доступны сразу, не дожидаясь
-                // reaperPreviewReady — та же логика, что была, см. старый
-                // комментарий у handleReaperShoot).
-                //   1) !reaperPreviewReady — "Жнец приближается…", те же
-                //      скип/отмена кнопки, что и раньше (можно пропустить
-                //      выстрел, не дожидаясь анимации прилёта).
-                //   2) reaperPreviewReady && !reaperConfirmed — НОВЫЙ диалог
-                //      подтверждения размещения: ✓ переходит к выбору
-                //      выстрела (reaperConfirmed=true), ✕ возвращает Жнеца
-                //      в руку (как и старое "Отмена" — отменяет усиление
-                //      целиком, ничего не отправляя на бэк).
-                //   3) reaperConfirmed — выбор выстрела: подсвеченные клетки
+            {pendingReaperPlacement && !busy && !reaperPreviewReady ? (
+                // Approach-фаза (Жнец ещё летит) — БЕЗ диалога вообще, ни
+                // текста, ни кнопок (2026-10-12, по прямому запросу
+                // пользователя после живой проверки: "Без выстрела" раньше
+                // появлялась РАНЬШЕ, чем долетал Жнец, что сбивало с толку —
+                // реверс решения 2026-10-11, см. CLAUDE.md). "Твой ход" над
+                // этим блоком остаётся видимым, просто без хинт-строки.
+                null
+            ) : pendingReaperPlacement && !busy ? (
+                // Два последовательных диалога ПОСЛЕ "прилёта" (approach-фаза
+                // — см. ветку выше), тот же приём турн-хинт-строки (текст+
+                // кнопки справа), что у pendingSelect/showRoadBonusChoice/
+                // showAbilitySkip — 2026-10-11, по прямому запросу
+                // пользователя.
+                //   1) !reaperConfirmed — подтверждение размещения: ✓
+                //      переходит к выбору выстрела (reaperConfirmed=true), ✕
+                //      возвращает Жнеца в руку (отменяет усиление целиком,
+                //      ничего не отправляя на бэк).
+                //   2) reaperConfirmed — выбор выстрела: подсвеченные клетки
                 //      на доске (см. highlightedCells) + «Скип» (красная,
                 //      тот же стиль/язык, что у showAbilitySkip/
                 //      showShootSkip). Если выстрела в принципе нет
@@ -2470,12 +2591,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 <View style={styles.turnHintRow}>
                     <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
                     <View style={styles.turnBtnRow}>
-                        {!reaperPreviewReady ? (
-                            <>
-                                <Button title="Без выстрела" variant="muted" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtnCompact} />
-                                <Button title="Отмена" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtnCompact} />
-                            </>
-                        ) : !reaperConfirmed ? (
+                        {!reaperConfirmed ? (
                             <>
                                 <Button title="✓" variant="success" onPress={() => setReaperConfirmed(true)} style={styles.turnSkipBtnCompact} />
                                 <Button title="✕" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtnCompact} />
@@ -2590,6 +2706,106 @@ export default function GameBoardScreen({ route, navigation }) {
         </Text>
     );
 
+    // dialogState — ВРЕМЕННЫЙ ДУБЛЬ turnBannerInner выше в виде отдельной
+    // модалки-карточки (GameDialogModal, 2026-10-12, по прямому запросу
+    // пользователя — "вытащить все уведомления/диалоги в модалку"). Не
+    // замена: turnBannerInner остаётся как есть, это параллельный рендер
+    // ТОГО ЖЕ состояния через ДРУГОЙ компонент — задача сначала проверить,
+    // что здесь оказались ВСЕ диалоги с выбором (плюс два явно запрошенных
+    // "ждущих" уведомления по коллизии, у которых кнопок в обычном случае
+    // нет), и только потом отдельным заходом убрать инлайн-версию. Простые
+    // безкнопочные подсказки шага (SELECT "Перетащи кубик…", MOVE "Выбери
+    // клетку…" и т.п.) — по прямому решению пользователя остаются ТОЛЬКО в
+    // шапке панели, сюда не дублируются. "Ход игрока: X" (не мой ход, нет
+    // коллизии) — та же категория, тоже не дублируется (не упоминалось в
+    // списке пользователя). Текст/условия/кнопки — скопированы 1:1 с веток
+    // turnBannerInner выше, НЕ переизобретены — при правке одной стороны
+    // не забыть вторую, пока обе существуют параллельно.
+    // НЕ useMemo — этот блок стоит ПОСЛЕ ранних `return` выше (!game/
+    // WAITING), значит на части рендеров до него вообще не доходит; хук
+    // тут нельзя (условный вызов хука — краш "Rendered more hooks than
+    // during the previous render", живьём поймано на вебе, 2026-10-12).
+    // Обычный IIFE, как и соседний turnBannerInner — та же логика (плоский
+    // JSX ниже тоже пересчитывается каждый рендер без memo), просто другая
+    // форма результата (объект, не JSX).
+    const dialogState = (() => {
+        if (trackShiftPhase) return { text: 'Трасса смещается…' };
+        if (game.extraTurnPlayer != null) {
+            const text = myCollision && pendingCollisionRoll
+                ? `Заруба! Результат: ${collisionFlyingRunnerLabel ?? 'бегун'} отлетит ${directionLabel(pendingCollisionRoll.direction)}. Принять?`
+                : myCollision
+                    ? 'Заруба! Жду результат…'
+                    : `Заруба! Ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`;
+            if (myCollision && !busy && collisionDecisionReady) {
+                return {
+                    text,
+                    buttons: [
+                        { key: 'accept', title: '✓', variant: 'success', onPress: () => handleCollision(true) },
+                        { key: 'reroll', title: '↻', variant: 'danger', onPress: () => handleCollision(false) },
+                    ],
+                };
+            }
+            if (!myCollision && showStuckRefresh) {
+                return {
+                    text,
+                    buttons: [{
+                        key: 'resync',
+                        title: 'Обновить состояние',
+                        variant: 'info',
+                        onPress: () => { runnerAnim.reset(); setPendingDeathRunnerIds(new Set()); resync(); },
+                    }],
+                };
+            }
+            return { text };
+        }
+        if (!myTurn) return null;
+        if (pendingReaperPlacement && !busy) {
+            // Approach-фаза (Жнец ещё летит из-за края карты) — БЕЗ диалога
+            // вообще, ни текста, ни кнопок (2026-10-12, по прямому запросу
+            // пользователя после живой проверки: "Без выстрела" раньше
+            // появлялась РАНЬШЕ, чем долетал Жнец, что сбивало с толку —
+            // реверс решения 2026-10-11, см. CLAUDE.md). Первый интерактивный
+            // диалог — только после посадки (reaperPreviewReady), подтверждение
+            // размещения.
+            if (!reaperPreviewReady) return null;
+            if (!reaperConfirmed) {
+                return {
+                    text: turnHintText,
+                    buttons: [
+                        { key: 'confirm', title: '✓', variant: 'success', onPress: () => setReaperConfirmed(true) },
+                        { key: 'cancel', title: '✕', variant: 'danger', onPress: () => setPendingReaperPlacement(null) },
+                    ],
+                };
+            }
+            return { text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: () => handleReaperShoot(undefined) }] };
+        }
+        if (pendingSelect && !busy) {
+            return {
+                text: turnHintText,
+                buttons: [
+                    { key: 'confirm', title: '✓', variant: 'success', onPress: handleConfirmSelect },
+                    { key: 'cancel', title: '✕', variant: 'danger', onPress: handleCancelSelect },
+                ],
+            };
+        }
+        if (showRoadBonusChoice) {
+            return {
+                text: turnHintText,
+                buttons: [
+                    { key: 'bonus', title: `Бонус +${game.trackGain ?? ''}`, variant: 'success', onPress: () => handleRoadBonus(true) },
+                    { key: 'skip', title: '✕', variant: 'danger', onPress: () => handleRoadBonus(false) },
+                ],
+            };
+        }
+        if (showAbilitySkip) {
+            return { text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleAbilitySkip }] };
+        }
+        if (showShootSkip) {
+            return { text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleShootSkip }] };
+        }
+        return null;
+    })();
+
     // Общий элемент для обеих раскладок (было продублировано дважды —
     // вынесено в переменную, чтобы новые пропы не пришлось синхронизировать
     // руками в двух местах, см. runnerAnims/currentTurnPlayerId ниже).
@@ -2660,6 +2876,15 @@ export default function GameBoardScreen({ route, navigation }) {
 
     return (
         <View style={[styles.wrapper, isPortrait && styles.wrapperPortrait]}>
+            {/* boardReady (см. BOARD_READY_DELAY_MS выше) — весь реальный контент экрана
+                смонтирован и меряется СРАЗУ (opacity:0, а не отложенный рендер), просто не
+                виден игроку, пока не пройдёт буфер — иначе сам спиннер ждал бы ещё и
+                первого реального монтирования, а не только замеров. pointerEvents='none' —
+                не даёт тапнуть по ещё не устаканившейся разметке, пока она скрыта. */}
+            <View
+                style={[styles.boardContent, isPortrait && styles.boardContentPortrait, { opacity: boardReady ? 1 : 0 }]}
+                pointerEvents={boardReady ? 'auto' : 'none'}
+            >
             {/* Гейт trackShiftPhase — по прямому запросу пользователя, 2026-09-09: если
                 game_finish пришёл ОДНОВременно со сдвигом фрагмента (типовой случай —
                 сдвиг уничтожает свободных бегунов соперника, тот уходит в OUT, у
@@ -2780,7 +3005,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     </View>
                 )}
 
-                <View style={styles.roadFrameWrap}>
+                <View style={styles.roadFrameWrap} onLayout={handleRoadFrameLayout}>
                     <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
                         {/* Полоса с именем фрагмента(ов) слева от сетки — под неё
                             зарезервирована ширина (labelStripW, см. useBoardLayout)
@@ -2847,6 +3072,13 @@ export default function GameBoardScreen({ route, navigation }) {
                             </FramedSquare>
                         </View>
                     )}
+                    {/* ВРЕМЕННЫЙ ДУБЛЬ turnBannerInner — см. dialogState выше за
+                        полным разбором. Ребёнок roadFrameWrap (не корневого
+                        wrapper) — по прямому запросу пользователя, 2026-10-12:
+                        карточка должна сидеть поверх ВЕРХНЕЙ части дороги, не
+                        по центру всего экрана. Последний ребёнок — поверх
+                        рамки/кнопок навигации дороги тоже. */}
+                    <GameDialogModal dialogState={dialogState} width={roadFrameSize?.width} height={roadFrameSize?.height} />
                 </View>
             </View>
 
@@ -3000,6 +3232,12 @@ export default function GameBoardScreen({ route, navigation }) {
             ) : (
                 <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
             )}
+            </View>
+            {!boardReady && (
+                <View style={[styles.boardReadyOverlay, { width: windowDimensions.width, height: windowDimensions.height }]}>
+                    <LoadingCard label={STATUS_LABEL[status] ?? ''} />
+                </View>
+            )}
         </View>
     );
 }
@@ -3019,6 +3257,19 @@ const styles = StyleSheet.create({
     // панель снизу (см. useBoardLayout.orientation).
     wrapper: { flex: 1, flexDirection: 'row' },
     wrapperPortrait: { flexDirection: 'column' },
+    // boardContent/boardContentPortrait — зеркалят wrapper/wrapperPortrait один
+    // в один (та же row/column-раскладка панели+доски), просто на один уровень
+    // глубже — см. boardReady выше: нужна отдельная обёртка, чтобы гасить
+    // opacity ТОЛЬКО реального контента, не самого спиннера-оверлея (тот —
+    // соседний, не вложенный, элемент wrapper).
+    boardContent: { flex: 1, flexDirection: 'row' },
+    boardContentPortrait: { flexDirection: 'column' },
+    // position:'absolute' + top/left:0 + явный width/height (прокинуты инлайн
+    // в месте рендера, useWindowDimensions) — НЕ absoluteFillObject
+    // (top/left/right/bottom:0): та же Android-ненадёжность растягивания
+    // через right/bottom внутри flex:1-родителя без явного размера, что и у
+    // GameDialogModal (см. roadFrameSize-комментарий выше).
+    boardReadyOverlay: { position: 'absolute', top: 0, left: 0, alignItems: 'center', justifyContent: 'center' },
     // roadFrameWrap — обёртка под MobileFrameOverlay (та ОСТАЁТСЯ у дороги,
     // не трогали, 2026-10-10), ТОЛЬКО position:'relative', БЕЗ overflow:
     // 'hidden' — рамка сама заполняет её РОВНО (не вылезает за границы, см.
