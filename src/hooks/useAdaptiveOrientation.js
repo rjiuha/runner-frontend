@@ -1,25 +1,20 @@
 // src/hooks/useAdaptiveOrientation.js
-import { useEffect } from 'react';
-import { Platform } from 'react-native';
-import * as ScreenOrientation from 'expo-screen-orientation';
 
 /**
- * Раньше (useLockLandscape) жёстко блокировала альбомную ориентацию на весь
- * срок жизни экрана — GameBoardScreen был только альбомным. Теперь раскладка
- * адаптивная (см. useBoardLayout — переключается по фактическому screenW/screenH),
- * поэтому вместо лока снимаем ограничение ориентации на время экрана сессии
- * (app.json на уровне всего приложения жёстко ставит "portrait" — это лочит
- * ротацию на ВСЕХ остальных экранах, которые эту раскладку не поддерживают).
- * На выходе с экрана возвращаем portrait-лок, как и на остальном приложении.
- * На вебе expo-screen-orientation не поддерживается — молча выходим (там
- * ориентацию и так определяет форма окна, а не системный поворот).
+ * 2026-10-15, по прямому запросу пользователя — "залочь портретный режим на
+ * Android, landscape не нужен вообще": хук сведён к no-op. Раньше (см. git-
+ * историю) на время экрана партии СНИМАЛ системный лок ориентации (app.json
+ * на уровне всего приложения ставит "portrait"), чтобы физический поворот
+ * устройства переключал альбомную раскладку панели (orientation из
+ * useBoardLayout — панель слева вместо снизу). Теперь это больше не нужно —
+ * app.json's "portrait" остаётся в силе и на экране партии тоже, никакого
+ * unlockAsync() не вызывается. Сам вызов `useAdaptiveOrientation()` в
+ * GameBoardScreen.js оставлен (не трогали — убирать вызов без необходимости
+ * не входило в объём запроса), просто теперь ничего не делает.
+ *
+ * Веб не затронут — там ориентацию и так всегда определяет форма окна, не
+ * системный поворот (expo-screen-orientation на вебе не поддерживается).
  */
 export function useAdaptiveOrientation() {
-    useEffect(() => {
-        if (Platform.OS === 'web') return;
-        ScreenOrientation.unlockAsync();
-        return () => {
-            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-        };
-    }, []);
+    // Намеренно пусто.
 }

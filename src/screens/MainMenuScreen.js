@@ -132,6 +132,18 @@ export default function MainMenuScreen({ navigation }) {
       setModalOpen(false);
       navigation.navigate(ROUTES.LOBBY, { lobbyId: lobby.id });
     } catch (e) {
+      // Уже есть НЕЗАВЕРШЁННАЯ партия (ACTIVE_GAME_EXISTS, см. ApiError.js —
+      // ТОТ же приём, что уже был у "ты уже в лобби" ниже) — 2026-10-15, по
+      // прямому запросу пользователя: вместо тоста сразу уводим в партию,
+      // той же навигацией, что и checkSession выше при обычном заходе в меню.
+      if (e.activeGameId != null) {
+        setModalOpen(false);
+        navigation.reset({
+          index: 0,
+          routes: [{ name: ROUTES.RUNNER_GAME, params: { gameId: e.activeGameId } }],
+        });
+        return;
+      }
       // Самый частый случай — «ты уже в лобби».
       // Тогда не показываем ошибку, а просто отводим туда, где он есть.
       const existing = await lobbyApi.mine().catch(() => null);

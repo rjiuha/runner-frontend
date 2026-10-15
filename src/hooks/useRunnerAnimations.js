@@ -196,6 +196,38 @@ const TERMINAL_HIDE_DELAY_MS = { destroyed: DESTROYED_HIDE_DELAY_MS, burn: 2200,
  * кадром. Шаги без реального перемещения (attack/gotShot/анимация-пульс
  * аномалии) `toPosition` не несут и текущую визуальную позицию не трогают.
  */
+// **2026-10-15, causedBy/seq-рефакторинг** (по прямому запросу пользователя,
+// бэк реализовал `causedBy`/`seq` на каждом элементе `sequence` 2026-10-14 —
+// см. README бэка: "Анимацию элемента можно начинать, когда доиграна
+// анимация элемента с seq === causedBy"). Раньше очередность МЕЖДУ разными
+// событиями одного бандла (не внутри одного runnerId — та уже была честной,
+// см. очередь по runnerId выше) держалась на array-order + узких эвристиках
+// (например onceStepDone/completeWaitStep — но ТОЛЬКО для пары при
+// коллизии, захардкожено). Этот блок — ОБЩИЙ, любой вызывающий код
+// (GameBoardScreen.js#reduceAndLog/onTransient) может спросить "а анимация
+// ключа X уже доиграла?" и подождать, вместо того чтобы изобретать свой
+// 'wait'-механизм под каждый новый класс каскада.
+//
+// `seq` здесь — НЕ сырой бэковый `seq` (тот локален для одного бандла,
+// нумерация начинается с 0 в КАЖДОМ бандле — одинаковые числа в разных
+// бандлах иначе читались бы как один и тот же ключ) — вызывающий код обязан
+// скомпоновать глобально уникальный ключ (например `${bundleId}:${seq}`,
+// см. GameBoardScreen.js#bundleCounterRef) и передавать именно его и в
+// `trigger(..., key)`, и в `onceSeqDone(causeKey, cb)`.
+//
+// Трёхзначная семантика ключа:
+//   - НЕ встречался (ни scheduleSeq, ни trigger ни разу не видели его) —
+//     либо вообще не было такого элемента в бандле, либо что-то разошлось
+//     по краю (не должно случаться при корректном вызывающем коде) —
+//     onceSeqDone зовёт callback СРАЗУ (fail-open, не вешаем игру намертво
+//     на баг сопоставления ключей).
+//   - scheduleSeq() был вызван для ключа, но trigger() с этим ключом либо
+//     ещё не вызывался, либо уже вызывался и ЕЩЁ ИГРАЕТ — onceSeqDone кладёт
+//     callback в очередь ожидания.
+//   - ключ пометили settled (через settleSeqIfIdle — если за ключом вообще
+//     не было ни одного trigger(), он "немедленно свой" — или через
+//     естественное доигрывание ВСЕХ созданных для него шагов) — onceSeqDone
+//     зовёт callback СРАЗУ.
 export function useRunnerAnimations() {
     const [anims, setAnims] = useState({});
     const [visualPositions, setVisualPositions] = useState({});
@@ -204,6 +236,12 @@ export function useRunnerAnimations() {
     // в позе уничтожения. Персистентно до reset() (полный ресинк стейта).
     const [hiddenIds, setHiddenIds] = useState(() => new Set());
     const queues = useRef({}); // { [runnerId]: Array<{ kind, extra }> }
+    // Причинная очерёдность МЕЖДУ событиями (см. докстринг выше) — отдельная
+    // от очереди ПО runnerId (`queues`/`active` ниже, не трогаем).
+    const scheduledSeqsRef = useRef(new Set()); // ключи, про которые вызывающий код сказал "это элемент бандла"
+    const pendingBySeqRef = useRef({}); // { [key]: сколько шагов очереди ещё не доиграло }
+    const settledSeqsRef = useRef(new Set()); // ключи, у которых всё доиграло (или их не было вовсе)
+    const seqWaitersRef = useRef({}); // { [key]: Array<callback> }
     // { [runnerId]: {kind, extra, nonce} | null } — текущий играемый шаг.
     // `nonce` (проставляется ниже, в момент когда шаг РЕАЛЬНО начинает
     // играть) — это то, что completeStep() сверяет с сигналом снаружи
@@ -235,6 +273,66 @@ export function useRunnerAnimations() {
         }
     }, []);
 
+    // Причинная очерёдность (см. докстринг модуля выше) — четыре примитива:
+    // markSeqScheduled (вызывающий код объявляет "этот ключ — реальный
+    // элемент бандла, который либо прямо сейчас обрабатывается, либо
+    // ОТЛОЖЕН и будет обработан позже"), settleStepSeq (вызывается отсюда,
+    // из advanceQueue/finishTerminal, когда ОДИН конкретный шаг очереди,
+    // созданный trigger(..., key), реально закончился), settleSeqIfIdle
+    // (вызывающий код зовёт его ПОСЛЕ синхронного запуска эффектов элемента
+    // — если за это время НИ ОДНОГО trigger() с этим key не случилось,
+    // ждать нечего, settled немедленно) и onceSeqDone (сам ожидатель).
+    const noteSeqSettled = useCallback((key) => {
+        if (key == null) return;
+        settledSeqsRef.current.add(key);
+        const waiters = seqWaitersRef.current[key];
+        if (!waiters) return;
+        delete seqWaitersRef.current[key];
+        waiters.forEach((cb) => cb());
+    }, []);
+
+    const markSeqScheduled = useCallback((key) => {
+        if (key != null) scheduledSeqsRef.current.add(key);
+    }, []);
+
+    // Шаг очереди (с привязанным key) реально закончился — досчитываем
+    // счётчик этого key до нуля и тогда settled. Один key может породить
+    // НЕСКОЛЬКО шагов очереди (например один элемент бандла двигает сразу
+    // двух бегунов, см. ловушку Жнеца в lib/runnerAnimTriggers.js) —
+    // засчитываем settled только когда ВСЕ из них доиграли.
+    const settleStepSeq = useCallback((step) => {
+        const key = step?.seq;
+        if (key == null) return;
+        const left = (pendingBySeqRef.current[key] ?? 1) - 1;
+        if (left > 0) {
+            pendingBySeqRef.current[key] = left;
+            return;
+        }
+        delete pendingBySeqRef.current[key];
+        noteSeqSettled(key);
+    }, [noteSeqSettled]);
+
+    // Вызывающий код зовёт это СРАЗУ после синхронного прогона эффектов
+    // элемента с этим key — если ни один trigger() за это время не
+    // зарегистрировал на него шаг (pendingBySeqRef[key] всё ещё 0/undefined),
+    // ждать нечего, settled прямо сейчас. Если регистрировал — settled
+    // наступит позже сам, через settleStepSeq, трогать тут нечего.
+    const settleSeqIfIdle = useCallback((key) => {
+        if (key != null && !pendingBySeqRef.current[key]) noteSeqSettled(key);
+    }, [noteSeqSettled]);
+
+    // Ждёт "эффекты элемента с key доиграли" — см. трёхзначную семантику в
+    // докстринге модуля. callback синхронный (не Promise) — тот же стиль,
+    // что и onceStepDone ниже, вызывающему коду (GameBoardScreen.js) так
+    // проще, не нужно тащить async/await в reduce()-колбэк useMercure.
+    const onceSeqDone = useCallback((key, callback) => {
+        if (key == null || settledSeqsRef.current.has(key) || !scheduledSeqsRef.current.has(key)) {
+            callback();
+            return;
+        }
+        (seqWaitersRef.current[key] ??= []).push(callback);
+    }, []);
+
     // Терминальный "хвост" (destroyed/burn/acid) — общий и для обычного
     // таймера (advanceQueue), и для настоящего сигнала завершения
     // (completeStep, см. ниже) — вынесено, чтобы оба пути гарантированно
@@ -243,6 +341,7 @@ export function useRunnerAnimations() {
     const finishTerminal = useCallback((runnerId) => {
         poseLog('finishTerminal — прячем бегуна', runnerId, 'kind=', active.current[runnerId]?.kind);
         fireStepWaiters(runnerId, active.current[runnerId]);
+        settleStepSeq(active.current[runnerId]);
         setAnims((prev) => {
             if (!(runnerId in prev)) return prev;
             const next = { ...prev };
@@ -250,7 +349,7 @@ export function useRunnerAnimations() {
             return next;
         });
         setHiddenIds((prev) => (prev.has(runnerId) ? prev : new Set(prev).add(runnerId)));
-    }, [fireStepWaiters]);
+    }, [fireStepWaiters, settleStepSeq]);
 
     // Одна самозацикленная функция вместо пары play()/advance(), вызывающих
     // друг друга — избегает циклической зависимости между двумя useCallback.
@@ -259,6 +358,7 @@ export function useRunnerAnimations() {
     // присвоена (это асинхронный колбэк, а не немедленный вызов при определении).
     const advanceQueue = useCallback((runnerId) => {
         fireStepWaiters(runnerId, active.current[runnerId]);
+        settleStepSeq(active.current[runnerId]);
         active.current[runnerId] = null;
         const step = queues.current[runnerId]?.shift();
         if (!step) {
@@ -280,6 +380,9 @@ export function useRunnerAnimations() {
         active.current[runnerId] = step;
         const { kind, extra } = step;
         const { toPosition, pending, onStart, ...animExtra } = extra ?? {};
+        // animExtra уходит в setAnims (рендер) — step.seq (причинный ключ,
+        // см. докстринг модуля выше) туда НЕ должен попасть, он читается
+        // только отсюда (settleStepSeq) и не нужен ни одному компоненту.
         // Заготовка (pending) ЕЩЁ НЕ несёт позицию — если показать её позу
         // прямо сейчас, токен на пару кадров "шагает на месте" (поза уже
         // сменилась, x/y — ещё старые), а когда чуть позже придёт мердж с
@@ -314,7 +417,14 @@ export function useRunnerAnimations() {
         }
 
         if (kind === 'destroyed' || kind === 'burn' || kind === 'acid') {
-            queues.current[runnerId] = []; // терминально — остальная очередь неважна
+            // Терминально — остальная очередь неважна и никогда не доиграет
+            // ни одним кадром. Но если среди отбрасываемых шагов есть
+            // причинно отслеживаемые (step.seq, см. докстринг модуля) —
+            // их ключи обязаны settled'ся ПРЯМО СЕЙЧАС, а не повиснуть
+            // навечно (кто-то мог ждать именно их через onceSeqDone).
+            const discarded = queues.current[runnerId];
+            queues.current[runnerId] = [];
+            discarded?.forEach(settleStepSeq);
             // Не оставляем бегуна вечно висеть в терминальной позе — после
             // того, как анимация успела показаться, прячем токен с доски
             // насовсем (см. hiddenIds выше). TERMINAL_HIDE_DELAY_MS теперь —
@@ -354,16 +464,32 @@ export function useRunnerAnimations() {
             () => advanceQueue(runnerId),
             pending ? PENDING_SAFETY_TIMEOUT_MS : kind === 'wait' ? KNOCKBACK_WAIT_MS : (ANIM_DURATION_MS[kind] ?? 900),
         );
-    }, [finishTerminal, fireStepWaiters]);
+    }, [finishTerminal, fireStepWaiters, settleStepSeq]);
 
+    // `seq` (5-й параметр, опциональный) — причинный ключ элемента бандла,
+    // ЧЕЙ эффект породил этот конкретный trigger()-вызов (см. докстринг
+    // модуля выше про onceSeqDone/settleStepSeq). Вызывающий код
+    // (GameBoardScreen.js) всегда передаёт его при обработке
+    // bundle.sequence — null/undefined (ручные локальные триггеры вроде
+    // превью Жнеца при размещении) просто не участвует в причинном учёте,
+    // settleStepSeq/advanceQueue тихо не находят `step.seq` и не делают
+    // ничего лишнего.
     const trigger = useCallback(
-        (runnerId, kind, extra) => {
+        (runnerId, kind, extra, seq) => {
             if (runnerId == null) return;
+            if (seq != null) pendingBySeqRef.current[seq] = (pendingBySeqRef.current[seq] ?? 0) + 1;
             if (!queues.current[runnerId]) queues.current[runnerId] = [];
             const queue = queues.current[runnerId];
             const mergeTarget = queue.length ? queue[queue.length - 1] : active.current[runnerId];
 
             if (mergeTarget?.extra?.pending && extra?.toPosition) {
+                // Мёртвая ветка на практике (никто больше не вызывает
+                // trigger(..., {pending:true}) — см. докстринг класса JSDoc
+                // useRunnerAnimations, "pending-слияние": с 2026-09-27
+                // step_move не используется) — причинный seq мерджащего
+                // вызова здесь намеренно НЕ учитывается (settleStepSeq
+                // читает только step.seq первого trigger()), если ветка
+                // когда-нибудь оживёт — пересмотреть вместе с остальным.
                 // Заготовка от 'anomaly' (kind уже 'fly', см. lib/runnerAnimTriggers)
                 // держит kind — вход в/из аномалии всегда 'fly', даже если
                 // следующий runner_save по эвристике forwardNeighbors решил бы
@@ -415,7 +541,7 @@ export function useRunnerAnimations() {
                 return;
             }
 
-            queue.push({ kind, extra });
+            queue.push({ kind, extra, seq });
             if (!active.current[runnerId]) advanceQueue(runnerId);
         },
         [advanceQueue],
@@ -521,6 +647,14 @@ export function useRunnerAnimations() {
     // а не то, что синхронно успело встать в очередь раньше; уже стоявшая
     // терминальная поза остаётся ЗА ним и играет, как и задумано, уже ПОСЛЕ
     // приземления.
+    // 2026-10-15: 'wait' и следующий за ним 'fly' — ОДНО и то же причинное
+    // следствие (один `runner_save` с reason:'collision', просто разыгранное
+    // фронтом в два визуальных шага, см. причинную очерёдность в докстринге
+    // модуля) — переносим current.seq на вставляемый шаг и снимаем с
+    // 'wait', ДО вызова advanceQueue(): иначе её generic settle (вызывается
+    // прямо из advanceQueue на то, что только что было активно) засчитал бы
+    // settled ПРЕЖДЕВРЕМЕННО, в момент конца 'wait', а не когда реально
+    // доиграет 'fly' — кто-то мог ждать именно финального приземления.
     const completeWaitStep = useCallback((runnerId, nextKind, nextExtra) => {
         const current = active.current[runnerId];
         if (!current || current.kind !== 'wait') return;
@@ -529,7 +663,8 @@ export function useRunnerAnimations() {
             delete timers.current[runnerId];
         }
         if (nextKind) {
-            queues.current[runnerId] = [{ kind: nextKind, extra: nextExtra }, ...(queues.current[runnerId] ?? [])];
+            queues.current[runnerId] = [{ kind: nextKind, extra: nextExtra, seq: current.seq }, ...(queues.current[runnerId] ?? [])];
+            current.seq = undefined;
         }
         advanceQueue(runnerId);
     }, [advanceQueue]);
@@ -540,10 +675,22 @@ export function useRunnerAnimations() {
         queues.current = {};
         active.current = {};
         stepWaitersRef.current = {};
+        // Причинная очерёдность (см. докстринг модуля) — та же логика, что и
+        // у остального стейта выше: полный ресинк (reconnect/resync) рвёт
+        // ЛЮБУЮ цепочку ожиданий, зависшие waiters иначе никогда не позвали
+        // бы свой callback (ключи были локальны прошлому bundleCounterRef в
+        // GameBoardScreen.js, который тоже не переживает этот reset).
+        scheduledSeqsRef.current = new Set();
+        pendingBySeqRef.current = {};
+        settledSeqsRef.current = new Set();
+        seqWaitersRef.current = {};
         setAnims({});
         setVisualPositions({});
         setHiddenIds(new Set());
     }, []);
 
-    return { anims, visualPositions, hiddenIds, trigger, completeStep, onceStepDone, completeWaitStep, reset };
+    return {
+        anims, visualPositions, hiddenIds, trigger, completeStep, onceStepDone, completeWaitStep, reset,
+        markSeqScheduled, settleSeqIfIdle, onceSeqDone,
+    };
 }

@@ -27,6 +27,20 @@ export class ApiError extends Error {
         return this.status === 404;
     }
 
+    /**
+     * gameId активной партии пользователя — только для ошибки
+     * ACTIVE_GAME_EXISTS (`POST /api/lobby`/`POST /api/lobby/{id}/join`,
+     * когда у игрока уже есть незавершённая партия, см.
+     * `LobbyException::activeGameExists()` на бэке, read-only). `null` для
+     * любой другой ошибки — экранам не нужно самим лезть в сырой
+     * `payload.error.details`, 2026-10-15, по прямому запросу пользователя
+     * (редирект вместо тоста на создании/входе в лобби).
+     */
+    get activeGameId() {
+        if (this.code !== 'ACTIVE_GAME_EXISTS') return null;
+        return this.payload?.error?.details?.gameId ?? null;
+    }
+
     /** Текст для пользователя */
     get userMessage() {
         if (this.isNetwork) return 'Нет связи с сервером. Проверь подключение.';

@@ -93,6 +93,16 @@ export default function LobbySearchScreen({ navigation }) {
       const joined = await lobbyApi.join(lobby.id);
       navigation.navigate(ROUTES.LOBBY, { lobbyId: joined.id });
     } catch (e) {
+      // Уже есть НЕЗАВЕРШЁННАЯ партия (ACTIVE_GAME_EXISTS, см. ApiError.js) —
+      // 2026-10-15, по прямому запросу пользователя, тот же приём, что и у
+      // "создать лобби" в MainMenuScreen.js — сразу в партию, без тоста.
+      if (e.activeGameId != null) {
+        navigation.reset({
+          index: 0,
+          routes: [{ name: ROUTES.RUNNER_GAME, params: { gameId: e.activeGameId } }],
+        });
+        return;
+      }
       // Гонка: пока список рисовался, место заняли.
       // Не выкидываем с экрана — сообщаем и обновляем список.
       notify('Не удалось войти', e.userMessage ?? e.message);

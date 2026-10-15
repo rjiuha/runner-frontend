@@ -92,6 +92,22 @@ const REAPER_TRACK_SHIFT_FLY_OFF_ROWS = 10;
  * `e.reason` во всех проверках ниже.
  */
 export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
+    // Спавн Мяча — НЕ 'runner_save' (найдено аудитом контракта, 2026-10-15,
+    // не проверено живьём): `RunnerBallInitService::run()` на бэке зовёт
+    // `new RunnerSaveEvent($runner, 'ball')`, а сам конструктор события
+    // склеивает имя как `'runner_' . $event` → РЕАЛЬНОЕ имя на проводе —
+    // `runner_ball`, не `runner_save`. Старая ветка ниже (`patch.type ===
+    // 'ball'` внутри `if (e.event === 'runner_save')`) физически никогда не
+    // попадала в этот случай — оставлена как есть (безвредна, вдруг когда-то
+    // Мяч всё же получит обычный `runner_save` на дальнейшее движение), а
+    // спавн обрабатывается здесь, отдельно, под правильным именем события.
+    if (e.event === 'runner_ball') {
+        const patch = e.runnerId;
+        const toPosition = { segment: patch.segment, positionX: patch.positionX, positionY: patch.positionY };
+        trigger(patch.id, 'start', { toPosition, runnerType: patch.type });
+        return;
+    }
+
     if (e.event === 'runner_save') {
         const patch = e.runnerId;
         const prev = prevGame?.runners?.find((r) => r.id === patch.id);
@@ -103,7 +119,8 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             // (холодный коннект/resync), молчим, просто idle. "Мяч" —
             // принципиально другой случай, см. старый докстринг: создаётся
             // заново на каждой danger-коллизии, !prev тут ВСЕГДА "только что
-            // появился".
+            // появился" — на практике спавн теперь идёт через 'runner_ball'
+            // выше, эта строка остаётся защитным фолбэком.
             if (patch.type === 'ball') trigger(patch.id, 'start', { toPosition, runnerType: patch.type });
             return;
         }
@@ -314,33 +331,20 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
     }
 
     if (e.event === 'step_shoot') {
-        // Выстрел не двигает стрелка — нет versioned-сигнала о позиции
-        // вообще, единственный источник направления — сам этот транзиент.
-        // Целится через ТУ ЖЕ hex-геометрию, что и шаг (canShoot() на бэке
-        // проверяет ровно тех же соседей, что и движение) — чисто боковой
-        // выстрел на "смещённую" (нечётную) дорожку визуально идёт south-*,
-        // не north-*, та же поправка, что и у обычного шага.
         if (!e.accept) return;
         const direction = e.direction ?? 'UP';
-        // String() — `e.activeRunner` приходит от `RunnerPlayer::$activeRunner`
-        // (бэк, `?string`), а `runner.id` в game-стейте — число (`Runner::$id`,
-        // `?int`) — тот же разъезд типов, что уже учтён везде в проекте для
-        // этого поля (GameBoardScreen.js/PlayerInfoPanel.js — все через
-        // String()), но был пропущен именно тут: строгое `===` никогда не
-        // совпадало → `shooter` всегда `undefined` → depthChanged/
-        // targetLaneShifted всегда false → выстрел
-        // на смещённую (нечётную) дорожку визуально всегда шёл "по умолчанию"
-        // (north-вариант спрайта), а не в реальном направлении.
-        const shooter = prevGame?.runners?.find((r) => String(r.id) === String(e.activeRunner));
-        let depthChanged = false;
-        let targetLaneShifted = false;
-        if (shooter?.segment != null) {
-            const target = neighborPosition(shooter, direction);
-            if (target) {
-                depthChanged = target.positionX !== shooter.positionX;
-                targetLaneShifted = target.positionY % 2 === 0;
-            }
-        }
+        // 2026-10-15 (найдено аудитом контракта, не проверено живьём):
+        // `StepShootEvent` (бэк) теперь несёт `from`/`to` явно — клетка
+        // стрелка и клетка цели, оба `Cell::toArray()` = {segment,
+        // positionX, positionY}, ВСЕГДА заполнены, когда `accept:true`
+        // (`StepShootService::run()` строит их до постановки события в
+        // очередь, read-only). Раньше это пересчитывалось вручную —
+        // искали стрелка в prevGame.runners по id (с типовым разъездом
+        // string/int, был отдельный баг, см. историю) и гоняли ту же
+        // hex-геометрию (`neighborPosition`), что и подсветка легальных
+        // клеток ДО хода — теперь просто читаем готовый результат.
+        const depthChanged = e.to.positionX !== e.from.positionX;
+        const targetLaneShifted = e.to.positionY % 2 === 0;
         trigger(e.activeRunner, 'attack', { direction, depthChanged, targetLaneShifted });
     }
 }

@@ -17,7 +17,9 @@ import GameFinishModal from '../components/game/GameFinishModal';
 import EventLogPanel from '../components/game/EventLogPanel';
 import GameMenuButton from '../components/game/GameMenuButton';
 import GameMenuModal from '../components/game/GameMenuModal';
+import GameSettingsHubModal from '../components/game/GameSettingsHubModal';
 import GameSettingsModal from '../components/game/GameSettingsModal';
+import GameGeneralSettingsModal from '../components/game/GameGeneralSettingsModal';
 import PlayerSwitchPanel, { SWITCH_ASPECT } from '../components/game/PlayerSwitchPanel';
 import FramedSquare from '../components/game/FramedSquare';
 import Button from '../components/ui/Button';
@@ -186,6 +188,12 @@ function findRunnerAt(runners, pos) {
 function rawCellType(game, segment, positionX, positionY) {
     return game?.[SEGMENT_KEYS[segment]]?.grid?.[positionX]?.[positionY] ?? null;
 }
+
+// Зеркалит ALLOWLIST бэка (ReaperValidator::validateCell(), read-only,
+// D:\Programming\runner-game-backend — ТОЛЬКО road/sand/mud, не блэклист) —
+// см. место использования (handleCellPress-подсветка размещения Жнеца) за
+// полным разбором найденного аудитом контракта бага 2026-10-15.
+const REAPER_ALLOWED_CELL_TYPES = new Set(['road', 'sand', 'mud']);
 
 // Человеко-понятная подсказка "что делать", раз на экране нет туториала —
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
@@ -585,8 +593,15 @@ export default function GameBoardScreen({ route, navigation }) {
     // — точечный прогрев конкретного ассета типа reaperAttackPreloadSource
     // (был здесь, удалён при миграции) больше не нужен, но не проверено
     // живьём.)
+    // 2026-10-15: `seq` (5-й параметр, опциональный) — причинный ключ
+    // элемента bundle.sequence, чей эффект вызвал этот triggerWithSound (см.
+    // useRunnerAnimations.js#onceSeqDone/bundleCounterRef ниже) — просто
+    // прокидывается в runnerAnim.trigger, сама функция его не читает.
+    // Локальные вызовы ВНЕ обработки bundle.sequence (превью Жнеца при
+    // размещении и т.п.) зовут без 5-го аргумента — undefined не участвует
+    // в причинном учёте.
     const triggerWithSound = useCallback(
-        (runnerId, kind, extra) => {
+        (runnerId, kind, extra, seq) => {
             // Подавляем ТОЛЬКО визуальный триггер (дублирующий walk-цикл) —
             // звук "прилёта" (drone_start.wav) всё равно проигрываем: во
             // время локального превью никакого звука не было (превью чисто
@@ -681,7 +696,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 ? () => { deathOnStart?.(); cellReleaseOnStart?.(); mineOnStart?.(); deathCommentOnStart?.(); radiationOnStart?.(); voiceLineOnStart?.(); }
                 : undefined;
             if (suppressAnim) reaperStartSkipUntilRef.current = 0;
-            else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra);
+            else runnerAnim.trigger(runnerId, kind, combinedOnStart ? { ...extra, onStart: combinedOnStart } : extra, seq);
             if (kind === 'attack') {
                 const type = gameRef.current?.runners?.find((r) => String(r.id) === String(runnerId))?.type;
                 playOneShot(shootSound, pickShootSoundSource(type));
@@ -748,10 +763,40 @@ export default function GameBoardScreen({ route, navigation }) {
     // null (коллизия ПОЛНОСТЬЮ разрешена).
     const collisionCommentPlayedRef = useRef(false);
 
+    // Причинная очерёдность (см. докстринг reduceAndLog ниже и
+    // useRunnerAnimations.js) — `e.seq` локален одному бандлу, этот счётчик
+    // даёт каждому бандлу свой уникальный префикс ключа.
+    const bundleCounterRef = useRef(0);
+
+    // 2026-10-15, causedBy/seq-рефакторинг (по прямому запросу пользователя
+    // — см. useRunnerAnimations.js за полным докстрингом механизма и README
+    // бэка за контрактом `seq`/`causedBy`). Раньше ВСЕ side-effects одного
+    // элемента цепочки (анимации/звуки/заморозка клетки/вскрытие мины)
+    // запускались СИНХРОННО, прямо по ходу этого же цикла, в ПОРЯДКЕ МАССИВА
+    // — что при каскадах иногда давало неверный визуальный порядок (3
+    // repro-кейса, зафиксированные в CLAUDE.md: мина молчит, потому что
+    // клетка уже помечена активированной более ранним шагом ТОЙ ЖЕ цепочки;
+    // отброс цели выстрела Жнеца телепортируется во время анимации атаки;
+    // звук "заруба" аномалии играет раньше, чем сосед реально сдвинулся).
+    // Теперь: СТЕЙТ (`runnerGameReducer`) продолжает фолдиться СИНХРОННО и
+    // БЕЗУСЛОВНО для КАЖДОГО элемента, как и раньше (игровая логика — чьи
+    // сейчас легальные ходы, чей шаг — не должна ждать анимацию, см. правило
+    // работы в CLAUDE.md про узкие правки) — а вот запуск АНИМАЦИЙ/ЗВУКОВ
+    // этого элемента (runEffects ниже) откладывается до тех пор, пока не
+    // доиграет анимация элемента-ПРИЧИНЫ (`e.causedBy`), если она ещё
+    // играет — см. `runnerAnim.onceSeqDone`. Для большинства элементов
+    // (`causedBy: null` — независимые/добровольные действия) это НЕ МЕНЯЕТ
+    // поведение вообще: onceSeqDone зовёт callback СРАЗУ, синхронно, 1-в-1
+    // как раньше — риск регрессии сосредоточен только в реальных каскадах.
+    //
+    // `bundleId` — `e.seq` ЛОКАЛЕН одному бандлу (нумерация с 0 в КАЖДОМ
+    // бандле, см. README бэка) — составной ключ `${bundleId}:${seq}` даёт
+    // глобальную уникальность, не путая seq=2 одного бандла с seq=2 другого.
     const reduceAndLog = useCallback(
         (state, bundle) => {
             let current = state;
             let pendingCollisionPair = null;
+            const bundleId = ++bundleCounterRef.current;
             for (const item of bundle.sequence ?? [bundle]) {
                 const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
                 pushLog(e);
@@ -759,90 +804,160 @@ export default function GameBoardScreen({ route, navigation }) {
                 if (e.event === 'collision') {
                     // lib/runnerAnimTriggers.js#handleSequenceItem ждёт пару
                     // в старых именах runnerId/otherRunnerId — тут просто
-                    // переводим новые явные поля бэка в эту форму.
+                    // переводим новые явные поля бэка в эту форму. Остаётся
+                    // СИНХРОННЫМ (не внутри runEffects) — следующий элемент
+                    // цепочки читает эту переменную уже на СЛЕДУЮЩЕЙ итерации
+                    // цикла, которая должна видеть самую свежую пару, даже
+                    // если runEffects ЭТОГО элемента отложен.
                     pendingCollisionPair = { runnerId: e.flyingRunnerId, otherRunnerId: e.stayingRunnerId };
                 }
+                // Снимок ПАРЫ ИМЕННО сейчас — если в одном (крайне редком)
+                // бандле случились бы ДВЕ коллизии подряд, а runEffects
+                // первой был бы отложен дольше, чем успевает подойти вторая
+                // (переписав pendingCollisionPair) — замыкание ниже всё
+                // равно видит ПРАВИЛЬНУЮ, сделанную в момент ЭТОЙ итерации,
+                // пару, а не ту, что подменил более поздний элемент цепочки.
+                const collisionPairAtThisPoint = pendingCollisionPair;
 
-                // Детекция ДО handleSequenceItem (см. докстринг у
-                // pendingDeathRunnerIds выше) — порядок важен: если очередь
-                // анимаций у этого бегуна сейчас пуста, терминальная поза
-                // стартует СИНХРОННО прямо внутри вызова ниже (advanceQueue
-                // зовёт onStart сразу же), и deathOnStart уже успеет
-                // (с задержкой DEATH_FINISH_GATE_SETTLE_MS) убрать runnerId
-                // из этого Set — если добавлять ПОСЛЕ вызова, эта подписка
-                // случилась бы позже самого вызова onStart. 2026-10-15:
-                // раньше гейтилась ТОЛЬКО terrain-смерть (acid/burn) —
-                // расширено на ЛЮБУЮ настоящую гибель (обычный 'destroyed' от
-                // урона/ловушки тоже должен держать диалог). Жнец исключён —
-                // для него `runner_destroy` означает "вернулся в руку"
-                // (триггерит 'fly', не терминальную позу, см.
-                // lib/runnerAnimTriggers.js) — deathOnStart для него НИКОГДА
-                // не вызовется, добавление навсегда зависло бы в Set.
-                if (e.event === 'runner_destroy' && e.runnerId?.type !== RUNNER_TYPES.REAPER) {
-                    setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
-                }
-                handleSequenceItem(current, e, triggerWithSound, {
-                    onceStepDone: runnerAnim.onceStepDone,
-                    completeWaitStep: runnerAnim.completeWaitStep,
-                    collisionPair: pendingCollisionPair,
-                });
-                // Лечение возвращает бегуна к healthy — триггерим 'heal'-
-                // анимацию (проигрывается МЕЖДУ damaged_idle и healthy_idle).
-                if (e.event === 'ability_heal' && e.runner?.id != null) {
-                    triggerWithSound(e.runner.id, 'heal', {});
-                }
-                // 'ghost_consumed' — версионное, несёт runnerId/otherRunnerId
-                // явно (см. lib/ghostPairs.js#identifyGhostConsumption).
-                const ghostPass = identifyGhostConsumption(current, e);
-                if (ghostPass) ghostPairs.record(ghostPass.key);
-                // Замораживаем клетку в ЕЁ ЖЕ ВИДЕ ДО вскрытия (см. heldCells
-                // выше) — читаем rawType из `current` (это ещё PRE-update
-                // снимок ЭТОГО шага цепочки, сам редьюсер применится строкой
-                // ниже). cellId — тот же формат, что и BoardGrid/lib/board.
-                if (e.event === 'game_cell_updated' && e.cell) {
-                    // 2026-10-14: бэк переименовал row/column → positionX/positionY (унификация Cell).
-                    const { segment, positionX, positionY } = e.cell;
-                    const cellId = cellKey({ segment, positionX, positionY });
-                    // См. minePendingRef ниже — если непосредственно ПЕРЕД
-                    // этим вскрытием (в ЭТОЙ ЖЕ цепочке) пришёл транзиент
-                    // danger==='mine', именно ЭТА клетка и есть место взрыва.
-                    if (minePendingRef.current) {
-                        minePendingRef.current = false;
-                        if (activatedCellKeysRef.current.has(cellId)) {
-                            mineBlasts.trigger(cellId);
-                        } else {
-                            pendingMineCellIdsRef.current.add(cellId);
+                const stateBeforeItem = current; // снимок ДО этого шага — для runEffects, даже если он отложен
+                const itemKey = `${bundleId}:${e.seq}`;
+                const causeKey = e.causedBy != null ? `${bundleId}:${e.causedBy}` : null;
+                runnerAnim.markSeqScheduled(itemKey);
+                const triggerForItem = (runnerId, kind, extra) => triggerWithSound(runnerId, kind, extra, itemKey);
+
+                const runEffects = () => {
+                    // Детекция ДО handleSequenceItem (см. докстринг у
+                    // pendingDeathRunnerIds выше) — порядок важен: если
+                    // очередь анимаций у этого бегуна сейчас пуста,
+                    // терминальная поза стартует СИНХРОННО прямо внутри
+                    // вызова ниже (advanceQueue зовёт onStart сразу же), и
+                    // deathOnStart уже успеет (с задержкой
+                    // DEATH_FINISH_GATE_SETTLE_MS) убрать runnerId из этого
+                    // Set — если добавлять ПОСЛЕ вызова, эта подписка
+                    // случилась бы позже самого вызова onStart. 2026-10-15:
+                    // раньше гейтилась ТОЛЬКО terrain-смерть (acid/burn) —
+                    // расширено на ЛЮБУЮ настоящую гибель (обычный
+                    // 'destroyed' от урона/ловушки тоже должен держать
+                    // диалог). Жнец исключён — для него `runner_destroy`
+                    // означает "вернулся в руку" (триггерит 'fly', не
+                    // терминальную позу, см. lib/runnerAnimTriggers.js) —
+                    // deathOnStart для него НИКОГДА не вызовется, добавление
+                    // навсегда зависло бы в Set.
+                    if (e.event === 'runner_destroy' && e.runnerId?.type !== RUNNER_TYPES.REAPER) {
+                        setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
+                    }
+                    handleSequenceItem(stateBeforeItem, e, triggerForItem, {
+                        onceStepDone: runnerAnim.onceStepDone,
+                        completeWaitStep: runnerAnim.completeWaitStep,
+                        collisionPair: collisionPairAtThisPoint,
+                    });
+                    // Лечение возвращает бегуна к healthy — триггерим 'heal'-
+                    // анимацию (проигрывается МЕЖДУ damaged_idle и healthy_idle).
+                    if (e.event === 'ability_heal' && e.runner?.id != null) {
+                        triggerForItem(e.runner.id, 'heal', {});
+                    }
+                    // 'ghost_consumed' — версионное, несёт runnerId/otherRunnerId
+                    // явно (см. lib/ghostPairs.js#identifyGhostConsumption).
+                    const ghostPass = identifyGhostConsumption(stateBeforeItem, e);
+                    if (ghostPass) ghostPairs.record(ghostPass.key);
+                    // Замораживаем клетку в ЕЁ ЖЕ ВИДЕ ДО вскрытия (см.
+                    // heldCells выше) — читаем rawType из `stateBeforeItem`
+                    // (снимок ДО этого шага цепочки, не "текущее на момент
+                    // вызова" — то давно могло убежать вперёд, если этот
+                    // runEffects был отложен). cellId — тот же формат, что и
+                    // BoardGrid/lib/board.
+                    if (e.event === 'game_cell_updated' && e.cell) {
+                        // 2026-10-14: бэк переименовал row/column → positionX/positionY (унификация Cell).
+                        const { segment, positionX, positionY } = e.cell;
+                        const cellId = cellKey({ segment, positionX, positionY });
+                        // См. minePendingRef ниже — если непосредственно
+                        // ПЕРЕД этим вскрытием (в ЭТОЙ ЖЕ цепочке, тем же
+                        // runEffects-порядком с учётом causedBy) пришёл
+                        // транзиент danger==='mine', именно ЭТА клетка и
+                        // есть место взрыва. 2026-10-15: с причинной
+                        // развязкой это вскрытие теперь ВСЕГДА ждёт, пока
+                        // доиграет анимация приземления (её causedBy-цепочка
+                        // восходит к этому же действию) — activatedCellKeysRef
+                        // практически всегда УЖЕ содержит cellId к этому
+                        // моменту (бегун успел доехать), так что "тихая"
+                        // ветка ниже стала ОСНОВНЫМ путём, не запасным —
+                        // звук обязателен и в ней (раньше его тут не было —
+                        // реальный баг, найденный живьём 2026-10-15,
+                        // см. CLAUDE.md).
+                        if (minePendingRef.current) {
+                            minePendingRef.current = false;
+                            if (activatedCellKeysRef.current.has(cellId)) {
+                                mineBlasts.trigger(cellId);
+                                playOneShot(sfxSound, LAND_MINE_SOUND);
+                            } else {
+                                pendingMineCellIdsRef.current.add(cellId);
+                                setTimeout(() => {
+                                    if (pendingMineCellIdsRef.current.delete(cellId)) mineBlasts.trigger(cellId);
+                                }, MINE_TRIGGER_SAFETY_TIMEOUT_MS);
+                            }
+                        }
+                        if (!activatedCellKeysRef.current.has(cellId)) {
+                            const oldRawType = [stateBeforeItem?.trackBegin, stateBeforeItem?.trackMiddle, stateBeforeItem?.trackEnd][segment]
+                                ?.grid?.[positionX]?.[positionY] ?? null;
+                            const oldType = resolveCellVisual(oldRawType);
+                            setHeldCells((prev) => ({
+                                ...prev,
+                                [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
+                            }));
                             setTimeout(() => {
-                                if (pendingMineCellIdsRef.current.delete(cellId)) mineBlasts.trigger(cellId);
-                            }, MINE_TRIGGER_SAFETY_TIMEOUT_MS);
+                                setHeldCells((prev) => {
+                                    if (!(cellId in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[cellId];
+                                    return next;
+                                });
+                            }, HELD_CELL_TIMEOUT_MS);
                         }
                     }
-                    if (!activatedCellKeysRef.current.has(cellId)) {
-                        const oldRawType = [current?.trackBegin, current?.trackMiddle, current?.trackEnd][segment]
-                            ?.grid?.[positionX]?.[positionY] ?? null;
-                        const oldType = resolveCellVisual(oldRawType);
-                        setHeldCells((prev) => ({
-                            ...prev,
-                            [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
-                        }));
-                        setTimeout(() => {
-                            setHeldCells((prev) => {
-                                if (!(cellId in prev)) return prev;
-                                const next = { ...prev };
-                                delete next[cellId];
-                                return next;
-                            });
-                        }, HELD_CELL_TIMEOUT_MS);
+                    // Транзиентные, не про анимацию — те же side-effects, что
+                    // раньше жили в отдельном onTransient (звук/баннер),
+                    // теперь тут же, по ходу той же единой цепочки.
+                    if (e.event === 'danger' && e.danger === 'mine') {
+                        minePendingRef.current = true;
                     }
-                }
+                    if (e.event === 'collision') {
+                        setPendingCollisionRoll({
+                            flyingRunnerId: e.flyingRunnerId,
+                            stayingRunnerId: e.stayingRunnerId,
+                            direction: e.direction,
+                        });
+                        if (!collisionCommentPlayedRef.current) {
+                            collisionCommentPlayedRef.current = true;
+                            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+                        }
+                    }
+                    if (e.event === 'anomaly') {
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
+                    }
+                    if (e.event === 'ricochet') {
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                        playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
+                    }
+                    if (e.event === 'attack' && e.hit === false) {
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                    }
+                    runnerAnim.settleSeqIfIdle(itemKey);
+                };
 
+                if (causeKey == null) runEffects();
+                else runnerAnim.onceSeqDone(causeKey, runEffects);
+
+                // Стейт — ВСЕГДА синхронно и безусловно, независимо от того,
+                // отложен ли runEffects выше (см. докстринг reduceAndLog).
                 const nextState = runnerGameReducer(current, e);
                 // Игрок выбыл (player_out) — играет у ВСЕХ клиентов партии,
                 // КРОМЕ случая, когда это выбывание ПОСЛЕДНЕГО соперника и
                 // партия тут же завершилась победой оставшегося. Считаем
                 // активных игроков ПОСЛЕ применения патча: если остался
                 // РОВНО 1 — это терминальный случай, иначе игра продолжается,
-                // звук нужен.
+                // звук нужен. НЕ отложено через runEffects — это диктуется
+                // сменой СТЕЙТА (чей статус active/out), не каскадом
+                // анимаций, пауза тут неуместна.
                 if (e.event === 'player_out') {
                     const activeCount = (nextState.gamePlayers ?? []).filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
                     if (activeCount !== 1) playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
@@ -865,7 +980,9 @@ export default function GameBoardScreen({ route, navigation }) {
                 // player.step ДО/ПОСЛЕ применения ЭТОГО шага цепочки. Для
                 // ЛЮБОГО игрока — все клиенты партии слышат один и тот же
                 // выбор (реплика выбирается тут же, на этом клиенте, детерминизм
-                // между клиентами тут не нужен — это не игровой стейт).
+                // между клиентами тут не нужен — это не игровой стейт). Тоже
+                // НЕ отложено — завязано на смену player.step, а не на
+                // причинную цепочку анимаций конкретного элемента.
                 for (const player of nextState.gamePlayers ?? []) {
                     const prevPlayer = current.gamePlayers?.find((p) => p.id === player.id);
                     if (player.step === PLAYER_STEP.MOVE && prevPlayer?.step !== PLAYER_STEP.MOVE && player.activeRunner != null) {
@@ -882,34 +999,6 @@ export default function GameBoardScreen({ route, navigation }) {
                     }
                 }
 
-                // Транзиентные, не про анимацию — те же side-effects, что
-                // раньше жили в отдельном onTransient (звук/баннер), теперь
-                // тут же, по ходу той же единой цепочки.
-                if (e.event === 'danger' && e.danger === 'mine') {
-                    minePendingRef.current = true;
-                }
-                if (e.event === 'collision') {
-                    setPendingCollisionRoll({
-                        flyingRunnerId: e.flyingRunnerId,
-                        stayingRunnerId: e.stayingRunnerId,
-                        direction: e.direction,
-                    });
-                    if (!collisionCommentPlayedRef.current) {
-                        collisionCommentPlayedRef.current = true;
-                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
-                    }
-                }
-                if (e.event === 'anomaly') {
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
-                }
-                if (e.event === 'ricochet') {
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
-                    playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
-                }
-                if (e.event === 'attack' && e.hit === false) {
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
-                }
-
                 current = nextState;
             }
             return current;
@@ -917,6 +1006,7 @@ export default function GameBoardScreen({ route, navigation }) {
         [
             pushLog, triggerWithSound, playOneShot, commentSound, sfxSound, mineBlasts.trigger,
             ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
+            runnerAnim.markSeqScheduled, runnerAnim.settleSeqIfIdle, runnerAnim.onceSeqDone,
         ],
     );
 
@@ -935,37 +1025,55 @@ export default function GameBoardScreen({ route, navigation }) {
     // параметра, в отличие от reduce()).
     const onTransient = useCallback(
         (bundle) => {
+            const bundleId = ++bundleCounterRef.current;
             for (const item of bundle.sequence ?? [bundle]) {
                 const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
                 pushLog(e);
-                handleSequenceItem(gameRef.current, e, triggerWithSound, {});
-                if (e.event === 'danger' && e.danger === 'mine') {
-                    minePendingRef.current = true;
-                }
-                if (e.event === 'collision') {
-                    setPendingCollisionRoll({
-                        flyingRunnerId: e.flyingRunnerId,
-                        stayingRunnerId: e.stayingRunnerId,
-                        direction: e.direction,
-                    });
-                    if (!collisionCommentPlayedRef.current) {
-                        collisionCommentPlayedRef.current = true;
-                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+                const itemKey = `${bundleId}:${e.seq}`;
+                const causeKey = e.causedBy != null ? `${bundleId}:${e.causedBy}` : null;
+                runnerAnim.markSeqScheduled(itemKey);
+                const triggerForItem = (runnerId, kind, extra) => triggerWithSound(runnerId, kind, extra, itemKey);
+
+                const runEffects = () => {
+                    // gameRef.current — та же особенность, что и раньше (см.
+                    // докстринг reduceAndLog/onTransient выше — version-less
+                    // бандл не несёт `state`-параметр вообще, снимка нет).
+                    handleSequenceItem(gameRef.current, e, triggerForItem, {});
+                    if (e.event === 'danger' && e.danger === 'mine') {
+                        minePendingRef.current = true;
                     }
-                }
-                if (e.event === 'anomaly') {
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
-                }
-                if (e.event === 'ricochet') {
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
-                    playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
-                }
-                if (e.event === 'attack' && e.hit === false) {
-                    playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
-                }
+                    if (e.event === 'collision') {
+                        setPendingCollisionRoll({
+                            flyingRunnerId: e.flyingRunnerId,
+                            stayingRunnerId: e.stayingRunnerId,
+                            direction: e.direction,
+                        });
+                        if (!collisionCommentPlayedRef.current) {
+                            collisionCommentPlayedRef.current = true;
+                            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.collision));
+                        }
+                    }
+                    if (e.event === 'anomaly') {
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
+                    }
+                    if (e.event === 'ricochet') {
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                        playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
+                    }
+                    if (e.event === 'attack' && e.hit === false) {
+                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                    }
+                    runnerAnim.settleSeqIfIdle(itemKey);
+                };
+
+                if (causeKey == null) runEffects();
+                else runnerAnim.onceSeqDone(causeKey, runEffects);
             }
         },
-        [pushLog, triggerWithSound, playOneShot, commentSound, sfxSound],
+        [
+            pushLog, triggerWithSound, playOneShot, commentSound, sfxSound,
+            runnerAnim.markSeqScheduled, runnerAnim.settleSeqIfIdle, runnerAnim.onceSeqDone,
+        ],
     );
 
     const { state: game, status, resync } = useMercure({
@@ -1210,10 +1318,20 @@ export default function GameBoardScreen({ route, navigation }) {
     const [pendingReaperPlacement, setPendingReaperPlacement] = useState(null);
     const [busy, setBusy] = useState(false);
     // Игровое меню (кнопка settings в seam-ряду, см. GameMenuButton/
-    // GameMenuModal/GameSettingsModal, 2026-10-04) — только 2 уровня, оба
-    // модальные, друг друга не перекрывают (см. handleOpenSettings ниже).
+    // GameMenuModal/GameSettingsModal, 2026-10-04) — было 2 уровня, оба
+    // модальные, друг друга не перекрывают. 2026-10-15, по прямому запросу
+    // пользователя — между меню и звуком вставлен хаб (GameSettingsHubModal,
+    // "Игра"/"Звук"): "Настройки" теперь ведёт В ХАБ, а не сразу в звук;
+    // "Звук" из хаба — тот же GameSettingsModal, что и раньше; "Игра" —
+    // новый GameGeneralSettingsModal (пока только ориентация сворачиваемой
+    // модалки, см. lib/dialogSettings.js). MainMenuScreen.js специально НЕ
+    // тронут — у него своя отдельная кнопка "⚙️ Настройки", которая по-
+    // прежнему ведёт сразу в звук (хаб не нужен вне партии, "Ориентация
+    // диалога" вне игры ничего не настраивает).
     const [gameMenuOpen, setGameMenuOpen] = useState(false);
+    const [settingsHubOpen, setSettingsHubOpen] = useState(false);
     const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
+    const [gameGeneralSettingsOpen, setGameGeneralSettingsOpen] = useState(false);
 
     // Раньше совпадало с ANIM_DURATION_MS.start обычных бегунов
     // (useRunnerAnimations, 2200мс) — пока идёт "прилёт" Жнеца ИЗ-ЗА КРАЯ
@@ -1699,7 +1817,7 @@ export default function GameBoardScreen({ route, navigation }) {
             // молчаливый no-op). Теперь клетка подсвечивается (и тапабельна)
             // ТОЛЬКО когда оба условия реально выполнены — иначе игроку
             // остаётся только «Без выстрела» (см. stepInstruction/canReaperShoot).
-            const cells = game.round > 0
+            const cells = game?.round > 0
                 ? forwardNeighbors(pendingReaperPlacement)
                     .filter((pos) => findRunnerAt(runners, pos))
                     .map(cellKey)
@@ -1747,12 +1865,20 @@ export default function GameBoardScreen({ route, navigation }) {
         }
 
         if (pendingAbility?.ability === 'reaper') {
-            // Любая пустая проходимая клетка на всех трёх загруженных сегментах —
-            // бэк это не проверяет (см. CLAUDE.md про ReaperService::validateCell),
-            // так что и занятость, и проходимость (не wall/anomaly/danger)
-            // считаем сами (danger исключён по прямому запросу пользователя,
-            // 2026-09-15 — жетон опасности под клеткой ещё не вскрыт, ставить
-            // туда Жнеца не должно быть можно).
+            // Любая пустая клетка на всех трёх загруженных сегментах, которую
+            // бэк реально разрешит (`ReaperValidator::validateCell()`,
+            // read-only) — ТОТ валидатор работает через ALLOWLIST (только
+            // road/sand/mud), не блэклист: раньше тут фильтровались только
+            // wall/anomaly/danger — fire/acid (замена клеткам wall на треках,
+            // см. CLAUDE.md 2026-09-18) не исключались, подсветка предлагала
+            // клетки, на которые бэк гарантированно ответит 400
+            // INVALID_CELL_TYPE (найдено аудитом контракта, 2026-10-15, не
+            // проверено живьём). Зеркалим именно allowlist бэка, не
+            // достраиваем блэклист новыми исключениями по одному — так не
+            // разойдётся снова при появлении следующего типа клетки. danger
+            // отдельно и так уже исключён этим allowlist'ом (жетон опасности
+            // под клеткой ещё не вскрыт, ставить туда Жнеца не должно быть
+            // можно, см. прямой запрос пользователя, 2026-09-15).
             // 2026-10-14: бэк развернул диапазоны DetailsReaperDTO обратно на
             // стандартные (positionX 0..7 — ряд, positionY 0..5 — дорожка, та
             // же унификация Cell, что и везде) — раньше (см. CLAUDE_ARCHIVE.md,
@@ -1765,7 +1891,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     for (let positionY = 0; positionY <= 5; positionY++) {
                         const pos = { segment, positionX, positionY };
                         const type = rawCellType(game, segment, positionX, positionY);
-                        if (type === 'wall' || type === 'anomaly' || type === 'danger') continue;
+                        if (!REAPER_ALLOWED_CELL_TYPES.has(type)) continue;
                         if (findRunnerAt(runners, pos)) continue;
                         cells.add(cellKey(pos));
                     }
@@ -1874,14 +2000,21 @@ export default function GameBoardScreen({ route, navigation }) {
     // не оба сразу).
     useEffect(() => {
         if (!winnerPlayer || !myPlayer || gameFinishSoundPlayedRef.current) return;
-        if (game.status !== GAME_STATUS.FINISH || trackShiftPhase || hasDeathAnimPlaying) return;
+        if (game?.status !== GAME_STATUS.FINISH || trackShiftPhase || hasDeathAnimPlaying) return;
         gameFinishSoundPlayedRef.current = true;
         if (winnerPlayer.id === myPlayer.id) {
             playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.victory));
         } else {
             playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
         }
-    }, [winnerPlayer, myPlayer, game.status, trackShiftPhase, hasDeathAnimPlaying, playOneShot, commentSound]);
+        // 2026-10-15: `game` ещё `null` на самом первом рендере (useMercure
+        // отдаёт снимок асинхронно) — deps-массив ниже вычисляется СИНХРОННО
+        // на КАЖДЫЙ рендер (хуки не могут быть условными), `game.status` без
+        // `?.` ронял ВЕСЬ экран партии ровно в этот момент на РЕАЛЬНОМ
+        // холодном заходе (не Fast Refresh) — живой краш, найден 2026-10-15
+        // при повторном открытии активной партии после логина. `game?.status`
+        // и тут, и в самом теле эффекта выше.
+    }, [winnerPlayer, myPlayer, game?.status, trackShiftPhase, hasDeathAnimPlaying, playOneShot, commentSound]);
     const moveSound = useAudioPlayer(FALLBACK_MOVE_SOUND);
     useEffect(() => {
         moveSound.loop = true;
@@ -2054,11 +2187,33 @@ export default function GameBoardScreen({ route, navigation }) {
         setGameMenuOpen(false);
         handleSurrender();
     }, [handleSurrender]);
+    // "Настройки" (GameMenuModal) — теперь ведёт в хаб (2026-10-15), не
+    // сразу в звук, см. комментарий у gameMenuOpen выше.
     const handleOpenSettingsFromMenu = useCallback(() => {
         setGameMenuOpen(false);
+        setSettingsHubOpen(true);
+    }, []);
+    const handleCloseSettingsHub = useCallback(() => setSettingsHubOpen(false), []);
+    const handleOpenSoundSettingsFromHub = useCallback(() => {
+        setSettingsHubOpen(false);
         setGameSettingsOpen(true);
     }, []);
-    const handleCloseSettings = useCallback(() => setGameSettingsOpen(false), []);
+    const handleOpenGeneralSettingsFromHub = useCallback(() => {
+        setSettingsHubOpen(false);
+        setGameGeneralSettingsOpen(true);
+    }, []);
+    // "Назад" из звука/игры — возвращает В ХАБ (не закрывает целиком), по
+    // прямому запросу пользователя — "чтобы можно было настраивать короче"
+    // (переключаться между разделами без повторного похода через игровое
+    // меню).
+    const handleCloseSettings = useCallback(() => {
+        setGameSettingsOpen(false);
+        setSettingsHubOpen(true);
+    }, []);
+    const handleCloseGeneralSettings = useCallback(() => {
+        setGameGeneralSettingsOpen(false);
+        setSettingsHubOpen(true);
+    }, []);
 
     // Накат (type=ROLL) — до 2026-10-03 двигался АВТОМАТИЧЕСКИ (единственная
     // легальная клетка — строго UP, тапать было не по чему, см. git-историю
@@ -2805,7 +2960,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // JSX ниже тоже пересчитывается каждый рендер без memo), просто другая
     // форма результата (объект, не JSX).
     const dialogState = (() => {
-        if (trackShiftPhase) return { text: 'Трасса смещается…' };
+        if (trackShiftPhase) return { kind: 'trackShift', text: 'Трасса смещается…' };
         if (game.extraTurnPlayer != null) {
             const text = myCollision && pendingCollisionRoll
                 ? `Заруба! Результат: ${collisionFlyingRunnerLabel ?? 'бегун'} отлетит ${directionLabel(pendingCollisionRoll.direction)}. Принять?`
@@ -2814,6 +2969,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     : `Заруба! Ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`;
             if (myCollision && !busy && collisionDecisionReady) {
                 return {
+                    kind: 'collisionDecide',
                     text,
                     buttons: [
                         { key: 'accept', title: '✓', variant: 'success', onPress: () => handleCollision(true) },
@@ -2823,6 +2979,7 @@ export default function GameBoardScreen({ route, navigation }) {
             }
             if (!myCollision && showStuckRefresh) {
                 return {
+                    kind: 'collisionStuckRefresh',
                     text,
                     buttons: [{
                         key: 'resync',
@@ -2832,7 +2989,11 @@ export default function GameBoardScreen({ route, navigation }) {
                     }],
                 };
             }
-            return { text };
+            // myCollision без decisionReady ("Жду результат…") и !myCollision
+            // без stuck ("Ждём игрока") — РАЗНЫЕ kind: это разные по смыслу
+            // ожидания (сам решаю vs жду решения другого), диалог должен
+            // появляться развёрнутым заново при переходе между ними.
+            return { kind: myCollision ? 'collisionWaitMe' : 'collisionWaitOther', text };
         }
         if (!myTurn) return null;
         if (pendingReaperPlacement && !busy) {
@@ -2846,6 +3007,7 @@ export default function GameBoardScreen({ route, navigation }) {
             if (!reaperPreviewReady) return null;
             if (!reaperConfirmed) {
                 return {
+                    kind: 'reaperConfirm',
                     text: turnHintText,
                     buttons: [
                         { key: 'confirm', title: '✓', variant: 'success', onPress: () => setReaperConfirmed(true) },
@@ -2853,10 +3015,11 @@ export default function GameBoardScreen({ route, navigation }) {
                     ],
                 };
             }
-            return { text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: () => handleReaperShoot(undefined) }] };
+            return { kind: 'reaperShoot', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: () => handleReaperShoot(undefined) }] };
         }
         if (pendingSelect && !busy) {
             return {
+                kind: 'select',
                 text: turnHintText,
                 buttons: [
                     { key: 'confirm', title: '✓', variant: 'success', onPress: handleConfirmSelect },
@@ -2866,6 +3029,7 @@ export default function GameBoardScreen({ route, navigation }) {
         }
         if (showRoadBonusChoice) {
             return {
+                kind: 'roadBonus',
                 text: turnHintText,
                 buttons: [
                     { key: 'bonus', title: `Бонус +${game.trackGain ?? ''}`, variant: 'success', onPress: () => handleRoadBonus(true) },
@@ -2874,10 +3038,10 @@ export default function GameBoardScreen({ route, navigation }) {
             };
         }
         if (showAbilitySkip) {
-            return { text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleAbilitySkip }] };
+            return { kind: 'abilitySkip', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleAbilitySkip }] };
         }
         if (showShootSkip) {
-            return { text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleShootSkip }] };
+            return { kind: 'shootSkip', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleShootSkip }] };
         }
         return null;
     })();
@@ -2990,7 +3154,14 @@ export default function GameBoardScreen({ route, navigation }) {
                 onLeave={handleLeaveFromMenu}
                 onSettings={handleOpenSettingsFromMenu}
             />
+            <GameSettingsHubModal
+                visible={settingsHubOpen}
+                onClose={handleCloseSettingsHub}
+                onSound={handleOpenSoundSettingsFromHub}
+                onGeneral={handleOpenGeneralSettingsFromHub}
+            />
             <GameSettingsModal visible={gameSettingsOpen} onClose={handleCloseSettings} />
+            <GameGeneralSettingsModal visible={gameGeneralSettingsOpen} onClose={handleCloseGeneralSettings} />
 
             {/* Кат-сцена сдвига фрагментов/столкновение — раньше отдельный
                 плавающий styles.collisionBanner (свой top-right угол,
@@ -3153,11 +3324,29 @@ export default function GameBoardScreen({ route, navigation }) {
                     )}
                     {/* ВРЕМЕННЫЙ ДУБЛЬ turnBannerInner — см. dialogState выше за
                         полным разбором. Ребёнок roadFrameWrap (не корневого
-                        wrapper) — по прямому запросу пользователя, 2026-10-12:
-                        карточка должна сидеть поверх ВЕРХНЕЙ части дороги, не
-                        по центру всего экрана. Последний ребёнок — поверх
-                        рамки/кнопок навигации дороги тоже. */}
-                    <GameDialogModal dialogState={dialogState} width={roadFrameSize?.width} height={roadFrameSize?.height} />
+                        wrapper) — по прямому запросу пользователя: сначала
+                        сидела поверх ВЕРХНЕЙ части дороги (2026-10-12), потом
+                        переехала к НИЖНЕЙ (2026-10-15, justifyContent внутри
+                        самого компонента).
+                        bottomInset — 2026-10-15, живая жалоба "низ модалки
+                        должен совпадать с низом первой клетки дороги, БЕЗ
+                        нахлёста на рамку" (zIndex-костыль, рисовавший модалку
+                        ПОВЕРХ рамки, был отклонён пользователем — нужно не
+                        перекрытие, а отсутствие пересечения вообще). У
+                        MobileFrameOverlay ниже bottom-bleed всегда 0 (кайма
+                        внизу НЕ выступает наружу, см. её вызов — bleed без
+                        bottom-поля) — значит её ВНУТРЕННИЙ край (где кайма
+                        перестаёт перекрывать контент) ровно на arrowBtnSize
+                        px от истинного низа roadFrameWrap, см. useBoardLayout
+                        .js#frameEdgeClearance за той же логикой для ширины.
+                        Только mobileNav (useMobileNavButtons) — у этой рамки
+                        вообще нет такой каймы в остальных раскладках. */}
+                    <GameDialogModal
+                        dialogState={dialogState}
+                        width={roadFrameSize?.width}
+                        height={roadFrameSize?.height}
+                        bottomInset={useMobileNavButtons ? arrowBtnSize : undefined}
+                    />
                 </View>
             </View>
 
@@ -3312,7 +3501,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow>
                         <GameMenuButton
                             size={switchRowH}
-                            active={gameMenuOpen || gameSettingsOpen}
+                            active={gameMenuOpen || settingsHubOpen || gameSettingsOpen || gameGeneralSettingsOpen}
                             onPress={handleOpenGameMenu}
                         />
                     </FramedSquare>
