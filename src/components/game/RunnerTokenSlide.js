@@ -151,7 +151,7 @@ export const SLIDE_DURATION_MS = 1360;
  * React-style-коммит.
  */
 export default function RunnerTokenSlide({
-    x, y, width, height, style, children, windowStart, enterFrom, duration = SLIDE_DURATION_MS, onSlideEnd,
+    runnerId, x, y, width, height, style, children, windowStart, enterFrom, duration = SLIDE_DURATION_MS, onSlideEnd,
 }) {
     const translateX = useSharedValue(0);
     const translateY = useSharedValue(0);
@@ -213,14 +213,14 @@ export default function RunnerTokenSlide({
         targetY.value = y;
 
         if (isFirstRender && !enterFrom) {
-            log('first render (no enterFrom), x=', x, 'y=', y);
+            log('first render (no enterFrom), runnerId=', runnerId, 'x=', x, 'y=', y);
             return; // обычный первый рендер — ехать неоткуда
         }
 
         const dx = fromPos.x - x;
         const dy = fromPos.y - y;
         if (dx === 0 && dy === 0) return;
-        log('move: from=', fromPos, 'to=', { x, y }, 'isFirstRender=', isFirstRender, 'scrolled=', scrolled, 'resized=', resized);
+        log('move: runnerId=', runnerId, 'from=', fromPos, 'to=', { x, y }, 'isFirstRender=', isFirstRender, 'scrolled=', scrolled, 'resized=', resized);
 
         if (!isFirstRender && (scrolled || resized)) {
             translateX.value = 0;
@@ -269,7 +269,7 @@ export default function RunnerTokenSlide({
             translateX.value = withTiming(0, { duration });
             translateY.value = withTiming(0, { duration }, onFinish);
         }
-    }, [x, y, width, height, windowStart, enterFrom, duration]);
+    }, [runnerId, x, y, width, height, windowStart, enterFrom, duration]);
 
     const animatedStyle = useAnimatedStyle(() => ({
         left: targetX.value,

@@ -19,7 +19,7 @@ import { colors, font, spacing } from '../../theme';
  * тот же случай, что уже решён в ReaperCard.js (см. её докстринг за полным
  * разбором того же выбора).
  */
-function PlayerTab({ player, active, onSelect }) {
+const PlayerTab = React.memo(function PlayerTab({ player, active, onSelect }) {
     const [tabSize, setTabSize] = useState(null);
     const onLayout = useCallback((e) => {
         const { width, height } = e.nativeEvent.layout;
@@ -55,7 +55,7 @@ function PlayerTab({ player, active, onSelect }) {
             {active && <View style={[styles.activeBar, { backgroundColor: player.color }]} />}
         </TouchableOpacity>
     );
-}
+});
 
 /**
  * Переключатель игроков — таб-бар (кружок цвета игрока + имя, активный таб
@@ -64,8 +64,13 @@ function PlayerTab({ player, active, onSelect }) {
  * игрока — ряд без скролла, каждый таб делит ширину поровну (`flex:1`).
  * Расположение (сверху панели в альбомной раскладке, снизу в портретной)
  * решает PlayerInfoPanel, сам компонент об ориентации не знает.
+ *
+ * 2026-10-16 — обёрнут (и PlayerTab выше) в React.memo, той же причиной, что
+ * у PlayerSwitchPanel (альтернативный rocker-переключатель): PlayerInfoPanel
+ * ре-рендерится на каждое применённое Mercure-событие, этот путь оставался
+ * немемоизированным единственным из двух.
  */
-export default function PlayerSwitcher({ players, activeId, onSelect }) {
+function PlayerSwitcher({ players, activeId, onSelect }) {
     return (
         <View style={styles.row}>
             {players.map((p) => (
@@ -74,6 +79,8 @@ export default function PlayerSwitcher({ players, activeId, onSelect }) {
         </View>
     );
 }
+
+export default React.memo(PlayerSwitcher);
 
 const styles = StyleSheet.create({
     row: { flexDirection: 'row', alignItems: 'stretch', gap: spacing.xs },

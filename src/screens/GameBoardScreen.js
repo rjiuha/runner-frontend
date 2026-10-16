@@ -1,6 +1,6 @@
 // src/screens/GameBoardScreen.js
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Animated, Platform, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
+import { Image, Platform, ScrollView, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
 import { useAudioPlayer } from 'expo-audio';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
@@ -14,7 +14,7 @@ import FragmentLabelStrip from '../components/game/FragmentLabelStrip';
 import PlayerInfoPanel from '../components/game/PlayerInfoPanel';
 import GameDialogModal from '../components/game/GameDialogModal';
 import GameFinishModal from '../components/game/GameFinishModal';
-import EventLogPanel from '../components/game/EventLogPanel';
+import EventLogPanel, { EventLogEntries, EVENT_LOG_PANEL_STYLE } from '../components/game/EventLogPanel';
 import GameMenuButton from '../components/game/GameMenuButton';
 import GameMenuModal from '../components/game/GameMenuModal';
 import GameSettingsHubModal from '../components/game/GameSettingsHubModal';
@@ -30,22 +30,30 @@ import NeonGlow from '../components/ui/NeonGlow';
 import { useAuth } from '../hooks/useAuth';
 import { useMercure } from '../hooks/useMercure';
 import { useAudioSettings } from '../hooks/useAudioSettings';
+import { useGameAudio } from '../hooks/useGameAudio';
+import { useGameMenuModals } from '../hooks/useGameMenuModals';
+import { useTrackShiftChoreography } from '../hooks/useTrackShiftChoreography';
 import { useAdaptiveOrientation } from '../hooks/useAdaptiveOrientation';
 import { useRunnerAnimations } from '../hooks/useRunnerAnimations';
 import { useGhostPairs } from '../hooks/useGhostPairs';
 import { useMineBlasts } from '../hooks/useMineBlasts';
+import { useRicochetTrails } from '../hooks/useRicochetTrails';
 import { ROAD_AREA_SPACING, useBoardLayout } from '../hooks/useBoardLayout';
 import { useBoardScroll } from '../hooks/useBoardScroll';
-import { flattenTrackSegments, flattenPeekColumn, computeFragmentBands, resolveCellVisual, pickSegmentImage, pickBaseImage } from '../lib/board';
+import {
+    flattenTrackSegments, flattenPeekColumn, computeFragmentBands, resolveCellVisual,
+    pickSegmentImage, pickBaseImage, computeHighlightedCells,
+} from '../lib/board';
 import { forwardNeighbors, cellKey } from '../lib/hexDirection';
 import { describeEvent, directionLabel, rawEventFallback } from '../lib/eventLog';
 import { handleSequenceItem, DEATH_KIND_BY_TERRAIN } from '../lib/runnerAnimTriggers';
 import { identifyGhostConsumption } from '../lib/ghostPairs';
+import { unwrapBundle } from '../lib/mercureBundle';
 import { pickActiveSoundSource, pickShootSoundSource, pickMoveSoundSource, pickStartSoundSource } from '../lib/runnerSoundTriggers';
-import { COLLISION_SOUND, FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
+import { FALLBACK_MOVE_SOUND, pickRandom } from '../constants/runnerSounds';
 import { COMMENT_SOUNDS } from '../constants/commentSounds';
 import { LAND_MINE_SOUND, RADIATION_SOUND, RICOCHET_HIT_SOUNDS } from '../constants/commonSounds';
-import { RUNNER_PICKED_SOUND } from '../constants/uiSounds';
+import { RUNNER_PICKED_SOUND, LOG_TOGGLE_SOUND } from '../constants/uiSounds';
 import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
 import { notify, confirm } from '../lib/notify';
 import { createLogger } from '../lib/logger';
@@ -53,9 +61,9 @@ import { runnerGameApi } from '../api/runnerGame';
 import { runnerGameReducer } from '../store/runnerGameReducer';
 import { ROUTES } from '../navigation/routes';
 import {
-    BOARD_LAYOUT, GAME_STATUS, MOBILE_FRAME_BLEED,
+    BOARD_LAYOUT, GAME_STATUS, LOG_BUTTON_IMAGES, MOBILE_FRAME_BLEED,
     PLAYER_COLOR_HEX, PLAYER_COLORS, PLAYER_STATUS, PLAYER_STEP,
-    RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES,
+    RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES, TAP_MODE, TURN_BANNER_MIN_HEIGHT,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
 
@@ -114,6 +122,14 @@ const COLLISION_ANIM_DELAY_MS = 1400;
 // случая "дождаться доигрывания короткого клипа".
 const DEATH_FINISH_GATE_SETTLE_MS = 1800;
 
+// FINISH_MODAL_SAFETY_MS — см. finishModalForced у места использования
+// (2026-10-16): страховка на случай, если hasDeathAnimPlaying/trackShiftPhase
+// никогда не снимутся сами. С запасом больше ЛЮБОЙ честной цепочки этого гейта
+// (самая долгая терминальная поза + DEATH_FINISH_GATE_SETTLE_MS укладываются
+// в единицы секунд) — чтобы в норме никогда не сработать раньше настоящего
+// снятия гейта, но и не заставлять игрока ждать результат партии слишком долго.
+const FINISH_MODAL_SAFETY_MS = 6000;
+
 // 2026-10-14: бэк унифицировал CollisionEvent — вместо enum `collision`
 // (LOWER/TOP) + сырых `runnerId`/`otherRunnerId` теперь явные
 // `flyingRunnerId`/`stayingRunnerId`. Старая формула TOP→runnerId/
@@ -121,79 +137,20 @@ const DEATH_FINISH_GATE_SETTLE_MS = 1800;
 // историю в CLAUDE_DONE_TASKS.md 2026-10-11/10-12) больше не нужна —
 // "кто улетит" приходит готовым полем.
 
-// Высота баннера "Твой ход"/столкновение/сдвиг трассы — ЗАФИКСИРОВАНА под 3
-// строки (заголовок + подсказка + опциональная вторая строка вроде "Бросок:
-// ...") вместо auto-height, чтобы плитка не "прыгала" по высоте между
-// разными состояниями (раньше три РАЗНЫХ баннера — turnBanner/panelTurnBanner
-// + отдельный collisionBanner — были схлопнуты в один общий контейнер, см.
-// turnBannerInner ниже, по прямому запросу пользователя, 2026-09-26). Меньше
-// на native (2026-09-26, живая жалоба с Android) — там баннер встроен в
-// PlayerInfoPanel с ФИКСИРОВАННЫМ общим бюджетом высоты (panelH, см.
-// useBoardLayout), а не растягивается вместе с экраном, как на вебе
-// (панель веба высотой во весь столбец) — полные 78 сдвигали плитку
-// кубиков/усилений за пределы видимой области.
-const TURN_BANNER_MIN_HEIGHT = Platform.OS === 'web' ? 78 : 64;
+// TURN_BANNER_MIN_HEIGHT — вынесена в constants/GameConstants.js (2026-10-15,
+// по прямому запросу пользователя — тот же размер теперь нужен и
+// GameDialogModal.js, чтобы не плодить два магических числа одного смысла);
+// история решения (зачем фиксированная высота под 3 строки, почему меньше
+// на native) осталась в комментарии там.
 
-// Хореография сдвига фрагментов трассы (game_track_updated) — по прямому
-// запросу пользователя, 2026-09-08: заход на "пик" 4-го фрагмента (см.
-// lib/board#flattenPeekColumn) должен переключать ВСЕХ игроков на фрагмент 1,
-// показать там destroy/fly у тех, кто на нём стоял, дать фрагменту исчезнуть
-// волной по колонкам, затем прыгнуть камерой к бегуну, который вызвал сдвиг,
-// и плавно проявить новый вид. См. подробный разбор у эффекта ниже.
-const TRACK_SHIFT_SETTLE_MS = 2200; // время доиграть destroy/fly тем, кто был на фрагменте 1
-// WIPE/REVEAL — обе волны замедлены на ~2с каждая по прямому запросу
-// пользователя, 2026-09-10 ("пусть и исчезновение, и появление длятся чуть
-// дольше, на пару секунд... и то, и то"), поверх правки того же дня,
-// сделавшей WIPE тоже посегментной волной (была ЕДИНЫМ фейдом).
-const TRACK_SHIFT_WIPE_MS = 4800;   // волна исчезновения 8 колонок старого фрагмента
-const TRACK_SHIFT_REVEAL_MS = 5000; // волна ПОЯВЛЕНИЯ 8 колонок нового фрагмента (см. ниже)
-
-// Новый (только что раскрытый) фрагмент 3 после сдвига — ВСЕГДА один и тот же
-// фиксированный диапазон глобальных колонок, не зависящий от того, где именно
-// внутри него оказался бегун-инициатор: при TOTAL_COLS=25/COLS=8 фрагменты
-// занимают 0-7/8-15/16-23, пик — колонка 24; после сдвига старый пик
-// (col 24, только 1 колонка данных) становится ПОЛНЫМ третьим фрагментом
-// (segment 2 = cols 16-23). Считать это заранее (а не искать позицию мовера
-// в game.runners ПОСЛЕ волны, как было в первой версии) устраняет гонку:
-// раньше жёстко зависело от того, успел ли собственный runner_save мовера
-// прийти раньше конца анимации — теперь не нужно вообще, окно появления
-// известно по построению.
-const TRACK_SHIFT_NEW_FRAGMENT_SEGMENT = Math.floor(BOARD_LAYOUT.TOTAL_COLS / BOARD_LAYOUT.COLS) - 1;
-const TRACK_SHIFT_REVEAL_WINDOW_START = TRACK_SHIFT_NEW_FRAGMENT_SEGMENT * BOARD_LAYOUT.COLS;
-// Кусочек НОВОГО 4-го сегмента (новый пик, всегда последняя колонка —
-// TOTAL_COLS-1) — по прямому запросу пользователя, 2026-09-08: должен
-// проявиться САМЫМ ПОСЛЕДНИМ, отдельным шагом ПОСЛЕ того, как весь новый
-// фрагмент 3 уже полностью показался волной, а не одновременно с ним в общей
-// анимации. Добавлен ДЕВЯТЫМ элементом в конец TRACK_SHIFT_REVEAL_COLS (сам
-// список сохраняет порядок "8 колонок фрагмента 3, потом пик") —
-// trackShiftRevealColumnOpacityMap индексирует по глобальному номеру
-// колонки, взятому из этого списка (см. её определение ниже).
-const TRACK_SHIFT_PEEK_COL = BOARD_LAYOUT.TOTAL_COLS - 1;
-const TRACK_SHIFT_PEEK_REVEAL_MS = 500;
-const TRACK_SHIFT_REVEAL_COLS = [
-    ...Array.from({ length: BOARD_LAYOUT.COLS }, (_, i) => TRACK_SHIFT_REVEAL_WINDOW_START + i),
-    TRACK_SHIFT_PEEK_COL,
-];
+// 2026-10-16 — константы хореографии сдвига фрагментов (TRACK_SHIFT_*)
+// переехали в hooks/useTrackShiftChoreography.js вместе с самой логикой.
 
 const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
-const SEGMENT_KEYS = ['trackBegin', 'trackMiddle', 'trackEnd'];
-
-function findRunnerAt(runners, pos) {
-    return runners.find(
-        (r) => r.segment === pos.segment && r.positionX === pos.positionX && r.positionY === pos.positionY,
-    );
-}
-
-/** Сырой RoadType клетки прямо из game.trackBegin/Middle/End — grid[positionX][positionY]. */
-function rawCellType(game, segment, positionX, positionY) {
-    return game?.[SEGMENT_KEYS[segment]]?.grid?.[positionX]?.[positionY] ?? null;
-}
-
-// Зеркалит ALLOWLIST бэка (ReaperValidator::validateCell(), read-only,
-// D:\Programming\runner-game-backend — ТОЛЬКО road/sand/mud, не блэклист) —
-// см. место использования (handleCellPress-подсветка размещения Жнеца) за
-// полным разбором найденного аудитом контракта бага 2026-10-15.
-const REAPER_ALLOWED_CELL_TYPES = new Set(['road', 'sand', 'mud']);
+// 2026-10-16 — SEGMENT_KEYS/findRunnerAt/rawCellType/REAPER_ALLOWED_CELL_TYPES
+// переехали в lib/board.js вместе с computeHighlightedCells (единственным
+// их потребителем) — DEAD_STATUSES остаётся тут, нужен ещё в паре мест,
+// не связанных с подсветкой клеток (см. её usage ниже).
 
 // Человеко-понятная подсказка "что делать", раз на экране нет туториала —
 // первый живой прогон показал, что без этого не очевидно, что шаг ABILITY
@@ -251,6 +208,14 @@ function stepInstruction(
             // (жалоба пользователя, 2026-09-07 — "не подсвечена доступная
             // клетка... но диалог пропуска вижу").
             if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — дождись следующего события или обнови соединение';
+            // 2026-10-16, по прямому запросу пользователя: накат должен быть
+            // явно назван накатом в тексте подсказки, не слит с обычным
+            // ходом — тот же признак наката (activeRunner.dice===0 И
+            // rollDice!=null), что уже используется в handleCellPress
+            // (isRollMove) и в RunnerCard.js (diceValue).
+            if (activeRunner.dice === 0 && activeRunner.rollDice != null) {
+                return 'Накат — выбери направление';
+            }
             return activeRunner.segment == null
                 ? 'Тапни подсвеченную клетку в заднем ряду — это выход на трассу'
                 : 'Выбери доступную клетку для хода';
@@ -338,6 +303,12 @@ export default function GameBoardScreen({ route, navigation }) {
     // ghost_consumed/жетонов повреждений в этом файле).
     const mineBlasts = useMineBlasts();
     const minePendingRef = useRef(false);
+    // Визуальный след пролетающей пули рикошета — см. hooks/useRicochetTrails.js/
+    // constants/ricochetVfx.js. Триггерится прямо в существующей ветке
+    // `e.event === 'ricochet'` ниже (там же, где уже играет звук) — тайминг
+    // уже готов "бесплатно": эта ветка и так ждёт, пока доиграет анимация
+    // урона исходного бегуна (causedBy-цепочка), прежде чем сработать.
+    const ricochetTrails = useRicochetTrails();
     // **2026-09-25, по прямому запросу пользователя** — раньше вскрытие
     // клетки (game_cell_updated) сразу же дёргало mineBlasts.trigger(cellId),
     // СОВЕРШЕННО не в курсе очереди анимаций бегуна, который эту мину
@@ -457,57 +428,13 @@ export default function GameBoardScreen({ route, navigation }) {
         gameRef.current = game;
     });
 
-    // Озвучка бегунов (2026-09-03) — 3 "переиспользуемых канала"
-    // (.replace() на существующем плеере вместо создания нового на каждый
-    // звук, см. constants/runnerSounds за тем, какие файлы у каких типов
-    // есть) + отдельный фиксированный плеер под общий звук столкновения.
-    // moveSound (зацикленный, per-type) — см. отдельный useEffect ниже, тот
-    // же паттерн, что был раньше с общим lazer.mp3 для ВСЕХ типов.
-    const voiceSound = useAudioPlayer(null);
-    const shootSound = useAudioPlayer(null);
-    const startSound = useAudioPlayer(null);
-    const collisionSound = useAudioPlayer(COLLISION_SOUND);
-    // "Комментарии" — звуки результатов из assets/sounds/action/comments/
-    // (старт партии/уничтожение/выбывание/столкновение/аномалия/победа), см.
-    // constants/commentSounds.js. Один общий канал на все категории — тот
-    // же компромисс, что и у voice/shoot/start чуть выше (если два разных
-    // комментария выпадут почти одновременно, второй оборвёт первый через
-    // .replace() — событие редкое, специально не усложняем множеством
-    // каналов). collisionSound играет ЦИКЛИЧНО, пока видна поза столкновения
-    // (см. handleCollisionPoseStart/End ниже), а не один раз коротким
-    // хлопком — по прямому запросу пользователя.
-    const commentSound = useAudioPlayer(null);
-    // Общий одноразовый SFX-канал (2026-10-14) — взрыв мины/эффект на acid-
-    // burn-клетке/удар рикошета (constants/commonSounds.js) — тот же
-    // компромисс "один переиспользуемый плеер", что у voice/shoot/start,
-    // эти три события физически не могут выпасть друг на друга в один момент.
-    const sfxSound = useAudioPlayer(null);
-    useEffect(() => {
-        collisionSound.loop = true;
-    }, [collisionSound]);
-    // Громкость по каналам — lib/audioSettings.js (панель настроек, кнопка
-    // settings в seam-ряду, 2026-10-04). Раньше тут были захардкожены
-    // MUSIC_VOLUME=0.1/collisionSound.volume=0.5 прямо на плеере — теперь
-    // ЕДИНСТВЕННЫЙ источник этих чисел, слайдеры в GameSettingsModal
-    // показывают именно то, что реально звучит, без скрытого множителя
-    // поверх. 'voice' — ТОЛЬКО реплики бегунов (active/damagedActive, по
-    // прямому запросу пользователя — отдельно от остального "игрового"
-    // звука); 'action' — ВСЁ остальное (выстрелы/шаги/столкновение/появление
-    // Жнеца-Мяча/мины/рикошет-SFX/UI-клики, И голосовые комментарии — канал
-    // "Комментатор" объединён с "Игровыми звуками" в этот же action
-    // 2026-10-14, по прямому запросу пользователя: отдельный регулятор для
-    // озвучки результатов показался избыточным рядом с голосами бегунов).
+    // 2026-10-16 — звуковой блок (6 переиспользуемых плееров + синхронизация
+    // громкости) вынесен в hooks/useGameAudio.js, см. его докстринг за полным
+    // разбором (moveSound/musicSound/eventLogToggleSound сознательно НЕ туда
+    // — завязаны на свою отдельную логику в других местах этого файла).
+    // audioSettings остаётся тут — нужен ещё нескольким другим плеерам ниже.
     const audioSettings = useAudioSettings();
-    useEffect(() => {
-        voiceSound.volume = audioSettings.voice;
-    }, [voiceSound, audioSettings.voice]);
-    useEffect(() => {
-        shootSound.volume = audioSettings.action;
-        startSound.volume = audioSettings.action;
-        collisionSound.volume = audioSettings.action;
-        commentSound.volume = audioSettings.action;
-        sfxSound.volume = audioSettings.action;
-    }, [shootSound, startSound, collisionSound, commentSound, sfxSound, audioSettings.action]);
+    const { voiceSound, shootSound, startSound, collisionSound, commentSound, sfxSound } = useGameAudio(audioSettings);
     // Считает ОДНОВРЕМЕННО активные пары столкновений (на доске теоретически
     // может быть больше одной сразу) — collisionSound останавливаем, только
     // когда ПОСЛЕДНЯЯ пара реально разошлась, не раньше.
@@ -601,7 +528,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // размещении и т.п.) зовут без 5-го аргумента — undefined не участвует
     // в причинном учёте.
     const triggerWithSound = useCallback(
-        (runnerId, kind, extra, seq) => {
+        (runnerId, kind, extra, seq, opts) => {
             // Подавляем ТОЛЬКО визуальный триггер (дублирующий walk-цикл) —
             // звук "прилёта" (drone_start.wav) всё равно проигрываем: во
             // время локального превью никакого звука не было (превью чисто
@@ -666,7 +593,15 @@ export default function GameBoardScreen({ route, navigation }) {
             // те синхронны с событием НАМЕРЕННО (см. collisionCommentPlayedRef
             // ниже, фикс 2026-09-20 — синхронизация с позой там раньше давала
             // обратный порядок звуков).
-            const deathCommentOnStart = (kind === 'destroyed' || kind === 'acid' || kind === 'burn')
+            // opts.suppressDeathComment (2026-10-16) — сдвиг фрагмента может
+            // уничтожить СРАЗУ нескольких бегунов одним причинным событием
+            // (reason:'track_shift', см. reduceAndLog#isParallelTrackShiftDeath) —
+            // это одна одновременная потеря, а не N отдельных смертей, и
+            // комментатор должен озвучить её ОДИН раз, а не на каждого.
+            // Вызывающий код (reduceAndLog) помечает ВСЕ, кроме первого,
+            // сиблинга такой группы — сама 'destroyed'-анимация и прочие
+            // onStart-эффекты (снятие заморозки клетки и т.п.) не трогаются.
+            const deathCommentOnStart = (kind === 'destroyed' || kind === 'acid' || kind === 'burn') && !opts?.suppressDeathComment
                 ? () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.destroyed))
                 : undefined;
             // Фоновый эффект гибели на acid-клетке (2026-10-14, по прямому
@@ -796,10 +731,59 @@ export default function GameBoardScreen({ route, navigation }) {
         (state, bundle) => {
             let current = state;
             let pendingCollisionPair = null;
+            // 2026-10-16, по прямому запросу пользователя: голосовой
+            // комментарий выстрела (miss/ricochet) должен играть ПОСЛЕ самого
+            // выстрела (позы 'attack' у стрелка), не одновременно с ним. Поза
+            // стрелка триггерится НЕ самим 'attack'/'ricochet'-событием, а
+            // более ранним 'step_shoot' в этом же бандле (см.
+            // lib/runnerAnimTriggers.js) — ключ которого backend НЕ указывает
+            // явно как causedBy у 'attack'/'ricochet' (оба идут с
+            // causedBy=null, независимы по данным бэка). Тот же приём, что и
+            // pendingCollisionPair ниже — синхронный снимок "последнего
+            // виденного step_shoot" на момент КАЖДОЙ итерации, используется
+            // ниже при показе комментария.
+            let pendingShootKey = null;
+            // 2026-10-16 — см. isParallelTrackShiftDeath/triggerForItem ниже:
+            // один голосовой комментарий смерти на ВСЮ группу одновременных
+            // track_shift-жертв одного бандла, не на каждую по отдельности.
+            let trackShiftDeathCommentPlayed = false;
             const bundleId = ++bundleCounterRef.current;
-            for (const item of bundle.sequence ?? [bundle]) {
-                const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
+            // 2026-10-15/16 — сериализация сиблингов одной причины (все
+            // элементы бандла с одним и тем же causedBy ждут не только
+            // прямого родителя, но и ДРУГ ДРУГА по порядку seq) — чинит
+            // визуальный порядок в каскадах вроде "Мяч на danger-клетке"
+            // (см. git-историю файла за полным разбором находки). Живой баг,
+            // найденный ПОСЛЕ внедрения (тем же днём): отложенный `trigger()`
+            // задерживает позу/звук/visualPositions конкретного шага, а
+            // game-стейт при этом ВСЕГДА фолдится синхронно и безусловно
+            // (осознанная архитектура — игровая логика не должна ждать
+            // анимацию) — пока бегун ждёт своей очереди, BoardGrid для него
+            // БЕЗ активной visualPositions падает на уже обновлённую РЕАЛЬНУЮ
+            // позицию и сам доезжает туда через RunnerTokenSlide, в обход
+            // очереди — токен долетал молча, поза/звук "догоняли" с
+            // опозданием. Чинится НЕ откатом сериализации (та отдельно нужна
+            // для порядка каскадов), а pin-сидированием ТЕКУЩЕЙ (ещё не
+            // изменившейся) позиции — см. блок на `runner_save` ниже.
+            const lastSiblingKeyByCause = new Map();
+            for (const e of unwrapBundle(bundle, { gameId: bundle.gameId })) {
                 pushLog(e);
+                // SEQDBG — 2026-10-15, по прямому запросу пользователя (живая отладка
+                // двух каскадных багов анимации, см. CLAUDE.md): человекочитаемый лог
+                // (pushLog/describeEvent) не несёт seq/causedBy/reason — без них нельзя
+                // отличить "бэк прислал не то" от "оркестратор неверно сопоставил
+                // причинность". Печатаем явно, с bundleId (тот же составной ключ, что
+                // уходит в markSeqScheduled/onceSeqDone ниже) — НЕ убирать до следующего
+                // живого репро этих багов. `pos` — 2026-10-16, по живой жалобе на
+                // "одновременное" перемещение двух бегунов при коллизии Мяча: без
+                // позиции из САМОГО события приходилось гадать, какой SLIDEDBG-строке
+                // (там тоже теперь есть runnerId, см. RunnerTokenSlide.js) какой шаг
+                // бандла соответствует — e.runnerId для runner_save/runner_ball несёт
+                // весь patch (см. lib/runnerAnimTriggers.js), у остальных событий
+                // (danger/collision/...) это просто id, position тогда undefined.
+                const pos = (e.runnerId && typeof e.runnerId === 'object')
+                    ? ` pos=${e.runnerId.segment}:${e.runnerId.positionX}:${e.runnerId.positionY}`
+                    : '';
+                gameLog(`SEQDBG bundle=${bundleId} event=${e.event} seq=${e.seq} causedBy=${e.causedBy} reason=${e.reason} runnerId=${JSON.stringify(e.runnerId?.id ?? e.runnerId)}${pos}`);
 
                 if (e.event === 'collision') {
                     // lib/runnerAnimTriggers.js#handleSequenceItem ждёт пару
@@ -811,6 +795,124 @@ export default function GameBoardScreen({ route, navigation }) {
                     // если runEffects ЭТОГО элемента отложен.
                     pendingCollisionPair = { runnerId: e.flyingRunnerId, otherRunnerId: e.stayingRunnerId };
                 }
+                // 2026-10-16, живое репро (Мяч на danger-клетке, см.
+                // useRunnerAnimations.js#seedVisualPosition за полным
+                // разбором) — СИНХРОННО, не через runEffects (та же причина,
+                // что у pendingCollisionPair выше: это должно попасть в
+                // САМЫЙ ПЕРВЫЙ рендер после этого бандла, а не ждать своей
+                // очереди в причинной цепочке). Мяч — единственный случай в
+                // игре, когда совсем новый runnerId рождается И получает
+                // финальную позицию в ОДНОМ бандле; у обычных бегунов такого
+                // зазора нет (первый выход из резерва — БЕЗ анимации вообще,
+                // см. архитектуру orientation/анимаций в CLAUDE.md).
+                if (e.event === 'runner_ball' && e.runnerId) {
+                    const patch = e.runnerId;
+                    runnerAnim.seedVisualPosition(patch.id, {
+                        segment: patch.segment, positionX: patch.positionX, positionY: patch.positionY,
+                    });
+                }
+                // 2026-10-16, живая жалоба — "Игрок победил" мелькнула СРАЗУ
+                // (до того, как доиграла цепочка анимаций гибели), потом
+                // пропала и появилась снова. Та же причина, что и у
+                // остальных находок этого дня: `game.status` фолдится
+                // синхронно и безусловно, а этот Set (gate для
+                // GameFinishModal/звука victory-lost, см. hasDeathAnimPlaying
+                // ниже) раньше выставлялся ВНУТРИ runEffects — которая сама
+                // может быть отложена (сиблинг в каскаде). Модалка успевала
+                // решить "смертей не играет" ДО того, как отложенный
+                // runEffects вообще добирался до этой строки. Перенесено
+                // СЮДА, в синхронную часть цикла — тот же приём, что и у
+                // pendingCollisionPair/seedVisualPosition выше. Порядок
+                // относительно handleSequenceItem (которая внутри runEffects
+                // может синхронно позвать onStart) не нарушен — этот Set
+                // пополняется СТРОГО до неё в любом случае, раньше или позже
+                // (отложенной или нет).
+                if (e.event === 'runner_destroy' && e.runnerId?.type !== RUNNER_TYPES.REAPER) {
+                    setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
+                }
+                // 2026-10-16 — pin ТЕКУЩЕЙ (ещё не изменившейся) позиции для
+                // runner_save, см. докстринг lastSiblingKeyByCause выше за
+                // полным разбором бага, который это чинит. СИНХРОННО, читаем
+                // `current` (ещё не nextState этого шага — фолд случится
+                // ниже, ПОСЛЕ этого блока) — значит это точно позиция бегуна
+                // ДО применения этого события. seedVisualPosition не
+                // перезаписывает уже существующую запись — если у бегуна УЖЕ
+                // идёт анимация, это no-op; срабатывает только когда очереди
+                // нет вообще — именно та дыра, через которую реальный стейт
+                // мог протечь раньше срока.
+                // **Живой баг этой же правки, найден в ТОТ ЖЕ день**: пин
+                // был безусловным для ЛЮБОГО runner_save — но при чистой
+                // перенумерации сегмента (сдвиг фрагментов трассы, X/Y те
+                // же, меняется только segment) `handleSequenceItem` НИЧЕГО
+                // не триггерит (см. её докстринг — "не требует анимации",
+                // return) — полагаясь, что BoardGrid сам возьмёт НОВЫЙ сегмент
+                // из реального стейта напрямую. Безусловный пин запирал
+                // бегуна на СТАРОМ сегменте навсегда — корректирующего
+                // trigger() для этого случая никогда не приходит. Сузил
+                // условие — пин ставится, ТОЛЬКО когда positionX/Y реально
+                // меняются (настоящий ход, после которого trigger() точно
+                // будет вызван) — чистая перенумерация сегмента эту ветку
+                // больше не проходит, BoardGrid снова видит актуальный сегмент
+                // сразу.
+                if (e.event === 'runner_save' && e.runnerId) {
+                    const patch = e.runnerId;
+                    const prevRunner = current?.runners?.find((r) => String(r.id) === String(patch.id));
+                    const realMove = prevRunner?.segment != null
+                        && (prevRunner.positionX !== patch.positionX || prevRunner.positionY !== patch.positionY);
+                    if (realMove) {
+                        runnerAnim.seedVisualPosition(patch.id, {
+                            segment: prevRunner.segment, positionX: prevRunner.positionX, positionY: prevRunner.positionY,
+                        });
+                    }
+                }
+                // Заморозка вскрываемой клетки (heldCells) — СИНХРОННО, та же
+                // причина и тот же приём, что у seedVisualPosition/
+                // pendingCollisionPair/pendingDeathRunnerIds выше (2026-10-16,
+                // живая жалоба: каскад "Скаут на danger → Мяч → коллизия → Мяч
+                // отброшен на клетку, которая САМА оказалась скрытой danger" —
+                // клетка-приземление на миг снова стала "danger", хотя уже
+                // честно показывала вскрытый тип (лужа/mud)). Раньше этот блок
+                // стоял ВНУТРИ runEffects ниже — которая для НЕ первого элемента
+                // цепочки (causedBy != null, ЛЮБОЕ вскрытие клетки каскадом,
+                // не только эта конкретная) ОТКЛАДЫВАЕТСЯ до onceSeqDone, пока
+                // реальный game-стейт (grid) уже обновился мгновенно и
+                // синхронно (архитектурное правило проекта). За секунду-две
+                // отставания доска успевала честно показать НОВЫЙ тип — а
+                // запоздало выполнившийся runEffects замораживал её ОБРАТНО в
+                // СТАРЫЙ (сняв oldRawType со `stateBeforeItem`, который к этому
+                // моменту был уже устаревшим снимком) — ровно тот флик "новый
+                // тип → снова danger → снова новый тип", что видел пользователь.
+                // Читаем `current` (ещё НЕ пропатченный этим событием) —
+                // гарантированно тот же "старый" тип, что и видела доска ДО
+                // этого события, без риска устареть к моменту использования.
+                // Guard на activatedCellKeysRef — как и раньше: если анимация
+                // ДЛЯ ЭТОЙ ПОЗИЦИИ уже стартовала синхронно (однохоповый случай
+                // без каскада, landing-triggger идёт раньше game_cell_updated),
+                // замораживать незачем — релиз для неё уже состоялся бы
+                // впустую. Release (`releaseHeldCellOnStart`) не трогали — он и
+                // так уже срабатывает по факту реального onStart анимации,
+                // независимо от того, когда была создана заморозка.
+                if (e.event === 'game_cell_updated' && e.cell) {
+                    const { segment, positionX, positionY } = e.cell;
+                    const cellId = cellKey({ segment, positionX, positionY });
+                    if (!activatedCellKeysRef.current.has(cellId)) {
+                        const oldRawType = [current?.trackBegin, current?.trackMiddle, current?.trackEnd][segment]
+                            ?.grid?.[positionX]?.[positionY] ?? null;
+                        const oldType = resolveCellVisual(oldRawType);
+                        setHeldCells((prev) => ({
+                            ...prev,
+                            [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
+                        }));
+                        setTimeout(() => {
+                            setHeldCells((prev) => {
+                                if (!(cellId in prev)) return prev;
+                                const next = { ...prev };
+                                delete next[cellId];
+                                return next;
+                            });
+                        }, HELD_CELL_TIMEOUT_MS);
+                    }
+                }
                 // Снимок ПАРЫ ИМЕННО сейчас — если в одном (крайне редком)
                 // бандле случились бы ДВЕ коллизии подряд, а runEffects
                 // первой был бы отложен дольше, чем успевает подойти вторая
@@ -821,31 +923,64 @@ export default function GameBoardScreen({ route, navigation }) {
 
                 const stateBeforeItem = current; // снимок ДО этого шага — для runEffects, даже если он отложен
                 const itemKey = `${bundleId}:${e.seq}`;
-                const causeKey = e.causedBy != null ? `${bundleId}:${e.causedBy}` : null;
+                // Снимок "последнего виденного step_shoot" ИМЕННО сейчас — та
+                // же причина, что у collisionPairAtThisPoint выше. Обновляем
+                // pendingShootKey ПОСЛЕ снимка — если ЭТО сам step_shoot, его
+                // комментарий (если вдруг у step_shoot будет свой) видит
+                // предыдущий выстрел, не себя, но step_shoot комментарий не
+                // читает вообще, так что это не имеет практического значения.
+                const shootKeyAtThisPoint = pendingShootKey;
+                if (e.event === 'step_shoot') pendingShootKey = itemKey;
+                // 2026-10-16 — сдвиг фрагмента трассы может уничтожить СРАЗУ
+                // несколько бегунов одним причинным событием: все они делят
+                // один и тот же causedBy (сам сдвиг), но это НЕ цепочка "один
+                // ждёт другого" — это N независимых ОДНОВРЕМЕННЫХ потерь.
+                // Обычная сиблинг-сериализация ниже (специально ждёт
+                // предыдущего сиблинга — нужно для настоящих каскадов вроде
+                // мины/коллизии/аномалии) тут заставляла их умирать по
+                // очереди, а токен следующего в очереди даже не появлялся на
+                // замороженном кадре фрагмента 1, пока не доходила его
+                // очередь (см. useTrackShiftChoreography.js#trackShiftRunners
+                // — рисует только тех, у кого уже есть visualPositions).
+                // Признак — reason:'track_shift' на runner_destroy (бэковый
+                // DestroyReason, не только у Жнеца, см. docstring выше) —
+                // такие события ждут ТОЛЬКО прямого родителя (как первый
+                // сиблинг группы) и сами НЕ становятся "последним сиблингом"
+                // ни для кого — остальные (не-track_shift) сиблинги той же
+                // причины продолжают цепляться друг за друга как раньше, этих
+                // параллельных просто не видя. Специфично на этом reason —
+                // больше ни один каскад так себя не ведёт.
+                const isParallelTrackShiftDeath = e.event === 'runner_destroy' && e.reason === 'track_shift';
+                // См. lastSiblingKeyByCause выше — первый сиблинг причины ждёт
+                // САМУ причину, каждый следующий — предыдущего сиблинга (по
+                // порядку seq). Регистрация (set) — СРАЗУ, не после runEffects.
+                const causeKey = e.causedBy == null
+                    ? null
+                    : isParallelTrackShiftDeath
+                        ? `${bundleId}:${e.causedBy}`
+                        : (lastSiblingKeyByCause.get(e.causedBy) ?? `${bundleId}:${e.causedBy}`);
+                if (e.causedBy != null && !isParallelTrackShiftDeath) lastSiblingKeyByCause.set(e.causedBy, itemKey);
                 runnerAnim.markSeqScheduled(itemKey);
-                const triggerForItem = (runnerId, kind, extra) => triggerWithSound(runnerId, kind, extra, itemKey);
+                // Один голосовой комментарий на ВСЮ группу одновременных
+                // track_shift-смертей (см. deathCommentOnStart#suppressDeathComment
+                // в triggerWithSound) — первый сиблинг группы играет его,
+                // остальные — подавляют. trackShiftDeathCommentPlayed живёт
+                // ВНЕ цикла (объявлена при входе в reduceAndLog, см. выше),
+                // одна на весь бандл.
+                const triggerForItem = (runnerId, kind, extra) => {
+                    if (isParallelTrackShiftDeath && kind === 'destroyed') {
+                        const suppress = trackShiftDeathCommentPlayed;
+                        trackShiftDeathCommentPlayed = true;
+                        return triggerWithSound(runnerId, kind, extra, itemKey, { suppressDeathComment: suppress });
+                    }
+                    return triggerWithSound(runnerId, kind, extra, itemKey);
+                };
 
                 const runEffects = () => {
-                    // Детекция ДО handleSequenceItem (см. докстринг у
-                    // pendingDeathRunnerIds выше) — порядок важен: если
-                    // очередь анимаций у этого бегуна сейчас пуста,
-                    // терминальная поза стартует СИНХРОННО прямо внутри
-                    // вызова ниже (advanceQueue зовёт onStart сразу же), и
-                    // deathOnStart уже успеет (с задержкой
-                    // DEATH_FINISH_GATE_SETTLE_MS) убрать runnerId из этого
-                    // Set — если добавлять ПОСЛЕ вызова, эта подписка
-                    // случилась бы позже самого вызова onStart. 2026-10-15:
-                    // раньше гейтилась ТОЛЬКО terrain-смерть (acid/burn) —
-                    // расширено на ЛЮБУЮ настоящую гибель (обычный
-                    // 'destroyed' от урона/ловушки тоже должен держать
-                    // диалог). Жнец исключён — для него `runner_destroy`
-                    // означает "вернулся в руку" (триггерит 'fly', не
-                    // терминальную позу, см. lib/runnerAnimTriggers.js) —
-                    // deathOnStart для него НИКОГДА не вызовется, добавление
-                    // навсегда зависло бы в Set.
-                    if (e.event === 'runner_destroy' && e.runnerId?.type !== RUNNER_TYPES.REAPER) {
-                        setPendingDeathRunnerIds((prev) => new Set(prev).add(e.runnerId.id));
-                    }
+                    // pendingDeathRunnerIds — теперь пополняется СИНХРОННО,
+                    // выше в этом же цикле (см. докстринг там за разбором
+                    // живого бага "модалка победы мелькает раньше времени"),
+                    // не здесь.
                     handleSequenceItem(stateBeforeItem, e, triggerForItem, {
                         onceStepDone: runnerAnim.onceStepDone,
                         completeWaitStep: runnerAnim.completeWaitStep,
@@ -860,12 +995,13 @@ export default function GameBoardScreen({ route, navigation }) {
                     // явно (см. lib/ghostPairs.js#identifyGhostConsumption).
                     const ghostPass = identifyGhostConsumption(stateBeforeItem, e);
                     if (ghostPass) ghostPairs.record(ghostPass.key);
-                    // Замораживаем клетку в ЕЁ ЖЕ ВИДЕ ДО вскрытия (см.
-                    // heldCells выше) — читаем rawType из `stateBeforeItem`
-                    // (снимок ДО этого шага цепочки, не "текущее на момент
-                    // вызова" — то давно могло убежать вперёд, если этот
-                    // runEffects был отложен). cellId — тот же формат, что и
-                    // BoardGrid/lib/board.
+                    // Взрыв мины — см. pendingMineCellIdsRef выше. Заморозка
+                    // клетки (heldCells) ПЕРЕЕХАЛА в синхронную часть цикла
+                    // (см. её докстринг там, 2026-10-16, за разбором живого
+                    // бага) — тут остался только звук/визуал взрыва, этой
+                    // части переезд не касался (она и так уже корректно
+                    // привязана к activatedCellKeysRef на момент СВОЕГО
+                    // исполнения, тут нет гонки "старого снимка").
                     if (e.event === 'game_cell_updated' && e.cell) {
                         // 2026-10-14: бэк переименовал row/column → positionX/positionY (унификация Cell).
                         const { segment, positionX, positionY } = e.cell;
@@ -896,23 +1032,6 @@ export default function GameBoardScreen({ route, navigation }) {
                                 }, MINE_TRIGGER_SAFETY_TIMEOUT_MS);
                             }
                         }
-                        if (!activatedCellKeysRef.current.has(cellId)) {
-                            const oldRawType = [stateBeforeItem?.trackBegin, stateBeforeItem?.trackMiddle, stateBeforeItem?.trackEnd][segment]
-                                ?.grid?.[positionX]?.[positionY] ?? null;
-                            const oldType = resolveCellVisual(oldRawType);
-                            setHeldCells((prev) => ({
-                                ...prev,
-                                [cellId]: { type: oldType, image: pickSegmentImage(oldType, cellId), baseImage: pickBaseImage(oldType, cellId) },
-                            }));
-                            setTimeout(() => {
-                                setHeldCells((prev) => {
-                                    if (!(cellId in prev)) return prev;
-                                    const next = { ...prev };
-                                    delete next[cellId];
-                                    return next;
-                                });
-                            }, HELD_CELL_TIMEOUT_MS);
-                        }
                     }
                     // Транзиентные, не про анимацию — те же side-effects, что
                     // раньше жили в отдельном onTransient (звук/баннер),
@@ -935,11 +1054,30 @@ export default function GameBoardScreen({ route, navigation }) {
                         playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
                     }
                     if (e.event === 'ricochet') {
-                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
-                        playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
+                        // 2026-10-16, по прямому запросу пользователя —
+                        // "сначала выстрел, потом звук комментария": сам
+                        // 'ricochet'/'attack' приходит с causedBy=null (не
+                        // зависит от 'step_shoot' по данным бэка), поэтому
+                        // стандартный causeKey тут не помогает — ждём явно
+                        // захваченный ключ выстрела (shootKeyAtThisPoint, см.
+                        // снимок выше). Нет выстрела в этом бандле (не должно
+                        // случаться для ricochet/attack, но на всякий случай,
+                        // fail-open) — играем сразу, как раньше.
+                        const playRicochet = () => {
+                            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                            playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
+                            // 2026-10-17, по прямому запросу пользователя —
+                            // визуальный след пролетающей пули, та же точка
+                            // триггера (и тот же тайминг), что уже звук выше.
+                            ricochetTrails.trigger(e.from, e.to);
+                        };
+                        if (shootKeyAtThisPoint) runnerAnim.onceSeqDone(shootKeyAtThisPoint, playRicochet);
+                        else playRicochet();
                     }
                     if (e.event === 'attack' && e.hit === false) {
-                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                        const playMiss = () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                        if (shootKeyAtThisPoint) runnerAnim.onceSeqDone(shootKeyAtThisPoint, playMiss);
+                        else playMiss();
                     }
                     runnerAnim.settleSeqIfIdle(itemKey);
                 };
@@ -1005,8 +1143,10 @@ export default function GameBoardScreen({ route, navigation }) {
         },
         [
             pushLog, triggerWithSound, playOneShot, commentSound, sfxSound, mineBlasts.trigger,
+            ricochetTrails.trigger,
             ghostPairs.record, runnerAnim.onceStepDone, runnerAnim.completeWaitStep,
             runnerAnim.markSeqScheduled, runnerAnim.settleSeqIfIdle, runnerAnim.onceSeqDone,
+            runnerAnim.seedVisualPosition,
         ],
     );
 
@@ -1026,11 +1166,34 @@ export default function GameBoardScreen({ route, navigation }) {
     const onTransient = useCallback(
         (bundle) => {
             const bundleId = ++bundleCounterRef.current;
-            for (const item of bundle.sequence ?? [bundle]) {
-                const e = { ...item, event: item.type ?? item.event, gameId: bundle.gameId };
+            // См. pendingShootKey в reduceAndLog выше — тот же приём, и тут
+            // он даже АКТУАЛЬНЕЕ: одиночный промах выстрела без каскада
+            // (самый частый случай ricochet/miss) — это ИМЕННО version-less
+            // бандл, см. докстринг этой функции чуть выше.
+            let pendingShootKey = null;
+            // См. lastSiblingKeyByCause в reduceAndLog выше за полным разбором —
+            // тот же приём, тут же он нужен version-less бандлам. Pin-сидирование
+            // текущей позиции (см. тот же докстринг) тут НЕ нужно — в этой ветке
+            // нет фолда в runnerGameReducer (gameRef.current не продвигается
+            // этой функцией), значит и гонки "стейт уже обновился, а trigger ещё
+            // нет" тут физически не бывает.
+            const lastSiblingKeyByCause = new Map();
+            for (const e of unwrapBundle(bundle, { gameId: bundle.gameId })) {
                 pushLog(e);
+                // SEQDBG — см. тот же лог (и pos=) в reduceAndLog выше за объяснением.
+                const pos = (e.runnerId && typeof e.runnerId === 'object')
+                    ? ` pos=${e.runnerId.segment}:${e.runnerId.positionX}:${e.runnerId.positionY}`
+                    : '';
+                gameLog(`SEQDBG(transient) bundle=${bundleId} event=${e.event} seq=${e.seq} causedBy=${e.causedBy} reason=${e.reason} runnerId=${JSON.stringify(e.runnerId?.id ?? e.runnerId)}${pos}`);
                 const itemKey = `${bundleId}:${e.seq}`;
-                const causeKey = e.causedBy != null ? `${bundleId}:${e.causedBy}` : null;
+                // Снимок "последнего виденного step_shoot" — см. тот же приём
+                // в reduceAndLog выше за полным разбором.
+                const shootKeyAtThisPoint = pendingShootKey;
+                if (e.event === 'step_shoot') pendingShootKey = itemKey;
+                const causeKey = e.causedBy != null
+                    ? (lastSiblingKeyByCause.get(e.causedBy) ?? `${bundleId}:${e.causedBy}`)
+                    : null;
+                if (e.causedBy != null) lastSiblingKeyByCause.set(e.causedBy, itemKey);
                 runnerAnim.markSeqScheduled(itemKey);
                 const triggerForItem = (runnerId, kind, extra) => triggerWithSound(runnerId, kind, extra, itemKey);
 
@@ -1057,11 +1220,19 @@ export default function GameBoardScreen({ route, navigation }) {
                         playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.anomalyHole));
                     }
                     if (e.event === 'ricochet') {
-                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
-                        playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
+                        // См. тот же блок в reduceAndLog выше за объяснением.
+                        const playRicochet = () => {
+                            playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.ricochet));
+                            playOneShot(sfxSound, pickRandom(RICOCHET_HIT_SOUNDS));
+                            ricochetTrails.trigger(e.from, e.to);
+                        };
+                        if (shootKeyAtThisPoint) runnerAnim.onceSeqDone(shootKeyAtThisPoint, playRicochet);
+                        else playRicochet();
                     }
                     if (e.event === 'attack' && e.hit === false) {
-                        playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                        const playMiss = () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.miss));
+                        if (shootKeyAtThisPoint) runnerAnim.onceSeqDone(shootKeyAtThisPoint, playMiss);
+                        else playMiss();
                     }
                     runnerAnim.settleSeqIfIdle(itemKey);
                 };
@@ -1071,7 +1242,7 @@ export default function GameBoardScreen({ route, navigation }) {
             }
         },
         [
-            pushLog, triggerWithSound, playOneShot, commentSound, sfxSound,
+            pushLog, triggerWithSound, playOneShot, commentSound, sfxSound, ricochetTrails.trigger,
             runnerAnim.markSeqScheduled, runnerAnim.settleSeqIfIdle, runnerAnim.onceSeqDone,
         ],
     );
@@ -1136,6 +1307,20 @@ export default function GameBoardScreen({ route, navigation }) {
     // navBtnSize/`navBtnColumnLeft` ниже, тот же ассет RoadNavButton, но
     // колонкой слева от дороги, по прямому запросу пользователя, 2026-08-31.
     const useMobileNavButtons = isPortrait && Platform.OS !== 'web';
+    // useWebCompactChrome — НОВЫЙ, ОТДЕЛЬНЫЙ флаг (2026-10-16, по прямому
+    // запросу пользователя: компактная/портретная раскладка на вебе должна
+    // выглядеть 1:1 как на Android). Специально НЕ правим useMobileNavButtons
+    // (его смысл "родное мобильное приложение" и весь native-код, который на
+    // него завязан, не тронуты ни единой строкой — пользователь явно выбрал
+    // этот вариант вместо расширения существующего флага, чтобы изменения
+    // для веба были отдельной, самостоятельной веткой, а не редефайном
+    // общего условия, используемого ~15 раз по файлу). Используется ТОЛЬКО
+    // там, где мобильный шов/рамка/ряд чисто ВИЗУАЛЬНЫ и не зависят от
+    // platform-специфичного API (сам визуал там и так уже общий для обеих
+    // платформ, см. PlayerInfoPanel.js#compactColumns) — такие места ниже
+    // дополнены `(useMobileNavButtons || useWebCompactChrome)`, собственно
+    // определение useMobileNavButtons выше не меняется.
+    const useWebCompactChrome = isPortrait && Platform.OS === 'web';
     // navBtnSize (кнопки слева от дороги, не в mobileNav-случае) — половина
     // размера сегмента, посчитана в useBoardLayout вместе с самим сегментом
     // (там же учтена ширина, которую эта колонка отъедает у сетки — см.
@@ -1162,7 +1347,10 @@ export default function GameBoardScreen({ route, navigation }) {
     // специально под этот случай, см. её докстринг), по умолчанию её
     // поведение в остальных местах (RunnerCard и т.д.) не изменилось.
     const seamNameH = Math.round(arrowBtnSize * 0.8);
-    const navBoxH = Math.round(arrowBtnSize * 0.7);
+    // navBoxH (кнопки навигации на кайме рамки дороги) — УБРАН 2026-10-15, по
+    // прямому запросу пользователя: RoadNavButton переехали в строку под
+    // швом (seamRow), где уже используется switchRowH — отдельный размер
+    // для них больше не нужен.
     // roadFrameRoundSize — ВЫСОТА (не ширина — та считается ниже, от
     // измеренной ширины баннера хода) квадратов раунд/ход/бонус/настройки/
     // лога. switchRowH — общая высота строки (= высоте переключателей
@@ -1274,6 +1462,23 @@ export default function GameBoardScreen({ route, navigation }) {
         [runners, runnerAnim.anims],
     );
 
+    // 2026-10-16 — страховка, см. useRunnerAnimations.js#unhide за полным
+    // разбором. Живая жалоба: бегун (Атлет) пропал со доски И с панели
+    // (hiddenIds прячет RunnerToken ВЕЗДЕ, где он рисуется) после одного
+    // урона+аномалии на мине — на другом клиенте того же бегуна видно, игра
+    // его уничтоженным не считает. hiddenIds — чисто локальный флаг этого
+    // клиента (не часть game-стейта), причина рассинхрона НЕ найдена (нужен
+    // android-лог, см. CLAUDE.md) — чинится инвариант, не гипотетическая
+    // причина: если `runners` говорит, что бегун не 'destroyed', а
+    // hiddenIds всё равно его прячет — снимаем.
+    useEffect(() => {
+        if (runnerAnim.hiddenIds.size === 0) return;
+        for (const id of runnerAnim.hiddenIds) {
+            const real = runners.find((r) => String(r.id) === String(id));
+            if (!real || real.status !== RUNNER_STATUS.DESTROYED) runnerAnim.unhide(id);
+        }
+    }, [runners, runnerAnim.hiddenIds, runnerAnim.unhide]);
+
     // Гейт первого показа активной доски — см. BOARD_READY_DELAY_MS выше.
     // Реального "событие size settled" тут нет, поэтому НЕ привязан к
     // смене `game`/версии — выставляется РОВНО один раз за жизнь этого
@@ -1328,10 +1533,46 @@ export default function GameBoardScreen({ route, navigation }) {
     // тронут — у него своя отдельная кнопка "⚙️ Настройки", которая по-
     // прежнему ведёт сразу в звук (хаб не нужен вне партии, "Ориентация
     // диалога" вне игры ничего не настраивает).
-    const [gameMenuOpen, setGameMenuOpen] = useState(false);
-    const [settingsHubOpen, setSettingsHubOpen] = useState(false);
-    const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
-    const [gameGeneralSettingsOpen, setGameGeneralSettingsOpen] = useState(false);
+    // 2026-10-16 — стейт+хендлеры этих 4 панелей вынесены в
+    // hooks/useGameMenuModals.js, см. его докстринг. Деструктурируем под
+    // ТЕ ЖЕ имена, что были тут раньше (handleOpenGameMenu и т.п.) — ни JSX,
+    // ни остальной код этого файла трогать не пришлось.
+    const {
+        gameMenuOpen, openGameMenu: handleOpenGameMenu, closeGameMenu: handleCloseGameMenu,
+        openSettingsFromMenu: handleOpenSettingsFromMenu,
+        settingsHubOpen, closeSettingsHub: handleCloseSettingsHub,
+        openSoundSettingsFromHub: handleOpenSoundSettingsFromHub,
+        openGeneralSettingsFromHub: handleOpenGeneralSettingsFromHub,
+        gameSettingsOpen, closeSettings: handleCloseSettings,
+        gameGeneralSettingsOpen, closeGeneralSettings: handleCloseGeneralSettings,
+    } = useGameMenuModals();
+    // Лог событий в mobileNav-раскладке (зона 9) — кнопка + измеренная
+    // позиция живут ЗДЕСЬ (не в EventLogPanel.js), список рисуется последним
+    // ребёнком корня экрана — см. EventLogPanel.js за полным разбором (две
+    // откаченные попытки) того, почему. eventLogAnchor — {right, bottom}
+    // от соответствующих краёв окна, готовые для style; null, пока не
+    // измерено (между тапом и результатом measureInWindow — доля секунды,
+    // список просто не рисуется этот один кадр).
+    const [eventLogOpen, setEventLogOpen] = useState(false);
+    const [eventLogAnchor, setEventLogAnchor] = useState(null);
+    const eventLogToggleRef = useRef(null);
+    const eventLogToggleSound = useAudioPlayer(LOG_TOGGLE_SOUND);
+    useEffect(() => {
+        eventLogToggleSound.volume = audioSettings.action;
+    }, [eventLogToggleSound, audioSettings.action]);
+    const handleEventLogToggle = useCallback(() => {
+        eventLogToggleSound.seekTo(0);
+        eventLogToggleSound.play();
+        setEventLogOpen((v) => {
+            const next = !v;
+            if (next) {
+                eventLogToggleRef.current?.measureInWindow((x, y, w, h) => {
+                    setEventLogAnchor({ right: windowDimensions.width - x - w, bottom: windowDimensions.height - y });
+                });
+            }
+            return next;
+        });
+    }, [eventLogToggleSound, windowDimensions.width, windowDimensions.height]);
 
     // Раньше совпадало с ANIM_DURATION_MS.start обычных бегунов
     // (useRunnerAnimations, 2200мс) — пока идёт "прилёт" Жнеца ИЗ-ЗА КРАЯ
@@ -1526,6 +1767,20 @@ export default function GameBoardScreen({ route, navigation }) {
         [gamePlayers, game?.playerOrder],
     );
 
+    // 2026-10-16, по прямому запросу пользователя — "кольцо под активным
+    // бегуном оппонента тоже" и "камера переключается на его бегуна при
+    // выборе". ТОЛЬКО когда ходит НЕ я (иначе дублировало бы уже
+    // существующий activeRunner/jump для собственного выбора выше/ниже) —
+    // тот же приём, что у activeRunner (myPlayer.activeRunner), просто для
+    // currentTurnPlayer вместо myPlayer.
+    const opponentActiveRunner = useMemo(
+        () => (currentTurnPlayer != null && myPlayer != null && String(currentTurnPlayer.id) !== String(myPlayer.id)
+            && currentTurnPlayer.activeRunner != null)
+            ? runners.find((r) => String(r.id) === String(currentTurnPlayer.activeRunner)) ?? null
+            : null,
+        [currentTurnPlayer, myPlayer, runners],
+    );
+
     // Победитель столкновения (см. myCollision выше) — тот, чей бегун крупнее
     // (бэк выставляет extraTurnPlayer именно ему, независимо от того, с кем
     // столкновение — с другим игроком или с "мячом", см. RunnerType::getSize()
@@ -1567,203 +1822,18 @@ export default function GameBoardScreen({ route, navigation }) {
         return [...base, ...peek];
     }, [game?.trackBegin, game?.trackMiddle, game?.trackEnd, game?.trackNext, rows, cols]);
 
-    // Живая жалоба, 2026-09-12: во время исчезновения старого фрагмента 1 на
-    // нём же оказывались и "жители" фрагмента 2 — причина в TrackService::
-    // shift() (бэк, read-only): при сдвиге ВСЕ выжившие на middle/end
-    // получают segment-1 и свой runner_save (перенумерация, они физически не
-    // двигались), а по глобальной колонке (segment*cols+positionX) это
-    // ровно то же окно [0,8), что и замороженный кадр старого фрагмента 1
-    // (камера на нём всю settling/wiping, см. boardGridEl ниже). Раз
-    // паразитная 'fly'-анимация для этого случая уже подавлена (см.
-    // lib/runnerAnimTriggers.js), у перенумерованных выживших НЕТ записи в
-    // runnerAnim.visualPositions — фильтруем `runners` именно по её
-    // наличию: только те, кто реально доигрывает анимацию ухода с
-    // фрагмента 1 (destroy/bomb/жнец-в-резерв), должны быть видны на
-    // замороженном кадре. Хук объявлен ЗДЕСЬ (до ранних `return` ниже по
-    // файлу — `!game`/WAITING), а не рядом с остальной track-shift-логикой
-    // у boardGridEl — иначе он звался бы условно и ловил "Rendered more
-    // hooks than during the previous render" на переходе между этими
-    // early-return состояниями и обычным рендером доски.
-    const trackShiftRunners = useMemo(
-        () => runners.filter((r) => runnerAnim.visualPositions[r.id] != null),
-        [runners, runnerAnim.visualPositions],
-    );
-
-    // game_track_updated (см. runnerGameReducer#'game_track_updated' и
-    // TrackService::shift()/Move::handle() на бэке, read-only) — заход
-    // бегуна на "пик" 4-го фрагмента (см. lib/board#flattenPeekColumn) удаляет
-    // фрагмент №1 (trackBegin), сдвигает №2→№1/№3→№2/№4(только что раскрытый
-    // trackNext)→№3. По прямому запросу пользователя, 2026-09-08— это должно
-    // быть заметной хореографией на экранах ВСЕХ игроков, а не тихой
-    // подменой данных:
-    //   1. Камера ВСЕХ клиентов принудительно прыгает на фрагмент 1
-    //      (windowStart=0) — независимо от того, куда каждый был проскроллен.
-    //   2. Пока камера там — доигрывают destroy/fly у тех, кто на фрагменте 1
-    //      стоял (см. TRACK_SHIFT_SETTLE_MS) — это уже РАБОТАЕТ само по себе
-    //      (существующий механизм в lib/runnerAnimTriggers.js, тут только
-    //      подставляем ЗАМОРОЖЕННУЮ картинку старого фрагмента 1 вместо уже
-    //      переименованной боевой, чтобы под анимацией была правильная земля,
-    //      а бегуны/токены остаются ЖИВЫМИ — см. boardGridEl ниже).
-    //   3. Фрагмент уходит в невидимость ВОЛНОЙ по 8 колонкам, одна за
-    //      другой (см. TRACK_SHIFT_WIPE_MS, BoardGrid#columnOpacities —
-    //      РЕАЛЬНЫЕ клетки И токены на них, не отдельный overlay-слой).
-    //   4. Камера прыгает СТРОГО на новый фрагмент 3 (фиксированный диапазон
-    //      колонок, не позиция бегуна — см. TRACK_SHIFT_REVEAL_WINDOW_START).
-    //   5. Новый фрагмент 3 материализуется из невидимости ЗЕРКАЛЬНОЙ волной
-    //      по 8 колонкам (см. TRACK_SHIFT_REVEAL_MS, BoardGrid#columnOpacities).
-    //   6. Кусочек НОВОГО 4-го сегмента (новый пик) — камера сдвигается на
-    //      правый край, показывая его, и он проявляется ПОСЛЕДНИМ, отдельным
-    //      коротким шагом (TRACK_SHIFT_PEEK_REVEAL_MS) ПОСЛЕ того, как весь
-    //      фрагмент 3 уже полностью виден — по прямому запросу пользователя,
-    //      2026-09-08.
-    //
-    // Обнаружение самого факта сдвига — по имени `game.trackBegin.name`, НЕ
-    // по `game.trackNumber` (тот, проверено чтением бэка, выставляется ОДИН
-    // раз в RunnerGameFactory и TrackService::shift() его никогда не меняет —
-    // на каждое событие приходит одно и то же число, диффить нечего) и НЕ по
-    // ссылке на сам объект `trackBegin` (первая версия этой правки так и
-    // делала — оказалось ЛОМАЕТСЯ на КАЖДОМ reconnect/resync: useMercure#sync
-    // на любом подключении, даже без единого реального события, всегда
-    // парсит REST-снапшот ЗАНОВО и коммитит его как НОВЫЙ объект — ссылка на
-    // `trackBegin` меняется, хотя фрагмент физически тот же самый). Имя
-    // фрагмента — надёжный идентификатор: `TrackLoader::prepareTracksForGame()`
-    // тасует ВЕСЬ список файлов БЕЗ возврата, внутри одной партии одно и то
-    // же имя не может встретиться дважды.
-    // trackSnapshotRef хранит СТАРОЕ значение (записывается в КОНЦЕ этого же
-    // эффекта с ПРОШЛОГО срабатывания) — `prev.trackBegin` на момент, когда
-    // эффект видит новое имя, это как раз то, что было ДО сдвига (сам `game`
-    // уже содержит новое — реducer применяет мгновенно). `prev.trackBegin !=
-    // null` отсекает первый снапшот партии (переход null→объект, не сдвиг).
-    // Известное ограничение: если ЗА ВРЕМЯ разрыва связи произошло больше
-    // ОДНОГО сдвига разом, вся хореография запустится только один раз на
-    // САМОЕ ПОСЛЕДНЕЕ состояние — не проверено живьём, требует спец.
-    // сценария с длительным разрывом связи.
-    const trackSnapshotRef = useRef({ trackBegin: null });
-    const [trackShiftPhase, setTrackShiftPhase] = useState(null); // null | 'settling' | 'wiping' | 'revealing'
-    const [trackShiftGridData, setTrackShiftGridData] = useState(null); // замороженные 8 колонок старого фрагмента 1
-    // Исчезновение старого фрагмента — Animated.Value НА КОЛОНКУ (1=виден,
-    // 0=невидим), применяется ПРЯМО К РЕАЛЬНЫМ клеткам И токенам (см.
-    // BoardGrid#columnOpacities/item.col) — по прямому запросу пользователя,
-    // 2026-09-10: "хочу, чтобы он исчезал посегментно, аналогично тому, как
-    // появляется новый фрагмент" (была ЕДИНАЯ Animated.View-обёртка со
-    // сплошным фейдом всего разом — правка того же дня чуть раньше, уже
-    // заменившая ЕЩЁ более раннюю двух-overlay-слойную версию, см. историю
-    // ниже). gridData у boardGridEl остаётся ЗАМОРОЖЕН на старом фрагменте
-    // ВЕСЬ 'wiping' (см. проп ниже) — под волной реально пусто (фон экрана),
-    // а не новый контент. Глобальные колонки старого фрагмента ВСЕГДА 0..7
-    // (снимок берётся с windowStart=0, см. jumpToStart(0) ниже) — фиксированный
-    // диапазон, в отличие от reveal (там диапазон зависит от
-    // TRACK_SHIFT_REVEAL_WINDOW_START).
-    const trackShiftWipeOpacitiesRef = useRef(
-        Array.from({ length: BOARD_LAYOUT.COLS }, () => new Animated.Value(1)),
-    );
-    const trackShiftWipeColumnOpacityMap = useMemo(() => {
-        const map = {};
-        trackShiftWipeOpacitiesRef.current.forEach((v, col) => { map[col] = v; });
-        return map;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-    // Материализация НОВОГО фрагмента — тот же приём, зеркально (0→1). Длина —
-    // TRACK_SHIFT_REVEAL_COLS.length (9: 8 колонок фрагмента 3 + 1 пик), см.
-    // комментарий у TRACK_SHIFT_PEEK_COL выше про то, почему пик прицеплен
-    // девятым элементом того же списка.
-    const trackShiftRevealOpacitiesRef = useRef(
-        Array.from({ length: TRACK_SHIFT_REVEAL_COLS.length }, () => new Animated.Value(0)),
-    );
-    // Стабильные map globalCol→Animated.Value для BoardGrid#columnOpacities —
-    // построены ОДИН раз (константные диапазоны колонок, стабильные по ссылке
-    // массивы рефов, никогда не пересоздаются), не пересчитываются на рендер.
-    const trackShiftRevealColumnOpacityMap = useMemo(() => {
-        const map = {};
-        TRACK_SHIFT_REVEAL_COLS.forEach((col, idx) => {
-            map[col] = trackShiftRevealOpacitiesRef.current[idx];
-        });
-        return map;
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-    useEffect(() => {
-        const prev = trackSnapshotRef.current;
-        const nameChanged = prev.trackBegin != null && game?.trackBegin != null
-            && prev.trackBegin.name !== game.trackBegin.name;
-        if (nameChanged) {
-            // Массив из ОДНОГО элемента — flattenTrackSegments проходит только
-            // blockIndex 0, считать/фильтровать несуществующие 1/2 не нужно.
-            setTrackShiftGridData(flattenTrackSegments([prev.trackBegin], rows, cols));
-            trackShiftWipeOpacitiesRef.current.forEach((v) => v.setValue(1)); // старый — сразу виден
-            trackShiftRevealOpacitiesRef.current.forEach((v) => v.setValue(0)); // новый — сразу невидим
-            jumpToStart(0); // камера ВСЕХ клиентов — на фрагмент 1, БЕЗ центрирования
-            setTrackShiftPhase('settling');
-        }
-        trackSnapshotRef.current = { trackBegin: game?.trackBegin };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [game?.trackBegin?.name]);
-
-    // Фазы хореографии — см. докстринг у BoardGrid.js. 'settling': камера уже
-    // на фрагменте 1, gridData у boardGridEl подменена на замороженный снимок
-    // (см. проп ниже) — бегуны/анимации ОСТАЮТСЯ живыми, поэтому destroy/fly
-    // у тех, кто там стоял, доигрывают как обычно поверх правильной (старой)
-    // земли. 'wiping': gridData ОСТАЁТСЯ замороженной (не переключается на
-    // боевую) — ВОЛНА по 8 колонкам (как и у reveal, см. ниже — по прямому
-    // запросу пользователя, 2026-09-10: "хочу, чтобы он исчезал посегментно,
-    // аналогично тому, как появляется новый фрагмент"), каждая гаснет 1→0,
-    // ничего нового под ней не появляется, пока волна не закончится. По
-    // завершении — снимок отпускается, камера прыгает СТРОГО на диапазон
-    // нового фрагмента (TRACK_SHIFT_REVEAL_WINDOW_START, левый край без
-    // центрирования — фиксированный диапазон по построению, не зависит от
-    // того, успел ли прийти собственный runner_save мовера). 'revealing':
-    // РЕАЛЬНЫЕ клетки нового фрагмента материализуются из невидимости
-    // (opacity 0→1) по одной колонке за раз — НЕ отдельная серая маска поверх
-    // уже отрисованного контента, как было раньше — см. BoardGrid#columnOpacities,
-    // применяется прямо в laneCells.map/tokenOverlay.map.
-    useEffect(() => {
-        if (trackShiftPhase === 'settling') {
-            const t = setTimeout(() => setTrackShiftPhase('wiping'), TRACK_SHIFT_SETTLE_MS);
-            return () => clearTimeout(t);
-        }
-        if (trackShiftPhase === 'wiping') {
-            const perCol = TRACK_SHIFT_WIPE_MS / BOARD_LAYOUT.COLS;
-            Animated.stagger(
-                perCol,
-                trackShiftWipeOpacitiesRef.current.map((v) =>
-                    Animated.timing(v, { toValue: 0, duration: perCol * 1.4, useNativeDriver: true }),
-                ),
-            ).start(() => {
-                setTrackShiftGridData(null);
-                jumpToStart(TRACK_SHIFT_REVEAL_WINDOW_START); // камера — строго на новый фрагмент 3
-                setTrackShiftPhase('revealing');
-            });
-            return undefined;
-        }
-        if (trackShiftPhase === 'revealing') {
-            // Сначала — волна ПО ФРАГМЕНТУ 3 целиком (первые 8 значений, см.
-            // TRACK_SHIFT_REVEAL_COLS). Пик (9-й, последний элемент) в неё
-            // намеренно НЕ входит — по прямому запросу пользователя, он должен
-            // проявиться отдельным, самым последним шагом, а не одновременно
-            // с общей волной.
-            const perCol = TRACK_SHIFT_REVEAL_MS / BOARD_LAYOUT.COLS;
-            const fragmentOpacities = trackShiftRevealOpacitiesRef.current.slice(0, BOARD_LAYOUT.COLS);
-            Animated.stagger(
-                perCol,
-                fragmentOpacities.map((v) =>
-                    Animated.timing(v, { toValue: 1, duration: perCol * 1.4, useNativeDriver: true }),
-                ),
-            ).start(() => {
-                // Кусочек нового 4-го сегмента — камера сдвигается на самый
-                // правый край (jumpToStart клэмпит любое большое значение до
-                // maxStart), вводя пик в кадр, и только ТЕПЕРЬ он материализуется —
-                // самый последний бит хореографии.
-                jumpToStart(BOARD_LAYOUT.TOTAL_COLS);
-                const peekOpacity = trackShiftRevealOpacitiesRef.current[BOARD_LAYOUT.COLS];
-                Animated.timing(peekOpacity, {
-                    toValue: 1,
-                    duration: TRACK_SHIFT_PEEK_REVEAL_MS,
-                    useNativeDriver: true,
-                }).start(() => setTrackShiftPhase(null));
-            });
-            return undefined;
-        }
-        return undefined;
-    }, [trackShiftPhase, jumpToStart]);
+    // 2026-10-16 — хореография сдвига фрагментов трассы (конечный автомат
+    // settling→wiping→revealing) вынесена в hooks/useTrackShiftChoreography.js,
+    // см. его докстринг (пункт "б" аудита — самое чувствительное место,
+    // вынос чисто механический, имена возврата не менялись). Остальной код
+    // этого файла (boardGridEl/highlightedCells/GameFinishModal-гейт/
+    // turnBannerInner/камера — 15+ мест потребления) не тронут вообще.
+    const {
+        trackShiftPhase, trackShiftGridData, trackShiftRunners,
+        trackShiftWipeColumnOpacityMap, trackShiftRevealColumnOpacityMap,
+    } = useTrackShiftChoreography({
+        game, rows, cols, runners, visualPositions: runnerAnim.visualPositions, jumpToStart,
+    });
 
     // Имена 3 фрагментов трассы (карт) для FragmentLabelStrip — портретная
     // раскладка, полоса слева от доски (см. useBoardLayout.labelStripW).
@@ -1780,128 +1850,25 @@ export default function GameBoardScreen({ route, navigation }) {
     // Одна и та же подсветка используется для MOVE/SHOOT/reaper-размещения/
     // первого выхода на трассу — GameBoardScreen решает, что означает тап,
     // handleCellPress ниже.
-    const { highlightedCells, tapMode } = useMemo(() => {
-        // Хореография сдвига фрагментов (trackShiftPhase != null) —
-        // "кат-сцена": камера скачет туда-сюда сама, интерактив с доской на
-        // это время выключен целиком (по прямому запросу пользователя,
-        // 2026-09-08 — "тапать некуда, доска сейчас показывает не то, чем
-        // управляет игрок прямо сейчас").
-        if (!myTurn || busy || trackShiftPhase) return { highlightedCells: new Set(), tapMode: null };
-
-        if (pendingReaperPlacement && reaperPreviewReady && reaperConfirmed) {
-            // Направление выстрела Жнеца сразу при размещении — подсветка
-            // на доске вместо кнопок ↖/↑/↗ (единообразно с MOVE, по прямому
-            // запросу пользователя, 2026-09-07). Появляется только ПОСЛЕ
-            // того, как "прилёт" Жнеца успел доиграть (reaperPreviewReady) И
-            // игрок подтвердил размещение (reaperConfirmed, второй диалог,
-            // 2026-10-11) — до этого highlightedCells пуст, тапать некуда. Все 3
-            // направления вперёд, как у обычного MOVE/SHOOT (2026-09-30, по
-            // прямому запросу пользователя — реверс прежнего решения
-            // 2026-09-08 "стрелять строго по прямой должен только Жнец").
-            // Бэк это уже поддерживал всегда: `ReaperService::run()`
-            // (read-only) прогоняет `direction` через ТОТ ЖЕ DirectionService,
-            // что и обычный ход, `ReaperDTO`/`DetailsReaperDTO` не
-            // ограничивают направление одним UP — ограничение было чисто
-            // фронтовым (см. историю коммита).
-            //
-            // Раньше клетка подсвечивалась БЕЗ проверки раунда/занятости —
-            // жалоба пользователя, 2026-09-08: диалог "выстрелить?" появлялся,
-            // даже когда бэк заведомо проигнорирует выстрел. Перечитал
-            // ReaperService::run() (read-only): сам выстрел применяется
-            // ТОЛЬКО если `$player->getGame()->getRound() > 0` (в первом
-            // раунде игры, round===0, блок с attackResolver вообще не
-            // выполняется — направление в событие ВСЁ РАВНО попадает,
-            // ReaperEvent публикуется ДО этой проверки, так что фронт видел
-            // e.attack и играл анимацию атаки, хотя урона не было) И только
-            // если `$target = $cell->getRunner()` не пуст (пустая клетка —
-            // молчаливый no-op). Теперь клетка подсвечивается (и тапабельна)
-            // ТОЛЬКО когда оба условия реально выполнены — иначе игроку
-            // остаётся только «Без выстрела» (см. stepInstruction/canReaperShoot).
-            const cells = game?.round > 0
-                ? forwardNeighbors(pendingReaperPlacement)
-                    .filter((pos) => findRunnerAt(runners, pos))
-                    .map(cellKey)
-                : [];
-            return { highlightedCells: new Set(cells), tapMode: 'reaperShoot' };
-        }
-
-        if (myStep === PLAYER_STEP.MOVE && activeRunner) {
-            if (activeRunner.segment == null) {
-                // Ещё не на трассе — любая клетка заднего края trackBegin (positionX=0)
-                const cells = new Set();
-                for (let positionY = 0; positionY <= 5; positionY++) {
-                    cells.add(cellKey({ segment: 0, positionX: 0, positionY }));
-                }
-                return { highlightedCells: cells, tapMode: 'start' };
-            }
-            // Накат (type=ROLL, см. canSelectRunner) — реверс решения
-            // 2026-09-08 ("накат — это строго движение вперёд", только UP),
-            // по прямому запросу пользователя, 2026-10-03: теперь все 3
-            // клетки вперёд, ПО АНАЛОГИИ С ОБЫЧНЫМ ХОДОМ — та же
-            // forwardNeighbors(activeRunner), без фильтра по направлению.
-            // isRollMove (вычисляется отдельно в handleCellPress ниже) по-
-            // прежнему нужен ДЛЯ ДРУГОГО решения — "накат не должен
-            // предлагать доп. выстрел" (2026-09-30) — эта логика не тронута.
-            const neighbors = forwardNeighbors(activeRunner);
-            return {
-                highlightedCells: new Set(neighbors.map(cellKey)),
-                tapMode: 'move',
-            };
-        }
-
-        if (myStep === PLAYER_STEP.SHOOT && activeRunner) {
-            // Все 3 направления вперёд (как обычный MOVE) — по прямому
-            // уточнению пользователя, 2026-09-08: предыдущее решение
-            // (2026-09-02, "стрелять только строго по прямой") оказалось
-            // СЛИШКОМ строгим — ограничение "только вперёд, без диагоналей"
-            // должно было касаться ТОЛЬКО Жнеца (см. pendingReaperPlacement
-            // выше), не обычных бегунов.
-            const targets = forwardNeighbors(activeRunner)
-                .filter((pos) => {
-                    const occupant = findRunnerAt(runners, pos);
-                    return occupant && occupant.type !== RUNNER_TYPES.REAPER && !DEAD_STATUSES.includes(occupant.status);
-                });
-            return { highlightedCells: new Set(targets.map(cellKey)), tapMode: 'shoot' };
-        }
-
-        if (pendingAbility?.ability === 'reaper') {
-            // Любая пустая клетка на всех трёх загруженных сегментах, которую
-            // бэк реально разрешит (`ReaperValidator::validateCell()`,
-            // read-only) — ТОТ валидатор работает через ALLOWLIST (только
-            // road/sand/mud), не блэклист: раньше тут фильтровались только
-            // wall/anomaly/danger — fire/acid (замена клеткам wall на треках,
-            // см. CLAUDE.md 2026-09-18) не исключались, подсветка предлагала
-            // клетки, на которые бэк гарантированно ответит 400
-            // INVALID_CELL_TYPE (найдено аудитом контракта, 2026-10-15, не
-            // проверено живьём). Зеркалим именно allowlist бэка, не
-            // достраиваем блэклист новыми исключениями по одному — так не
-            // разойдётся снова при появлении следующего типа клетки. danger
-            // отдельно и так уже исключён этим allowlist'ом (жетон опасности
-            // под клеткой ещё не вскрыт, ставить туда Жнеца не должно быть
-            // можно, см. прямой запрос пользователя, 2026-09-15).
-            // 2026-10-14: бэк развернул диапазоны DetailsReaperDTO обратно на
-            // стандартные (positionX 0..7 — ряд, positionY 0..5 — дорожка, та
-            // же унификация Cell, что и везде) — раньше (см. CLAUDE_ARCHIVE.md,
-            // 2026-09-08) они были перевёрнуты (positionX ограничен 0..5), и
-            // подсветка нарочно резала последние 2 колонки, чтобы не предлагать
-            // клетки, которые бэк всё равно отклонит. Теперь полный диапазон.
-            const cells = new Set();
-            for (let segment = 0; segment < totalBlocks; segment++) {
-                for (let positionX = 0; positionX <= 7; positionX++) {
-                    for (let positionY = 0; positionY <= 5; positionY++) {
-                        const pos = { segment, positionX, positionY };
-                        const type = rawCellType(game, segment, positionX, positionY);
-                        if (!REAPER_ALLOWED_CELL_TYPES.has(type)) continue;
-                        if (findRunnerAt(runners, pos)) continue;
-                        cells.add(cellKey(pos));
-                    }
-                }
-            }
-            return { highlightedCells: cells, tapMode: 'reaper' };
-        }
-
-        return { highlightedCells: new Set(), tapMode: null };
-    }, [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, reaperConfirmed, trackShiftPhase]);
+    // 2026-10-16 — тело этого useMemo (что сейчас можно тапнуть на доске)
+    // вынесено в lib/board.js#computeHighlightedCells, см. её докстринг
+    // (пункт "в" аудита — ОСТОРОЖНО, игровая логика, не косметика; вынос
+    // чисто механический, порядок/содержимое веток не менялись).
+    // 2026-10-17 — см. docstring у lib/board.js#computeHighlightedCells
+    // (ветка MOVE) за полным разбором: пока у активного бегуна ещё играет
+    // анимация ПРЕДЫДУЩЕГО хопа (runnerAnim.anims[id] не пуст — move/fly/
+    // что угодно ещё для него), следующая клетка не подсвечивается, не
+    // давая натыкать несколько реальных ходов подряд быстрее, чем успевает
+    // доиграть слайд.
+    const activeRunnerAnimating = activeRunner != null && runnerAnim.anims[activeRunner.id] != null;
+    const { highlightedCells, tapMode } = useMemo(
+        () => computeHighlightedCells({
+            myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game,
+            pendingReaperPlacement, reaperPreviewReady, reaperConfirmed, trackShiftPhase,
+            activeRunnerAnimating,
+        }),
+        [myTurn, myStep, activeRunner, busy, pendingAbility, runners, totalBlocks, game, pendingReaperPlacement, reaperPreviewReady, reaperConfirmed, trackShiftPhase, activeRunnerAnimating],
+    );
 
     // Первый выход бегуна из резерва на трассу (tapMode==='start') —
     // подсвеченные клетки ВСЕГДА на segment=0/positionX=0 (globalCol=0), но
@@ -1937,21 +1904,66 @@ export default function GameBoardScreen({ route, navigation }) {
             jumpedForSelectionRef.current = false;
         }
         if (jumpedForSelectionRef.current) return;
-        if (tapMode === 'start') {
+        if (tapMode === TAP_MODE.START) {
             jumpedForSelectionRef.current = true;
             jumpToStart(0);
-        } else if (tapMode === 'move' && activeRunner?.segment != null) {
+        } else if (tapMode === TAP_MODE.MOVE && activeRunner?.segment != null) {
             jumpedForSelectionRef.current = true;
             jumpTo(activeRunner.segment * BOARD_LAYOUT.COLS + activeRunner.positionX);
         }
     }, [tapMode, activeRunner?.id, activeRunner?.segment, activeRunner?.positionX, jumpToStart, jumpTo]);
+
+    // 2026-10-16, по прямому запросу пользователя — тот же приём, что и у
+    // jumpedForSelectionRef выше, но для ХОДА ОППОНЕНТА (opponentActiveRunner,
+    // см. её докстринг): прыгаем ОДИН раз на конкретного бегуна оппонента,
+    // когда он выбирает — не на каждый ре-рендер/событие в течение ЕГО хода.
+    const lastOpponentActiveRunnerIdRef = useRef(undefined);
+    const jumpedForOpponentSelectionRef = useRef(false);
+    useEffect(() => {
+        const currentId = opponentActiveRunner?.id ?? null;
+        if (currentId !== lastOpponentActiveRunnerIdRef.current) {
+            lastOpponentActiveRunnerIdRef.current = currentId;
+            jumpedForOpponentSelectionRef.current = false;
+        }
+        if (jumpedForOpponentSelectionRef.current) return;
+        if (opponentActiveRunner?.segment != null) {
+            jumpedForOpponentSelectionRef.current = true;
+            jumpTo(opponentActiveRunner.segment * BOARD_LAYOUT.COLS + opponentActiveRunner.positionX);
+        }
+    }, [opponentActiveRunner?.id, opponentActiveRunner?.segment, opponentActiveRunner?.positionX, jumpTo]);
+
+    // 2026-10-16, по прямому запросу пользователя — после того как ВСЕ
+    // анимации (бегуны + сдвиг фрагментов трассы) доиграли, камера сама
+    // возвращается на активного бегуна ТЕКУЩЕГО хода — своего ИЛИ
+    // оппонента (см. activeRunner/opponentActiveRunner выше), в зависимости
+    // от того, чей сейчас ход. Отслеживаем переход "что-то играло" →
+    // "больше ничего не играет" (runnerAnim.anims пуст И
+    // trackShiftPhase===null) через ref — прыгаем РОВНО в момент этого
+    // перехода, не на каждый рендер в состоянии покоя (иначе дёргало бы
+    // камеру постоянно, пока игрок сам листает доску вручную в простое).
+    const wasAnimatingForFocusRef = useRef(false);
+    useEffect(() => {
+        const anyAnimPlaying = Object.keys(runnerAnim.anims).length > 0;
+        const settled = !anyAnimPlaying && trackShiftPhase == null;
+        if (!settled) {
+            wasAnimatingForFocusRef.current = true;
+            return;
+        }
+        if (!wasAnimatingForFocusRef.current) return;
+        wasAnimatingForFocusRef.current = false;
+        const isMyTurn = currentTurnPlayer != null && myPlayer != null && String(currentTurnPlayer.id) === String(myPlayer.id);
+        const focusRunner = isMyTurn ? activeRunner : opponentActiveRunner;
+        if (focusRunner?.segment != null) {
+            jumpTo(focusRunner.segment * BOARD_LAYOUT.COLS + focusRunner.positionX);
+        }
+    }, [runnerAnim.anims, trackShiftPhase, currentTurnPlayer, myPlayer, activeRunner, opponentActiveRunner, jumpTo]);
 
     // Есть ли у Жнеца реальный выстрел ПРЯМО СЕЙЧАС (раунд>0 И подсвеченная
     // клетка реально нашлась, см. reaperShoot-ветку useMemo выше) — общий
     // источник истины для подсказки (stepInstruction) и для авто-подтверждения
     // "без выстрела" ниже, вынесен в отдельную переменную, чтобы не дублировать
     // выражение в двух местах.
-    const canReaperShoot = tapMode === 'reaperShoot' && highlightedCells.size > 0;
+    const canReaperShoot = tapMode === TAP_MODE.REAPER_SHOOT && highlightedCells.size > 0;
 
     // Звук шага СИНХРОННО с анимацией перемещения — по прямому запросу
     // пользователя, 2026-09-01: играет, пока у ХОТЬ ОДНОГО бегуна сейчас
@@ -1988,6 +2000,33 @@ export default function GameBoardScreen({ route, navigation }) {
             || pendingDeathRunnerIds.size > 0,
         [runnerAnim.anims, pendingDeathRunnerIds],
     );
+    // Страховка на случай, если hasDeathAnimPlaying/trackShiftPhase почему-то
+    // НИКОГДА не снимутся сами — 2026-10-16, живая жалоба: партия
+    // закончилась (game.status===FINISH подтверждён бэком), а GameFinishModal
+    // не появилась НИ на Android, ни на вебе, сколько ни ждали. У каждого
+    // другого "подожди анимацию" гейта в этом файле (heldCells/мины/pending-
+    // заготовки) уже есть свой страховочный таймер на случай, если реальный
+    // сигнал завершения почему-то не пришёл (устройство/сеть/редкая гонка,
+    // которую не удалось стопроцентно локализовать без живого лога именно
+    // этого момента) — у ЭТОГО гейта (pendingDeathRunnerIds/
+    // hasDeathAnimPlaying) такой страховки не было вообще, единственного
+    // способа "застрял — покажи модалку всё равно" не существовало. Партия
+    // УЖЕ закончилась (это не отменяется), скрывать результат от игрока
+    // дольше нескольких секунд неверно в любом случае, даже если гейт
+    // когда-нибудь снялся бы сам. Таймер стартует, как только game.status
+    // становится FINISH, и форсирует показ модалки через
+    // FINISH_MODAL_SAFETY_MS, даже если гейты сами по себе ещё не снялись —
+    // НЕ трогает сами pendingDeathRunnerIds/anims (не хочет обрывать чужую
+    // анимацию сайд-эффектом), только снимает блокировку с ВИДИМОСТИ модалки.
+    const [finishModalForced, setFinishModalForced] = useState(false);
+    useEffect(() => {
+        if (game?.status !== GAME_STATUS.FINISH) {
+            setFinishModalForced(false);
+            return undefined;
+        }
+        const timer = setTimeout(() => setFinishModalForced(true), FINISH_MODAL_SAFETY_MS);
+        return () => clearTimeout(timer);
+    }, [game?.status]);
     // Звук финала (victory/lost) — 2026-10-14 изначально победа играла сразу
     // по факту смены статуса игрока на 'winner', не дожидаясь самого диалога
     // (и без звука поражения вовсе). 2026-10-15, по прямому запросу
@@ -2000,7 +2039,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // не оба сразу).
     useEffect(() => {
         if (!winnerPlayer || !myPlayer || gameFinishSoundPlayedRef.current) return;
-        if (game?.status !== GAME_STATUS.FINISH || trackShiftPhase || hasDeathAnimPlaying) return;
+        if (game?.status !== GAME_STATUS.FINISH) return;
+        // finishModalForced — см. её докстринг выше: если страховка сработала
+        // (гейты сами не снялись), звук тоже должен прозвучать СИНХРОННО с
+        // модалкой (та же пара условий, что и у visible ниже), а не молчать
+        // просто потому, что trackShiftPhase/hasDeathAnimPlaying технически
+        // всё ещё true.
+        if (!finishModalForced && (trackShiftPhase || hasDeathAnimPlaying)) return;
         gameFinishSoundPlayedRef.current = true;
         if (winnerPlayer.id === myPlayer.id) {
             playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.victory));
@@ -2014,7 +2059,7 @@ export default function GameBoardScreen({ route, navigation }) {
         // холодном заходе (не Fast Refresh) — живой краш, найден 2026-10-15
         // при повторном открытии активной партии после логина. `game?.status`
         // и тут, и в самом теле эффекта выше.
-    }, [winnerPlayer, myPlayer, game?.status, trackShiftPhase, hasDeathAnimPlaying, playOneShot, commentSound]);
+    }, [winnerPlayer, myPlayer, game?.status, trackShiftPhase, hasDeathAnimPlaying, finishModalForced, playOneShot, commentSound]);
     const moveSound = useAudioPlayer(FALLBACK_MOVE_SOUND);
     useEffect(() => {
         moveSound.loop = true;
@@ -2181,39 +2226,14 @@ export default function GameBoardScreen({ route, navigation }) {
         );
     }, [runAction, goToMainMenu]);
 
-    const handleOpenGameMenu = useCallback(() => setGameMenuOpen(true), []);
-    const handleCloseGameMenu = useCallback(() => setGameMenuOpen(false), []);
+    // Остальные хендлеры этих панелей — см. useGameMenuModals() выше.
+    // handleLeaveFromMenu остаётся тут: закрывает меню (из хука) и зовёт
+    // РЕАЛЬНОЕ игровое действие (handleSurrender), хук сам ничего о surrender
+    // не знает (см. его докстринг).
     const handleLeaveFromMenu = useCallback(() => {
-        setGameMenuOpen(false);
+        handleCloseGameMenu();
         handleSurrender();
-    }, [handleSurrender]);
-    // "Настройки" (GameMenuModal) — теперь ведёт в хаб (2026-10-15), не
-    // сразу в звук, см. комментарий у gameMenuOpen выше.
-    const handleOpenSettingsFromMenu = useCallback(() => {
-        setGameMenuOpen(false);
-        setSettingsHubOpen(true);
-    }, []);
-    const handleCloseSettingsHub = useCallback(() => setSettingsHubOpen(false), []);
-    const handleOpenSoundSettingsFromHub = useCallback(() => {
-        setSettingsHubOpen(false);
-        setGameSettingsOpen(true);
-    }, []);
-    const handleOpenGeneralSettingsFromHub = useCallback(() => {
-        setSettingsHubOpen(false);
-        setGameGeneralSettingsOpen(true);
-    }, []);
-    // "Назад" из звука/игры — возвращает В ХАБ (не закрывает целиком), по
-    // прямому запросу пользователя — "чтобы можно было настраивать короче"
-    // (переключаться между разделами без повторного похода через игровое
-    // меню).
-    const handleCloseSettings = useCallback(() => {
-        setGameSettingsOpen(false);
-        setSettingsHubOpen(true);
-    }, []);
-    const handleCloseGeneralSettings = useCallback(() => {
-        setGameGeneralSettingsOpen(false);
-        setSettingsHubOpen(true);
-    }, []);
+    }, [handleCloseGameMenu, handleSurrender]);
 
     // Накат (type=ROLL) — до 2026-10-03 двигался АВТОМАТИЧЕСКИ (единственная
     // легальная клетка — строго UP, тапать было не по чему, см. git-историю
@@ -2323,13 +2343,13 @@ export default function GameBoardScreen({ route, navigation }) {
             const key = cell.id; // "segment-row-col" = "segment-positionY-positionX", см. lib/board.js
             if (!highlightedCells.has(key)) return;
 
-            if (tapMode === 'start') {
+            if (tapMode === TAP_MODE.START) {
                 // skipStuckWatch — см. комментарий у runAction: MOVE может
                 // состоять из нескольких ходов подряд без смены player.step.
                 runAction(() => runnerGameApi.move(cell.row, null), { skipStuckWatch: true });
                 return;
             }
-            if (tapMode === 'move') {
+            if (tapMode === TAP_MODE.MOVE) {
                 const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
                 const neighbor = forwardNeighbors(activeRunner).find((n) => cellKey(n) === cellKey(target));
                 if (!neighbor) return;
@@ -2343,7 +2363,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 runAction(() => runnerGameApi.move(null, neighbor.direction), { skipStuckWatch: true });
                 return;
             }
-            if (tapMode === 'shoot') {
+            if (tapMode === TAP_MODE.SHOOT) {
                 // Все 3 направления — см. highlightedCells выше (2026-09-08).
                 const target = { segment: cell.blockIndex, positionX: cell.col - cell.blockIndex * cols, positionY: cell.row };
                 const neighbor = forwardNeighbors(activeRunner).find((n) => cellKey(n) === cellKey(target));
@@ -2351,7 +2371,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 runAction(() => runnerGameApi.shoot(true, neighbor.direction));
                 return;
             }
-            if (tapMode === 'reaperShoot') {
+            if (tapMode === TAP_MODE.REAPER_SHOOT) {
                 // Выбор направления выстрела Жнеца ТАПОМ по подсвеченной
                 // клетке (см. highlightedCells выше) вместо кнопок ↖/↑/↗ —
                 // по прямому запросу пользователя, 2026-09-07. pendingReaperPlacement
@@ -2362,7 +2382,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 handleReaperShoot(neighbor.direction);
                 return;
             }
-            if (tapMode === 'reaper' && pendingAbility) {
+            if (tapMode === TAP_MODE.REAPER && pendingAbility) {
                 // Не вызываем /ability сразу — по прямому запросу пользователя,
                 // 2026-09-03, размещение и выбор направления выстрела теперь
                 // два отдельных шага (см. pendingReaperPlacement выше и
@@ -2616,50 +2636,99 @@ export default function GameBoardScreen({ route, navigation }) {
         setSeamRowWidth(e.nativeEvent.layout.width);
     }, []);
 
-    // Раунд/Ход/Бонус хода — ПЕРЕЕХАЛИ (2026-10-11, по прямому запросу
-    // пользователя) из строки под швом в колонку СПРАВА от баннера хода
-    // ("Твой ход"), см. место рендера headerContent ниже. Квадраты, высота
-    // каждого — РОВНО ⅓ измеренной высоты самого баннера (turnBannerSize,
-    // тот же onLayout, что и раньше) — три квадрата без зазора между ними в
-    // сумме точно равны высоте баннера, верх/низ колонки совпадают с
-    // верхом/низом баннера. До первого измерения (turnBannerSize===null,
-    // самый первый кадр) — 0, колонка просто не рендерится видимым
-    // размером тот кадр (условие на использование — useMobileNavButtons,
-    // см. место рендера).
-    const turnBannerSideSize = turnBannerSize ? Math.round(turnBannerSize.height / 3) : 0;
-    // Живая жалоба 2026-10-11: фиксированный font.h2 (24, см. styles.
-    // seamRoundValue/seamBonusValue — унаследован от старого места этого
-    // ряда, где квадраты были крупнее) в НОВЫХ, заметно более мелких
-    // квадратах (turnBannerSideSize) выглядел "слишком здоровенным" —
-    // цифра едва помещалась в рамку. Шрифт теперь пропорционален реальному
-    // размеру квадрата, не константе темы.
-    const turnBannerSideFontStyle = { fontSize: Math.max(10, Math.round(turnBannerSideSize * 0.45)) };
+    // Раунд/Ход/Бонус дороги + настройки/лог — ПЕРЕЕХАЛИ (2026-10-15, по
+    // прямому запросу пользователя) на место, где раньше был баннер хода
+    // (зона 11 на UI-карте) — тот убран целиком для mobileNav, см. место
+    // рендера headerContent ниже. Раунд/Ход/Бонус — РЕЗИНОВЫЕ (делят ПОРОВНУ
+    // всё место, оставшееся ПОСЛЕ настроек/лога, которые остаются тем же
+    // квадратом switchRowH×switchRowH, что и раньше, см. прямой запрос:
+    // "Настройка и Лог должны остаться той же формы... остальные должны
+    // заполнить все пустоты"), а не фиксированный квадрат — высота строки
+    // известна заранее (switchRowH), а не измеряется (в отличие от старой
+    // версии, где сторона считалась от onLayout баннера) — ширина измеряется
+    // (panelHeaderRowWidth, см. onPanelHeaderRowLayout) и делится на 3 ТОЧНЫМ
+    // распределением остатка округления (`Math.round(W*(i+1)/3)-
+    // Math.round(W*i/3)`, тот же приём, что уже спасал abilitiesWrap/
+    // diceSlotHeight от потерянных пикселей, см. CLAUDE.md 2026-10-01) — сумма
+    // трёх ширин гарантированно точно равна доступному месту, без зазора
+    // справа. До первого измерения (panelHeaderRowWidth===null) — безопасный
+    // фолбэк на равные квадраты.
+    const [panelHeaderRowWidth, setPanelHeaderRowWidth] = useState(null);
+    const onPanelHeaderRowLayout = useCallback((e) => {
+        setPanelHeaderRowWidth(e.nativeEvent.layout.width);
+    }, []);
+    // computeRoundTurnBonusLayout(headerRowH) — 2026-10-16, параметризовано по
+    // высоте строки: раньше тут были готовые значения, завязанные жёстко на
+    // switchRowH (высота ПОРТРЕТНОГО seam-ряда, сосчитанная от ширины ВСЕГО
+    // экрана) — для landscape-панели (узкая боковая колонка, см.
+    // landscapeHeaderRowH ниже) это дало бы непропорционально высокие узкие
+    // "плашки" вместо квадратов (живой замер DOM подтвердил: 44×104 вместо
+    // примерно квадратных). Формула не изменилась — просто принимает высоту
+    // параметром, а не читает switchRowH напрямую.
+    const computeRoundTurnBonusLayout = (headerRowH) => {
+        const totalWidth = panelHeaderRowWidth != null
+            ? Math.max(0, panelHeaderRowWidth - headerRowH * 2)
+            : null;
+        const widths = totalWidth != null
+            ? [0, 1, 2].map((i) => Math.round((totalWidth * (i + 1)) / 3) - Math.round((totalWidth * i) / 3))
+            : [Math.round(headerRowH * 1.2), Math.round(headerRowH * 1.2), Math.round(headerRowH * 1.2)];
+        const fontStyle = { fontSize: Math.max(10, Math.round(headerRowH * 0.3)) };
+        return { widths, fontStyle };
+    };
+    // Шрифт — пропорционален высоте строки (0.3, подобрано живьём 2026-10-15,
+    // см. computeRoundTurnBonusLayout выше за параметризованной версией).
     // Ширина панели имени в строке под швом — живой баг 2026-10-11: первая
     // версия (фиксированный множитель от switchRowH) либо вылезала за край
-    // экрана (настройки/лог обрезались), либо оставляла дыру — по прямому
-    // запросу пользователя сумма (переключатели+имя+настройки+лог) теперь
-    // считается от РЕАЛЬНО измеренной ширины самой строки (seamRowWidth, см.
-    // onSeamRowLayout ниже), ровно той же техникой, что раньше спасла
-    // аналогичный ряд от того же класса бага (см. старую историю
-    // roadFrameRoundRowWidth в CLAUDE.md, 2026-10-10) — turnBannerSize тут
-    // больше не годится, его измеренная ширина теперь УЖЕ полной строки
-    // (баннер делит её с колонкой раунд/ход/бонус, см. headerContent).
+    // экрана (кнопки обрезались), либо оставляла дыру — по прямому запросу
+    // пользователя сумма (переключатели+имя+навигация) теперь считается от
+    // РЕАЛЬНО измеренной ширины самой строки (seamRowWidth, см. onSeamRowLayout
+    // ниже), ровно той же техникой, что раньше спасла аналогичный ряд от
+    // того же класса бага (см. старую историю roadFrameRoundRowWidth в
+    // CLAUDE.md, 2026-10-10).
     // switchesNaturalWidth — ширина 4 переключателей по их собственному
     // аспекту (SWITCH_ASPECT) + 3 внутренних зазора (PlayerSwitchPanel#
-    // styles.row.gap=spacing.xs) между ними. iconsWidth — настройки+лог,
-    // оба квадратные switchRowH×switchRowH. Между переключателями/именем/
-    // настройками/логом зазора нет (styles.seamRow.gap=0, по прямому
-    // запросу пользователя) — КРОМЕ стыка последний-переключатель→имя: там
-    // отдельный marginLeft (см. место рендера), равный тому же spacing.xs,
-    // что и между самими переключателями (по прямому запросу пользователя
-    // 2026-10-11) — SEAM_NAME_GAP, вычитается тут же, чтобы сумма всей
-    // строки по-прежнему не вылезала за экран. До первого измерения
-    // (seamRowWidth===null) — безопасный фолбэк.
+    // styles.row.gap=spacing.xs) между ними. seamIconsWidth — 2 квадратные
+    // switchRowH×switchRowH ячейки в конце строки — раньше настройки+лог,
+    // 2026-10-15 стали кнопками навигации (RoadNavButton) — формула/размер
+    // не изменились, сменился только визуальный смысл. styles.seamRow.gap=0
+    // (по прямому запросу пользователя) — зазоров в строке ДВА явных
+    // marginLeft (не gap): имя→переключатели и переключатели→навигация
+    // (2026-10-15, живая жалоба "налезает, плотнячком" — раньше зазор был
+    // только один), оба по spacing.xs, см. места рендера. Единственный стык
+    // БЕЗ зазора — между самими кнопками навигации (up/down). Отсюда ДВА
+    // (не один) spacing.xs в формуле ниже — забыть прибавить второй при
+    // добавлении зазора было реальной причиной 4px переполнения строки в
+    // этом же заходе. До первого измерения (seamRowWidth===null) —
+    // безопасный фолбэк.
     const switchesNaturalWidth = Math.round(switchRowH * SWITCH_ASPECT) * 4 + spacing.xs * 3;
     const seamIconsWidth = switchRowH * 2;
     const seamNameWidth = seamRowWidth != null
-        ? Math.max(40, seamRowWidth - spacing.md * 2 - switchesNaturalWidth - spacing.xs - seamIconsWidth)
+        ? Math.max(40, seamRowWidth - spacing.md * 2 - switchesNaturalWidth - spacing.xs * 2 - seamIconsWidth)
         : Math.round(switchRowH * 2.4);
+
+    // 2026-10-16 — ПЕРЕНЕСЕНО СЮДА (было прямо перед boardGridEl, намного
+    // ниже по файлу) — реальный краш, живьём пойман пользователем: "Rendered
+    // more hooks than during the previous render". boardGridEl стоит ПОСЛЕ
+    // раннего `if (!game) return` чуть ниже — на первом рендере (game===null,
+    // холодный коннект) этот useMemo вообще не вызывался, а на следующем
+    // (game уже пришёл) вызывался — нарушение Rules of Hooks. Раньше (до
+    // мемоизации) здесь был обычный литерал в JSX-пропе, не хук — этого бага
+    // не было. Теперь хук стоит ДО любых early return, как и остальные.
+    const reaperPreview = useMemo(
+        () => (
+            pendingReaperPlacement
+                ? {
+                    segment: pendingReaperPlacement.segment,
+                    positionX: pendingReaperPlacement.positionX,
+                    positionY: pendingReaperPlacement.positionY,
+                    side: pendingReaperPlacement.side,
+                    settled: reaperPreviewReady,
+                    color: playerColorById[myPlayer?.id] ?? '#fff',
+                }
+                : null
+        ),
+        [pendingReaperPlacement, reaperPreviewReady, playerColorById, myPlayer?.id],
+    );
 
     if (!game) {
         return (
@@ -2731,7 +2800,10 @@ export default function GameBoardScreen({ route, navigation }) {
     // (см. game.extraTurnPlayer/trackShiftPhase в комментариях выше по
     // файлу) — именно поэтому они перекрывают turnBannerInner, а не просто
     // дополняют его.
-    const turnBannerInner = trackShiftPhase ? (
+    // game.status===FINISH — та же дыра и тот же фикс, что у dialogState
+    // выше (см. её комментарий): после победы тут не должно оставаться
+    // никакого хода/подсказки, GameFinishModal уже показывает результат.
+    const turnBannerInner = game.status === GAME_STATUS.FINISH ? null : trackShiftPhase ? (
         <Text style={[styles.turnHint, styles.turnHintCenter]} noGlobalTint>
             Трасса смещается…
         </Text>
@@ -2937,21 +3009,20 @@ export default function GameBoardScreen({ route, navigation }) {
         </Text>
     );
 
-    // dialogState — ВРЕМЕННЫЙ ДУБЛЬ turnBannerInner выше в виде отдельной
-    // модалки-карточки (GameDialogModal, 2026-10-12, по прямому запросу
-    // пользователя — "вытащить все уведомления/диалоги в модалку"). Не
-    // замена: turnBannerInner остаётся как есть, это параллельный рендер
-    // ТОГО ЖЕ состояния через ДРУГОЙ компонент — задача сначала проверить,
-    // что здесь оказались ВСЕ диалоги с выбором (плюс два явно запрошенных
-    // "ждущих" уведомления по коллизии, у которых кнопок в обычном случае
-    // нет), и только потом отдельным заходом убрать инлайн-версию. Простые
-    // безкнопочные подсказки шага (SELECT "Перетащи кубик…", MOVE "Выбери
-    // клетку…" и т.п.) — по прямому решению пользователя остаются ТОЛЬКО в
-    // шапке панели, сюда не дублируются. "Ход игрока: X" (не мой ход, нет
-    // коллизии) — та же категория, тоже не дублируется (не упоминалось в
-    // списке пользователя). Текст/условия/кнопки — скопированы 1:1 с веток
-    // turnBannerInner выше, НЕ переизобретены — при правке одной стороны
-    // не забыть вторую, пока обе существуют параллельно.
+    // dialogState — полный зеркальный разбор turnBannerInner выше в виде
+    // отдельной модалки-карточки (GameDialogModal). Сначала (2026-10-12) был
+    // ВРЕМЕННЫМ ДУБЛЕМ только диалогов с выбором — простые безкнопочные
+    // подсказки шага и "Ход игрока: X" сознательно не дублировались, жили
+    // только в шапке панели (зона 11, styles.turnBanner). По прямому запросу
+    // пользователя 2026-10-15 эта модалка стала ЕДИНСТВЕННЫМ источником ЛЮБОЙ
+    // подсказки хода (включая "Твой ход"/"Ход игрока: X") — инлайн-версия в
+    // зоне 11 (turnBannerInner, headerContent в mobileNav-ветке ниже) больше
+    // НЕ рендерится, но сама рамка/колонка Раунд-Ход-Бонус там оставлены как
+    // есть (по прямому требованию — "зону 11 пока оставь в покое"), только
+    // её содержимое убрано. Веб/landscape — turnBannerInner остался видимым,
+    // там этой модалки нет. Текст/условия/кнопки — скопированы 1:1 с веток
+    // turnBannerInner выше, НЕ переизобретены — при правке одной стороны не
+    // забыть вторую, пока обе ветки существуют параллельно в коде.
     // НЕ useMemo — этот блок стоит ПОСЛЕ ранних `return` выше (!game/
     // WAITING), значит на части рендеров до него вообще не доходит; хук
     // тут нельзя (условный вызов хука — краш "Rendered more hooks than
@@ -2960,6 +3031,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // JSX ниже тоже пересчитывается каждый рендер без memo), просто другая
     // форма результата (объект, не JSX).
     const dialogState = (() => {
+        // 2026-10-15, живая жалоба пользователя — модалка показывала "Твой
+        // ход. null" уже ПОСЛЕ game.status===FINISH (обычно не видно —
+        // перекрыто GameFinishModal, всплыло во время отладки другого бага,
+        // когда тот был временно скрыт). Безкнопочный hint-фоллбэк (ниже по
+        // функции) ничего не гейтил на статус партии — как и turnBannerInner
+        // (тот же пробел, подновлён тем же заходом).
+        if (game.status === GAME_STATUS.FINISH) return null;
         if (trackShiftPhase) return { kind: 'trackShift', text: 'Трасса смещается…' };
         if (game.extraTurnPlayer != null) {
             const text = myCollision && pendingCollisionRoll
@@ -2995,7 +3073,15 @@ export default function GameBoardScreen({ route, navigation }) {
             // появляться развёрнутым заново при переходе между ними.
             return { kind: myCollision ? 'collisionWaitMe' : 'collisionWaitOther', text };
         }
-        if (!myTurn) return null;
+        if (!myTurn) {
+            // "Ход игрока: X" — раньше сознательно не дублировалась в модалке
+            // (см. комментарий ниже у dialogState), по прямому запросу
+            // пользователя 2026-10-15 модалка теперь единственное место для
+            // ЛЮБОЙ подсказки хода, не только тех, где есть кнопки. kind
+            // привязан к id текущего игрока — смена хода разворачивает
+            // карточку заново, даже если предыдущий игрок успел её закрыть.
+            return { kind: `opponentTurn:${currentTurnPlayer?.id ?? 'x'}`, text: `Ход игрока: ${currentTurnPlayer?.user?.username ?? '—'}` };
+        }
         if (pendingReaperPlacement && !busy) {
             // Approach-фаза (Жнец ещё летит из-за края карты) — БЕЗ диалога
             // вообще, ни текста, ни кнопок (2026-10-12, по прямому запросу
@@ -3043,7 +3129,17 @@ export default function GameBoardScreen({ route, navigation }) {
         if (showShootSkip) {
             return { kind: 'shootSkip', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleShootSkip }] };
         }
-        return null;
+        // Простая безкнопочная подсказка шага (SELECT в самом начале хода,
+        // MOVE/SHOOT без доступного "скип", ожидание второго тапа усиления и
+        // т.п.) — раньше сознательно НЕ дублировалась тут (см. комментарий
+        // ниже), по прямому запросу пользователя 2026-10-15 модалка теперь
+        // единственное место для ЛЮБОЙ подсказки хода, включая "Твой ход" в
+        // самом начале шага. kind привязан к myStep — смена шага
+        // (SELECT→MOVE→...) разворачивает карточку заново, даже если игрок
+        // успел закрыть/свернуть её на предыдущем шаге; мелкие изменения
+        // turnHintText В РАМКАХ одного шага не меняют kind — карточка
+        // остаётся в том виде, в каком её оставил игрок.
+        return { kind: `hint:${myStep}`, text: `Твой ход. ${turnHintText}` };
     })();
 
     // Общий элемент для обеих раскладок (было продублировано дважды —
@@ -3082,6 +3178,7 @@ export default function GameBoardScreen({ route, navigation }) {
             }
             playerColorById={playerColorById}
             selectedRunnerId={activeRunner?.id ?? null}
+            opponentSelectedRunnerId={opponentActiveRunner?.id ?? null}
             highlightedCells={highlightedCells}
             highlightMode={tapMode}
             runnerAnims={runnerAnim.anims}
@@ -3090,21 +3187,11 @@ export default function GameBoardScreen({ route, navigation }) {
             hiddenRunnerIds={runnerAnim.hiddenIds}
             ghostPairs={ghostPairs.pairs}
             mineBlasts={mineBlasts.blasts}
+            ricochetTrails={ricochetTrails.trails}
             onCollisionPoseStart={handleCollisionPoseStart}
             onCollisionPoseEnd={handleCollisionPoseEnd}
             onAnimStepEnd={runnerAnim.completeStep}
-            reaperPreview={
-                pendingReaperPlacement
-                    ? {
-                        segment: pendingReaperPlacement.segment,
-                        positionX: pendingReaperPlacement.positionX,
-                        positionY: pendingReaperPlacement.positionY,
-                        side: pendingReaperPlacement.side,
-                        settled: reaperPreviewReady,
-                        color: playerColorById[myPlayer?.id] ?? '#fff',
-                    }
-                    : null
-            }
+            reaperPreview={reaperPreview}
             columnOpacities={
                 trackShiftPhase === 'wiping' ? trackShiftWipeColumnOpacityMap
                     : trackShiftPhase === 'revealing' ? trackShiftRevealColumnOpacityMap
@@ -3113,6 +3200,102 @@ export default function GameBoardScreen({ route, navigation }) {
             cellOverrides={heldCells}
             onCellPress={handleCellPress}
         />
+    );
+
+    // renderCompactHeaderRow(headerRowH) — ряд из 5 квадратов (Раунд/Ход/
+    // Бонус дороги, РЕЗИНОВЫЕ + настройки/лог) — ОДНА общая функция,
+    // переиспользуемая ТРЕМЯ раскладками (mobileNav/useWebCompactChrome —
+    // headerContent портретной PlayerInfoPanel при headerRowH=switchRowH, и
+    // landscape — headerContent её левой панели при headerRowH=landscapeHeaderRowH,
+    // см. оба места рендера ниже), а не три копии одного и того же дерева —
+    // иначе "1:1 как Android" переставало бы быть гарантией уже на первой же
+    // будущей правке этого ряда (копии неизбежно разъехались бы). Параметр
+    // height (не захардкоженный switchRowH) — 2026-10-16, живой DOM-замер
+    // вскрыл реальный баг первой версии: switchRowH сосчитан от ШИРИНЫ ВСЕГО
+    // ЭКРАНА (портретный seam-ряд во всю ширину) — применённый напрямую к
+    // узкой (300-430px) landscape-панели давал не квадраты, а узкие высокие
+    // "плашки" (44×104 на реальном замере). landscapeHeaderRowH (см. её
+    // объявление ниже) — своя, пропорциональная ширине ПАНЕЛИ величина.
+    const renderCompactHeaderRow = (headerRowH) => {
+        const { widths, fontStyle } = computeRoundTurnBonusLayout(headerRowH);
+        return (
+            <View
+                style={[styles.panelHeaderRow, { height: headerRowH }]}
+                onLayout={onPanelHeaderRowLayout}
+            >
+                <FramedSquare width={widths[0]} height={headerRowH} targetCornerSize={8} glow>
+                    <Text style={[styles.seamRoundValue, fontStyle]} numberOfLines={1} noGlobalTint>
+                        {`Р: ${game.round != null ? game.round + 1 : '-'}`}
+                    </Text>
+                </FramedSquare>
+                <FramedSquare width={widths[1]} height={headerRowH} targetCornerSize={8} glow>
+                    <Text style={[styles.seamRoundValue, fontStyle]} numberOfLines={1} noGlobalTint>
+                        {(() => {
+                            const turnsTaken = players.find((p) => p.id === activePlayerId)?.turnsTaken;
+                            // 2026-10-16 — тот же формат "N/M", что и в PlayerInfoPanel.js#turnsLabel
+                            // (landscape), добавлен сюда же по прямому запросу пользователя.
+                            // 2026-10-17 — тот же фикс+решение, что и там (см. её докстринг за
+                            // полным разбором): убран лишний +1 (бэк уже шлёт turnsTaken
+                            // 1-индексным к моменту публикации), turnsTaken===0 — пустая строка
+                            // после "Х: " вместо "0/3" (ещё не было ни одного хода в раунде).
+                            if (turnsTaken == null) return 'Х: -';
+                            if (turnsTaken === 0) return 'Х: ';
+                            return game.turnsPerRound != null
+                                ? `Х: ${turnsTaken}/${game.turnsPerRound}`
+                                : `Х: ${turnsTaken}`;
+                        })()}
+                    </Text>
+                </FramedSquare>
+                <FramedSquare width={widths[2]} height={headerRowH} targetCornerSize={8} glow>
+                    <Text style={[styles.seamBonusValue, fontStyle]} numberOfLines={1} noGlobalTint>
+                        {`Б: ${game.trackGain != null && game.trackGain > 0 ? game.trackGain : '—'}`}
+                    </Text>
+                </FramedSquare>
+                <FramedSquare variant="person" width={headerRowH} targetCornerSize={32} glow>
+                    <GameMenuButton
+                        size={headerRowH}
+                        active={gameMenuOpen || settingsHubOpen || gameSettingsOpen || gameGeneralSettingsOpen}
+                        onPress={handleOpenGameMenu}
+                    />
+                </FramedSquare>
+                <FramedSquare variant="person" width={headerRowH} targetCornerSize={32} glow>
+                    <TouchableOpacity ref={eventLogToggleRef} onPress={handleEventLogToggle} activeOpacity={0.8}>
+                        <Image
+                            source={eventLogOpen ? LOG_BUTTON_IMAGES.pressed : LOG_BUTTON_IMAGES.unpressed}
+                            style={{ width: headerRowH, height: headerRowH }}
+                            resizeMode="contain"
+                        />
+                    </TouchableOpacity>
+                </FramedSquare>
+            </View>
+        );
+    };
+    // landscapeHeaderRowH — высота ряда для landscape-панели, пропорциональна
+    // её РЕАЛЬНОЙ ширине (leftPanelW, 300-430px), а не ширине всего экрана
+    // (как switchRowH) — 5 ячеек в ряд (3 резиновых + 2 квадратных
+    // settings/log), делим ширину на 5, чтобы все 5 получились примерно
+    // квадратными (settings/log — точно квадратные по построению, Р/Х/Б —
+    // примерно, см. computeRoundTurnBonusLayout).
+    const landscapeHeaderRowH = Math.round(leftPanelW / 5);
+    const compactHeaderRow = renderCompactHeaderRow(switchRowH);
+    const landscapeCompactHeaderRow = renderCompactHeaderRow(landscapeHeaderRowH);
+    // landscapeSwitcherH — та же история, что у landscapeHeaderRowH чуть
+    // выше, но для rocker-переключателя (PlayerSwitchPanel): 2026-10-16,
+    // живая жалоба "панель с переключателями выбилась по размерам" —
+    // reuse'нутый switcherH (0.15 от ВЫСОТЫ ЭКРАНА — рассчитан под seamRow
+    // почти во весь экран) на узкой (300-430px) боковой панели давал 4
+    // переключателя суммарной шириной БОЛЬШЕ самой панели (живой DOM-замер:
+    // 4×81px=324px+зазоры при панели шириной 304px — вылезало на ~30px).
+    // Формула теперь решает ОБРАТНУЮ задачу — высота, при которой 4
+    // переключателя (SWITCH_ASPECT уже, не квадратные) + 3 зазора
+    // (spacing.xs) ровно вписываются в контент-ширину панели (leftPanelW
+    // минус её padding, spacing.md с каждой стороны, см. PlayerInfoPanel.js
+    // #styles.panel) — ×0.95 запас, чтобы не упираться в самый край.
+    const landscapeSwitcherH = Math.max(
+        28,
+        Math.floor(
+            ((leftPanelW - spacing.md * 2 - spacing.xs * 3) / (4 * SWITCH_ASPECT)) * 0.95,
+        ),
     );
 
     return (
@@ -3138,16 +3321,22 @@ export default function GameBoardScreen({ route, navigation }) {
                 (2026-09-12, расширено 2026-10-15 на обычный 'destroyed') — тем же способом
                 ждём, пока не доиграет терминальная поза (burn/acid/destroyed), если она
                 случилась ровно тем же ходом, что и победа — звук victory/lost (см. эффект
-                рядом с hasDeathAnimPlaying выше) звучит СИНХРОННО с этим же условием. */}
+                рядом с hasDeathAnimPlaying выше) звучит СИНХРОННО с этим же условием.
+                finishModalForced (2026-10-16) — страховка: если оба гейта почему-то
+                никогда не снимутся сами, форсирует показ через FINISH_MODAL_SAFETY_MS
+                (см. её докстринг) — игра уже реально закончена, прятать результат
+                дольше нескольких секунд неверно в любом случае. */}
             <GameFinishModal
-                visible={game.status === GAME_STATUS.FINISH && !trackShiftPhase && !hasDeathAnimPlaying}
+                visible={game.status === GAME_STATUS.FINISH && (finishModalForced || (!trackShiftPhase && !hasDeathAnimPlaying))}
                 winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
                 onExit={goToMainMenu}
             />
 
-            {/* Игровое меню — кнопка settings в seam-ряду (см. ниже), только
-                useMobileNavButtons (портретный native), см. CLAUDE.md за
-                обоснованием области применения. */}
+            {/* Игровое меню — кнопка settings теперь в compactHeaderRow (см. её
+                определение ниже, перед `return`) — рендерится во ВСЕХ трёх
+                раскладках (mobileNav/useWebCompactChrome/landscape), 2026-10-16.
+                Сами модалки тут рендерятся безусловно для всех, их видимость
+                держит только gameMenuOpen и т.п. стейт. */}
             <GameMenuModal
                 visible={gameMenuOpen}
                 onClose={handleCloseGameMenu}
@@ -3202,13 +3391,30 @@ export default function GameBoardScreen({ route, navigation }) {
                     onRunnerCardPress={handleRunnerCardPress}
                     onRunnerCardDoubleTap={handleRunnerCardDoubleTap}
                     width={leftPanelW}
-                    switcherHeight={switcherH}
-                    headerContent={(
-                        <View style={styles.turnBanner} onLayout={onTurnBannerLayout}>
-                            <FramePanel size={turnBannerSize} targetCornerSize={10} />
-                            {turnBannerInner}
-                        </View>
-                    )}
+                    // switcherHeight — landscapeSwitcherH (НЕ switcherH, см. её
+                    // докстринг выше за разбором живого бага "переключатели
+                    // вылезли за край панели").
+                    switcherHeight={landscapeSwitcherH}
+                    // 2026-10-16, ОТКАЧЕНО по прямому требованию пользователя
+                    // ("что за уродство в некомпактной версии веба, верни как
+                    // было") — compactColumns для landscape БОЛЬШЕ НЕ передаём,
+                    // большие карточки/горизонтальный трей кубиков снова как
+                    // были. Оставлены ТОЛЬКО headerContent (ряд Раунд/Ход/Бонус+
+                    // настройки/лог, landscapeCompactHeaderRow — пользователь
+                    // прямо попросил это оставить) и hideReaperNode (не
+                    // дублировать тот же ряд ещё и подписанной копией внутри
+                    // тела, см. ScrollView-ветку PlayerInfoPanel.js). Сам баннер
+                    // хода по-прежнему не нужен — та же информация уже
+                    // показывается GameDialogModal (рендерится ниже, вне
+                    // зависимости от isPortrait). rockerSwitcher — тот же
+                    // rocker-переключатель (PlayerSwitchPanel), что в seamRow
+                    // мобильной/веб-компактной раскладки, вместо старых
+                    // текстовых табов PlayerSwitcher — по прямому запросу
+                    // пользователя ("для переключателей между игроками
+                    // используй подход switch из android").
+                    hideReaperNode
+                    rockerSwitcher
+                    headerContent={landscapeCompactHeaderRow}
                     roadBonusValue={game.trackGain}
                     gameRound={game.round}
                     turnsPerRound={game.turnsPerRound}
@@ -3248,7 +3454,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     экрана). useMobileNavButtons (портрет+native): здесь рендерится null —
                     у него СВОИ RoadNavButton в нижнем слоте на стыке рамок (см. seamRow
                     ниже), не в потоке здесь. */}
-                {!useMobileNavButtons && (
+                {!useMobileNavButtons && !useWebCompactChrome && (
                     <View style={styles.navBtnColumnLeft}>
                         <RoadNavButton direction="up" size={navBtnSize} handlers={forwardButtonProps} />
                         <RoadNavButton direction="down" size={navBtnSize} handlers={backButtonProps} />
@@ -3291,7 +3497,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         экрана. Лево/право — чуть за край экрана. Низ — 0 (шов с панелью,
                         рамки соприкасаются впритык, каждая остаётся отдельной рамкой со
                         всеми 4 скруглёнными углами — НЕ сливаются в одну). */}
-                    {useMobileNavButtons && (
+                    {(useMobileNavButtons || useWebCompactChrome) && (
                         <MobileFrameOverlay
                             borderDp={arrowBtnSize}
                             bleed={{
@@ -3302,26 +3508,11 @@ export default function GameBoardScreen({ route, navigation }) {
                             cornerBackdropColor={colors.panelPlateBg}
                         />
                     )}
-                    {/* Стрелки навигации — ПРЯМО НА нижней кайме рамки дороги,
-                        ПО ЦЕНТРУ всей ширины, 2026-10-10 по прямому запросу
-                        пользователя. `variant="person"` + `targetCornerSize`
-                        тоньше дефолта (34px) — честная 9-slice рамка
-                        (FramedSquare.js/PersonPanel.js докстринги) БЕЗ своего
-                        фона поверх PNG-ассета `RoadNavButton` (тот своей
-                        нарисованной рамки больше не содержит, см. CLAUDE.md
-                        2026-10-10 — вырезана скриптом, чтобы не было двойного
-                        контура). RoadNavButton#width/height (см. её докстринг)
-                        даёт прямоугольную, не квадратную, кнопку. */}
-                    {useMobileNavButtons && (
-                        <View style={[styles.roadFrameNavRow, { bottom: (arrowBtnSize - navBoxH) / 2, gap: spacing.xs }]}>
-                            <FramedSquare variant="person" width={navBoxH * 2} height={navBoxH} targetCornerSize={32} glow>
-                                <RoadNavButton direction="up" height={navBoxH} width={navBoxH * 2} handlers={forwardButtonProps} />
-                            </FramedSquare>
-                            <FramedSquare variant="person" width={navBoxH * 2} height={navBoxH} targetCornerSize={32} glow>
-                                <RoadNavButton direction="down" height={navBoxH} width={navBoxH * 2} handlers={backButtonProps} />
-                            </FramedSquare>
-                        </View>
-                    )}
+                    {/* Стрелки навигации — ПЕРЕЕХАЛИ в строку под швом (seamRow,
+                        см. её рендер ниже), 2026-10-15, по прямому запросу
+                        пользователя: на кайме рамки дороги их больше нет,
+                        освободившееся место заняли только MobileFrameOverlay/
+                        GameDialogModal ниже. */}
                     {/* ВРЕМЕННЫЙ ДУБЛЬ turnBannerInner — см. dialogState выше за
                         полным разбором. Ребёнок roadFrameWrap (не корневого
                         wrapper) — по прямому запросу пользователя: сначала
@@ -3345,7 +3536,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         dialogState={dialogState}
                         width={roadFrameSize?.width}
                         height={roadFrameSize?.height}
-                        bottomInset={useMobileNavButtons ? arrowBtnSize : undefined}
+                        bottomInset={(useMobileNavButtons || useWebCompactChrome) ? arrowBtnSize : undefined}
                     />
                 </View>
             </View>
@@ -3362,7 +3553,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 // без текстуры, поэтому цвет, не тайлинг картинками). Веб-портрет
                 // (isPortrait без useMobileNavButtons) не затронут — там всё как
                 // было (полупрозрачная панель поверх параллакса).
-                <View style={[styles.panelFrameWrap, useMobileNavButtons && styles.panelFrameWrapFlat]}>
+                <View style={[styles.panelFrameWrap, (useMobileNavButtons || useWebCompactChrome) && styles.panelFrameWrapFlat]}>
                     <PlayerInfoPanel
                         players={players}
                         activePlayerId={activePlayerId}
@@ -3385,64 +3576,19 @@ export default function GameBoardScreen({ route, navigation }) {
                         switcherHeight={switcherH}
                         switcherAtBottom
                         compactColumns
-                        flatBackground={useMobileNavButtons}
-                        switchRowHeight={useMobileNavButtons ? switchRowH : 0}
-                        headerContent={(
-                            <View style={styles.turnBannerRow}>
-                                <View style={[styles.turnBanner, styles.turnBannerFlex]} onLayout={onTurnBannerLayout}>
-                                    <FramePanel size={turnBannerSize} targetCornerSize={10} />
-                                    {/* NeonGlow (2026-10-11, по прямому запросу
-                                        пользователя — "...у панели 'твой ход'...") —
-                                        только тут (портретный native-вызов), не в
-                                        альбомном/веб HeaderContent выше — тот же
-                                        масштаб правки, что и у остальных мест этого
-                                        захода (useMobileNavButtons-зона). */}
-                                    <NeonGlow size={turnBannerSize} radius={frameNotchRadius(turnBannerSize, 10)} />
-                                    {turnBannerInner}
-                                </View>
-                                {/* Раунд/Ход/Бонус хода — колонка квадратов СПРАВА
-                                    от баннера (2026-10-11, по прямому запросу
-                                    пользователя — переехали из строки под швом,
-                                    см. её докстринг ниже). Только useMobileNavButtons
-                                    — в остальных случаях (веб-портрет) этой колонки
-                                    тут не было и не появляется, раунд/ход/бонус там
-                                    по-прежнему не показываются вообще (отдельная
-                                    раскладка, не входит в объём этого TODO). Высота
-                                    каждого квадрата — РОВНО ⅓ измеренной высоты
-                                    баннера (turnBannerSideSize), без зазоров между
-                                    ними — сумма трёх точно равна высоте баннера. */}
-                                {useMobileNavButtons && (
-                                    <View style={[styles.turnBannerSideCol, { width: turnBannerSideSize }]}>
-                                        {/* Раунд/Ход — оба 0-индексные на бэке (`game.round`,
-                                            `player.turnsTaken`, растёт на каждом `select`, т.е.
-                                            "сколько уже НАЧАТО", не "номер текущего") — по
-                                            прямому решению пользователя 2026-10-14 (живой тест
-                                            на эмуляторе) UI прибавляет 1 к обоим при показе,
-                                            "Ход" — просто номер (не "X/3", turnsPerRound в
-                                            подпись не идёт). Тот же приём — PlayerInfoPanel.js
-                                            #displayRound/#turnsLabel (landscape/веб-раскладка). */}
-                                        <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
-                                            <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
-                                                {game.round != null ? game.round + 1 : '-'}
-                                            </Text>
-                                        </FramedSquare>
-                                        <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
-                                            <Text style={[styles.seamRoundValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
-                                                {(() => {
-                                                    const turnsTaken = players.find((p) => p.id === activePlayerId)?.turnsTaken;
-                                                    return turnsTaken != null ? turnsTaken + 1 : '-';
-                                                })()}
-                                            </Text>
-                                        </FramedSquare>
-                                        <FramedSquare width={turnBannerSideSize} height={turnBannerSideSize} targetCornerSize={6} glow>
-                                            <Text style={[styles.seamBonusValue, turnBannerSideFontStyle]} numberOfLines={1} noGlobalTint>
-                                                {game.trackGain != null && game.trackGain > 0 ? game.trackGain : '—'}
-                                            </Text>
-                                        </FramedSquare>
+                        flatBackground={useMobileNavButtons || useWebCompactChrome}
+                        switchRowHeight={(useMobileNavButtons || useWebCompactChrome) ? switchRowH : 0}
+                        headerContent={
+                            (useMobileNavButtons || useWebCompactChrome) ? compactHeaderRow : (
+                                <View style={styles.turnBannerRow}>
+                                    <View style={[styles.turnBanner, styles.turnBannerFlex]} onLayout={onTurnBannerLayout}>
+                                        <FramePanel size={turnBannerSize} targetCornerSize={10} />
+                                        <NeonGlow size={turnBannerSize} radius={frameNotchRadius(turnBannerSize, 10)} />
+                                        {turnBannerInner}
                                     </View>
-                                )}
-                            </View>
-                        )}
+                                </View>
+                            )
+                        }
                         roadBonusValue={game.trackGain}
                         gameRound={game.round}
                         turnsPerRound={game.turnsPerRound}
@@ -3450,73 +3596,110 @@ export default function GameBoardScreen({ route, navigation }) {
                 </View>
             )}
 
-            {/* Единая строка под швом — ОДНИМ рядом: 4 переключателя игрока,
-                панель имени, настройки, лог — ВСЕ одной и той же высоты
-                (switchRowH), по прямому запросу пользователя 2026-10-11
-                (раньше тут ЕЩЁ были раунд/ход/бонус дороги, второй строкой
-                под именем — переехали в колонку рядом с баннером хода, см.
-                headerContent выше). Панель имени — ФИКСИРОВАННОЙ ширины
-                (seamNameWidth), НЕ растягивается на остаток строки — по
-                прямому запросу пользователя ("уже, чем сейчас"); свободное
-                место справа от неё/настроек/лога просто остаётся залито тем
-                же фоном строки (styles.seamRow#backgroundColor), не выглядит
-                как дырка. Лежит ЦЕЛИКОМ ниже стыка, внутри territory
-                панели — рамку дороги не трогает (предыдущая версия стояла
-                ровно на стыке и конфликтовала то с рамкой, то с баннером
-                хода внутри панели — живые жалобы). switchRowH — высота всей
-                строки, та же величина, что PlayerInfoPanel резервирует у
-                себя СВЕРХУ через switchRowHeight (см. её докстринг) —
-                floating-ряд рисуется ровно над этим зарезервированным
-                зазором, не перекрывая баннер хода. Только useMobileNavButtons
-                — вне этого случая раскладка не менялась (лог в прежнем
-                углу, см. else ниже). */}
-            {useMobileNavButtons ? (
+            {/* Единая строка под швом — ОДНИМ рядом: панель имени, 4
+                переключателя игрока, кнопки навигации — ВСЕ одной и той же
+                высоты (switchRowH). Порядок имя→переключатели (2026-10-15,
+                по прямому запросу пользователя — переставлены, раньше было
+                переключатели→имя), настройки/лог ПЕРЕЕХАЛИ в headerContent
+                (см. выше) — их место заняли RoadNavButton (переехали сюда с
+                каймы рамки дороги, см. её докстринг выше). Панель имени —
+                ФИКСИРОВАННОЙ ширины (seamNameWidth), НЕ растягивается на
+                остаток строки — по прямому запросу пользователя ("уже, чем
+                сейчас"); свободное место справа от неё/навигации просто
+                остаётся залито тем же фоном строки (styles.seamRow#
+                backgroundColor), не выглядит как дырка. Лежит ЦЕЛИКОМ ниже
+                стыка, внутри territory панели — рамку дороги не трогает
+                (предыдущая версия стояла ровно на стыке и конфликтовала то
+                с рамкой, то с баннером хода внутри панели — живые жалобы).
+                switchRowH — высота всей строки, та же величина, что
+                PlayerInfoPanel резервирует у себя СВЕРХУ через
+                switchRowHeight (см. её докстринг) — floating-ряд рисуется
+                ровно над этим зарезервированным зазором. Только
+                useMobileNavButtons/useWebCompactChrome — для landscape (!isPortrait)
+                раскладка не менялась, НО старая плашка-бейдж EventLogPanel
+                (правый нижний угол) для неё теперь тоже убрана (2026-10-16) —
+                landscape-панель получила СВОЮ иконку лога в compactHeaderRow
+                (см. её headerContent выше), держать сразу два независимых
+                переключателя "открыт/закрыт" (eventLogOpen тут vs. свой
+                useState внутри EventLogPanel.js) было бы путаницей. См. else
+                ниже — для isPortrait он фактически недостижим (оба флага
+                вместе покрывают isPortrait целиком), оставлен только как
+                defensive-фолбэк. */}
+            {(useMobileNavButtons || useWebCompactChrome) ? (
                 <View style={[styles.seamRow, { bottom: panelH - switchRowH, height: switchRowH }]} onLayout={onSeamRowLayout}>
-                    <PlayerSwitchPanel players={players} activeId={activePlayerId} onSelect={setActivePlayerId} height={switchRowH} />
                     {/* Панель имени — FramedSquare variant="frame" (по
                         умолчанию, FramePanel — "как у аватарки бегуна"), НЕ
                         старый PersonPanel-based NamePanel — финальный выбор
                         стиля после нескольких правок, см. докстринг у места
-                        рендера кнопок навигации на рамке дороги выше.
-                        marginLeft: spacing.xs (2026-10-11, по прямому
-                        запросу пользователя) — ТОЛЬКО тут, между последним
-                        переключателем и именем, тот же зазор, что и между
-                        самими переключателями (PlayerSwitchPanel.js#
-                        styles.row.gap) — остальные стыки строки (имя→
-                        настройки→лог) остаются без зазора, см. seamRow. */}
-                    <FramedSquare width={seamNameWidth} height={switchRowH} targetCornerSize={8} glow style={{ marginLeft: spacing.xs }}>
+                        рендера кнопок навигации на рамке дороги выше. */}
+                    <FramedSquare width={seamNameWidth} height={switchRowH} targetCornerSize={8} glow>
                         <Text style={styles.seamNameText} numberOfLines={1} noGlobalTint>
                             {players.find((p) => p.id === activePlayerId)?.name ?? ''}
                         </Text>
                     </FramedSquare>
-                    {/* Настройки+лог — variant="person" (showBackground=false,
-                        см. FramedSquare.js/PersonPanel.js докстринги) —
-                        честная 9-slice рамка БЕЗ фона (их PNG-ассеты
-                        `settings_*`/`log_*` уже содержат свой фон, просто без
-                        нарисованной линии-рамки, см. CLAUDE.md 2026-10-10),
-                        как и у RoadNavButton выше. Иконка — полный размер
-                        слота, рамка рисуется ПОД ней (см. FramedSquare.js),
-                        перекрытия нет. Квадратные — ширина = высота строки
-                        (switchRowH), как и у всех остальных элементов ряда. */}
-                    <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow>
-                        <GameMenuButton
-                            size={switchRowH}
-                            active={gameMenuOpen || settingsHubOpen || gameSettingsOpen || gameGeneralSettingsOpen}
-                            onPress={handleOpenGameMenu}
-                        />
+                    {/* marginLeft: spacing.xs (2026-10-15 — сдвинулся на
+                        переключатели вместе с перестановкой имя↔переключатели,
+                        раньше был на имени) — тот же зазор, что и между самими
+                        переключателями (PlayerSwitchPanel.js#styles.row.gap).
+                        Такой же marginLeft (2026-10-15, живая жалоба —
+                        "налезает, плотнячком") теперь и у первой кнопки
+                        навигации (см. её рендер ниже) — единственный стык
+                        БЕЗ зазора в этой строке — между самими кнопками
+                        навигации (up/down), см. styles.seamRow#gap=0. */}
+                    <View style={{ marginLeft: spacing.xs }}>
+                        <PlayerSwitchPanel players={players} activeId={activePlayerId} onSelect={setActivePlayerId} height={switchRowH} />
+                    </View>
+                    {/* Кнопки навигации — ПЕРЕЕХАЛИ сюда с каймы рамки дороги
+                        (2026-10-15, по прямому запросу пользователя, на место
+                        настроек/лога — те переехали в headerContent, см.
+                        выше). variant="person" + targetCornerSize/размер —
+                        ТЕ ЖЕ, что были у настроек/лога тут раньше (честная
+                        9-slice рамка без фона, PNG-ассет RoadNavButton и так
+                        не содержит нарисованной линии-рамки, см. CLAUDE.md
+                        2026-10-10). Квадратные (size=switchRowH), не
+                        прямоугольные 2:1, как были на кайме рамки — там
+                        RoadNavButton поддерживает отдельные width/height,
+                        тут используем только size (обе грани равны).
+                        marginLeft: spacing.xs (2026-10-15, живая жалоба
+                        пользователя — "налезает, плотнячком") — тот же
+                        зазор, что уже стоит между именем и переключателями
+                        (см. выше), для единообразия по всей строке: теперь
+                        ЛЮБОЙ стык в seamRow — либо spacing.xs, либо явно
+                        gap:0 (переключатели между собой/настройки-лог —
+                        не трогали). */}
+                    <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow style={styles.seamNavUpSpacer}>
+                        <RoadNavButton direction="up" size={switchRowH} handlers={forwardButtonProps} />
                     </FramedSquare>
                     <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow>
-                        <EventLogPanel entries={eventLog} position="seam" iconSize={switchRowH} />
+                        <RoadNavButton direction="down" size={switchRowH} handlers={backButtonProps} />
                     </FramedSquare>
                 </View>
-            ) : (
-                <EventLogPanel entries={eventLog} position={isPortrait ? 'top' : 'bottom-right'} />
-            )}
+            ) : isPortrait ? (
+                <EventLogPanel entries={eventLog} position="top" />
+            ) : null}
             </View>
             {!boardReady && (
                 <View style={[styles.boardReadyOverlay, { width: windowDimensions.width, height: windowDimensions.height }]}>
                     <LoadingCard label={STATUS_LABEL[status] ?? ''} />
                 </View>
+            )}
+            {/* Лог событий (mobileNav, зона 9) — список. ПОСЛЕДНИЙ ребёнок
+                корня экрана: рисуется позже (= поверх) ВСЕГО остального JSX
+                этого файла, никакой Modal/zIndex-эквилибристики не нужно —
+                см. EventLogPanel.js за докстрингом/историей, почему именно
+                так. eventLogAnchor===null — доля секунды до результата
+                measureInWindow, ничего не рисуем этот один кадр. */}
+            {eventLogOpen && eventLogAnchor && (
+                <ScrollView
+                    style={[
+                        EVENT_LOG_PANEL_STYLE,
+                        styles.eventLogOverlay,
+                        { right: eventLogAnchor.right, bottom: eventLogAnchor.bottom + spacing.xs },
+                    ]}
+                    contentContainerStyle={styles.eventLogOverlayContent}
+                >
+                    <EventLogEntries entries={eventLog} />
+                </ScrollView>
             )}
         </View>
     );
@@ -3550,21 +3733,29 @@ const styles = StyleSheet.create({
     // через right/bottom внутри flex:1-родителя без явного размера, что и у
     // GameDialogModal (см. roadFrameSize-комментарий выше).
     boardReadyOverlay: { position: 'absolute', top: 0, left: 0, alignItems: 'center', justifyContent: 'center' },
+    // Лог событий (mobileNav, зона 9) — см. докстринг у места рендера (конец
+    // файла) за тем, почему позиция считается через measureInWindow, а не
+    // живёт внутри EventLogPanel.js. right/bottom — инлайн (из eventLogAnchor).
+    // zIndex/elevation (2026-10-15, живая жалоба — список ВСЁ ЕЩЁ рисовался
+    // ЗА рамкой дороги (зона 2, zIndex:10) и за строкой под швом (seamRow,
+    // zIndex:30), несмотря на то что это последний ребёнок корня) —
+    // "последний сосед рисуется поверх" верно ТОЛЬКО когда ни у кого из
+    // соседей нет явного zIndex; раз у seamRow/MobileFrameOverlay он есть,
+    // Android сортирует ВСЕХ соседей по значению, а не по порядку в дереве
+    // — безымянный (0) сосед проигрывает им, даже будучи последним по
+    // JSX. Явный zIndex тут обязателен и должен быть БОЛЬШЕ обоих (30).
+    eventLogOverlay: { position: 'absolute', zIndex: 40, elevation: 36 },
+    eventLogOverlayContent: { padding: spacing.sm },
     // roadFrameWrap — обёртка под MobileFrameOverlay (та ОСТАЁТСЯ у дороги,
     // не трогали, 2026-10-10), ТОЛЬКО position:'relative', БЕЗ overflow:
     // 'hidden' — рамка сама заполняет её РОВНО (не вылезает за границы, см.
     // компонент), этот View просто даёт ей позиционирующий контекст. flex:1
     // — тот же слот, что раньше держал RoadArea напрямую.
     roadFrameWrap: { flex: 1, position: 'relative' },
-    // Стрелки навигации на кайме рамки дороги (см. место рендера) —
-    // zIndex/elevation выше самой рамки (10, см. MobileFrameOverlay.js),
-    // чтобы не оказаться ПОД её декоративными слоями и ловить тапы.
-    // По центру ВСЕЙ ширины (left:0,right:0 + justifyContent:'center').
-    roadFrameNavRow: {
-        position: 'absolute', left: 0, right: 0,
-        flexDirection: 'row', justifyContent: 'center',
-        zIndex: 11, elevation: 11,
-    },
+    // roadFrameNavRow — УБРАН 2026-10-15 (стрелки навигации переехали в
+    // seamRow, см. её стиль ниже) — больше не нужен, zIndex-проблема (кнопки
+    // ПОД рамкой MobileFrameOverlay) этого места тоже снята сама собой,
+    // seamRow уже имела свой zIndex:30 для других целей.
     // Полоса имени фрагмента (FragmentLabelStrip) + сетка, бок о бок — портретная
     // раскладка. Обе имеют явную height=roadContainerH (см. JSX), выравнивать
     // по кросс-оси дополнительно не нужно.
@@ -3576,11 +3767,14 @@ const styles = StyleSheet.create({
     // stack-обёртками в этом файле.
     boardGridStack: { position: 'relative' },
     panelFrameWrap: { position: 'relative' },
-    // Сплошная заливка панели на мобильном портрете (2026-10-10) — см.
-    // комментарий у места рендера (useMobileNavButtons) и colors.panelPlateBg
-    // за происхождением цвета. Применяется ТОЛЬКО в этом случае (отдельный
-    // стиль, не влит в panelFrameWrap) — на вебе/альбомной раскладке
-    // panelFrameWrap остаётся прозрачным, как было.
+    // Сплошная заливка панели на мобильном портрете (2026-10-10, с 2026-10-16
+    // — и на веб-компакте, useWebCompactChrome) — см. комментарий у места
+    // рендера (useMobileNavButtons || useWebCompactChrome) и colors.panelPlateBg
+    // за происхождением цвета. Применяется ТОЛЬКО в этих случаях (отдельный
+    // стиль, не влит в panelFrameWrap) — в landscape panelFrameWrap не
+    // используется вообще (там своя, более узкая подмена, см. hideReaperNode
+    // в PlayerInfoPanel.js), панель там остаётся со своим обычным
+    // полупрозрачным фоном.
     panelFrameWrapFlat: { backgroundColor: colors.panelPlateBg },
     // Абсолютный ряд НА стыке дорожной и панельной рамок (см. комментарий в
     // JSX про расчёт bottom) — sibling обеих зон на уровне wrapper, поэтому
@@ -3629,20 +3823,29 @@ const styles = StyleSheet.create({
     },
     // Панель имени в строке под швом (2026-10-11) — просто Text, фиксированная
     // ширина/высота задаются инлайн через FramedSquare (seamNameWidth/
-    // switchRowH, см. место рендера), отдельного обёрточного стиля-колонки
-    // больше не нужно (раньше тут была колонка "имя + ряд из 5 квадратов",
-    // та ушла целиком — раунд/ход/бонус переехали в styles.turnBannerSideCol
-    // рядом с баннером хода, настройки/лог — соседи имени в этом же ряду).
+    // switchRowH, см. место рендера). 2026-10-15 — сосед справа сменился:
+    // раньше настройки+лог, теперь кнопки навигации (переехали с каймы рамки
+    // дороги, те уехали в headerContent, см. его докстринг).
     seamNameText: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     // Тот же стиль, что был у RoundPanel/RoadBonusPanel#styles.value (см.
     // их докстринги) — визуальное единообразие сохранено, хотя сам рендер
     // теперь инлайн через FramedSquare, не через эти компоненты (те остались
     // на PersonPanel, используются landscape/web-раскладкой в PlayerInfoPanel).
-    // Используется в styles.turnBannerSideCol (раунд/ход/бонус рядом с
-    // баннером хода, см. headerContent) — переехал туда вместе с колонкой
-    // 2026-10-11, сам стиль текста не менялся.
+    // Используется в styles.panelHeaderRow (headerContent, см. её рендер) —
+    // 2026-10-15 переехал туда с панели "Твой ход" (та убрана целиком для
+    // mobileNav), сам стиль текста не менялся.
     seamRoundValue: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.h2 },
     seamBonusValue: { color: colors.success, fontWeight: 'bold', fontSize: font.h2 },
+    // Ряд из 5 квадратов (Раунд/Ход/Бонус дороги + настройки/лог) на месте
+    // убранного баннера "Твой ход" — ТОЛЬКО mobileNav, см. headerContent.
+    // marginTop — та же величина, что раньше держал сам turnBanner (верх
+    // ряда начинается на том же месте, где раньше начинался баннер).
+    panelHeaderRow: { flexDirection: 'row', marginTop: spacing.xs },
+    // 2026-10-16 — вынесен из инлайн-объекта у кнопки навигации "вверх" в
+    // seamRow: StyleSheet.create даёт СТАБИЛЬНУЮ ссылку на каждый ре-рендер
+    // (в отличие от {marginLeft: spacing.xs} прямо в JSX), что нужно для
+    // корректной работы React.memo у FramedSquare (см. её докстринг).
+    seamNavUpSpacer: { marginLeft: spacing.xs },
     // Блок дороги (кнопки навигации | сетка) — ВСЕГДА строка (кнопки колонкой
     // слева, дорога справа, по прямому запросу пользователя, 2026-08-31,
     // третий заход — было выше/ниже), дорога всегда вертикальная независимо
@@ -3703,34 +3906,20 @@ const styles = StyleSheet.create({
         marginTop: spacing.xs,
         height: TURN_BANNER_MIN_HEIGHT, justifyContent: 'center', overflow: 'hidden',
     },
-    // turnBannerRow/turnBannerFlex/turnBannerSideCol (2026-10-11, по прямому
-    // запросу пользователя) — ТОЛЬКО портретный headerContent (см. место
-    // рендера): баннер хода теперь делит строку с колонкой раунд/ход/бонус
-    // справа от него (бывшей частью строки под швом, см. CLAUDE.md). Строка
-    // несёт marginTop, который раньше был на самом turnBanner (см.
-    // turnBannerFlex — сбрасывает его в 0, чтобы не удвоился) — так верх
-    // баннера и верх колонки квадратов совпадают. Ширина/высота колонки —
-    // явные пропы (turnBannerSideSize), не стиль.
-    // alignItems:'flex-start' (ЖИВОЙ БАГ, 2026-10-11, найден пользователем
-    // на реальном устройстве при коллизии — баннер "Твой ход" ЗАМЕТНО
-    // вырос, хотя раньше был жёстко зафиксирован под 3 строки) — БЕЗ этого
-    // (дефолт flexbox-строки — 'stretch') turnBanner и turnBannerSideCol
-    // образуют циклическую зависимость высоты: turnBannerSideCol сам
-    // высотой с turnBannerSize.height (измеренной высоты БАННЕРА, см.
-    // turnBannerSideSize выше), а 'stretch' тянет turnBanner вверх до
-    // высоты СВОЕГО соседа по ряду (turnBannerSideCol) — если в какой-то
-    // момент баннер был выше обычного (например длинный коллизионный текст
-    // на 2 строки) или колонка уже "раздулась" на предыдущем рендере,
-    // stretch держит баннер завышенным даже когда актуальный контент
-    // (например короткие "Использовать"/"Перебросить") уже не требует такой
-    // высоты — измеренная turnBannerSize так и остаётся завышенной, подпитывая
-    // саму себя дальше. 'flex-start' отключает stretch — turnBanner высотой
-    // ТОЛЬКО от своего контента/minHeight (как и было задумано, см.
-    // TURN_BANNER_MIN_HEIGHT), turnBannerSideCol подстраивается ПОД него, не
-    // наоборот.
+    // turnBannerRow/turnBannerFlex — ТОЛЬКО веб-портрет (useMobileNavButtons
+    // false), см. headerContent — mobileNav-ветка 2026-10-15 переведена на
+    // отдельный styles.panelHeaderRow (баннер "Твой ход" там убран целиком,
+    // см. её докстринг), эта пара стилей теперь обслуживает только
+    // одиночный turnBanner-child веб-раскладки. Исторически (2026-10-11)
+    // turnBannerRow несла ещё и колонку раунд/ход/бонус рядом с баннером
+    // (turnBannerSideCol, с этого же захода УДАЛЕНА как мёртвый код) —
+    // alignItems:'flex-start' тогда чинила живой баг циклической
+    // зависимости высоты между ними (конкретику см. в git-истории/
+    // CLAUDE_ARCHIVE.md при необходимости) — сейчас, с единственным
+    // ребёнком, эта зависимость физически не может возникнуть, но сам
+    // alignItems не мешает и не трогался, чтобы не расширять правку.
     turnBannerRow: { flexDirection: 'row', alignItems: 'flex-start', gap: spacing.xs, marginTop: spacing.xs },
     turnBannerFlex: { flex: 1, marginTop: 0 },
-    turnBannerSideCol: { flexDirection: 'column' },
     turnTitle: { color: colors.textOnDarkSecondary, fontSize: font.small, fontWeight: 'bold' },
     // color тут больше не используется (PulseText сам управляет цветом, см.
     // выше) — оставлен как безопасный дефолт на случай, если PulseText

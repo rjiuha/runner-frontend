@@ -9,7 +9,6 @@
     "orientation": "portrait",
     "icon": "./src/assets/images/icon.png",
     "splash": {
-  
       "image": "./src/assets/images/icon.png",
       "resizeMode": "cover",
       "backgroundColor": "#2c3e50"
@@ -31,6 +30,9 @@
     },
     "web": {
       "favicon": "./src/assets/images/favicon.png"
-    }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }

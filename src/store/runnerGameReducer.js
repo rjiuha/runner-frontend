@@ -119,6 +119,13 @@ export function runnerGameReducer(game, e) {
         // 2026-10-14: бэк переименовал dice_1..4 → dice1..4 во ВСЕХ
         // player_*/ability_*-событиях (раньше это поле было camelCase только
         // тут, у step_selection — остальные ниже обновлены тем же заходом).
+        // turnsTaken — 2026-10-16, реальный живой баг (жалоба пользователя:
+        // счётчик "Ход" не сбрасывается до 1 на новом раунде): README бэка
+        // (строки 150-152, 252) прямым текстом говорит, что `step_selection`
+        // несёт `player.turnsTaken` (растёт на каждом select, обнуляется в
+        // начале раунда) — этот case его получал и молча игнорировал, счётчик
+        // был заморожен на значении из последнего REST-снапшота НАВСЕГДА (ни
+        // один другой case в этом файле turnsTaken не трогает вообще).
         case 'step_selection': {
             const withPlayer = patchPlayer(game, e.player.id, {
                 step: e.player.step,
@@ -127,6 +134,7 @@ export function runnerGameReducer(game, e) {
                 dice2: e.player.dice2,
                 dice3: e.player.dice3,
                 dice4: e.player.dice4,
+                turnsTaken: e.player.turnsTaken,
             });
             return patchRunner(withPlayer, e.runner);
         }
@@ -142,6 +150,10 @@ export function runnerGameReducer(game, e) {
                 { step: e.player.step },
             );
 
+        // turnsTaken — тот же баг/фикс, что у step_selection выше: README
+        // (пример payload, строка 249) явно показывает `"turnsTaken":0` в
+        // этом событии — именно ОНО обнуляет счётчик "Ход" на новый раунд,
+        // раз его не применяли, счётчик и не сбрасывался.
         case 'player_reset': {
             const withPlayer = patchPlayer(game, e.player.id, {
                 dice1: e.player.dice1,
@@ -149,6 +161,7 @@ export function runnerGameReducer(game, e) {
                 dice3: e.player.dice3,
                 dice4: e.player.dice4,
                 ability: e.player.ability,
+                turnsTaken: e.player.turnsTaken,
             });
             return patchPlayerRunners(withPlayer, e.player.runners ?? []);
         }

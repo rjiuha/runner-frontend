@@ -124,10 +124,20 @@ export function useBoardLayout() {
         // полоска) физически нужно немного места, ниже уже обрежет текст.
         const switcherH = Math.max(36, Math.floor(panelH * 0.09));
 
-        // mobileNav — то же условие, что GameBoardScreen.useMobileNavButtons
-        // (портрет+native): там кнопки — в абсолютном seamRow на стыке рамок,
-        // ширину в потоке не резервируют вообще (см. reserveNavColumn ниже).
-        const mobileNav = Platform.OS !== 'web';
+        // hasFrameChrome — раньше называлась mobileNav и была
+        // `Platform.OS !== 'web'` (только родное приложение получало
+        // декоративную рамку/seamRow, см. GameBoardScreen.useMobileNavButtons).
+        // 2026-10-16, по прямому запросу пользователя — веб-портрет тоже
+        // получил ту же рамку+seamRow (GameBoardScreen.useWebCompactChrome,
+        // отдельный от useMobileNavButtons флаг, но решающий здесь ТУ ЖЕ
+        // геометрическую задачу: кнопки навигации — в абсолютном seamRow на
+        // стыке рамок, ширину в потоке не резервируют, см. reserveNavColumn
+        // ниже) — внутри портретной ветки это теперь ВСЕГДА true (другого
+        // случая тут просто не бывает — orientation==='portrait' и так уже
+        // разветвляет либо native, либо web, и оба теперь хотят рамку).
+        // Оставлено именованной константой (не инлайн `true`), чтобы история
+        // и место этого решения не терялись при следующей правке геометрии.
+        const hasFrameChrome = true;
 
         // Мобильная sci-fi рамка (MobileFrameOverlay, только mobileNav-случай)
         // рисует декоративную кайму толщиной arrowBtnSize (borderDp), выступающую
@@ -135,7 +145,7 @@ export function useBoardLayout() {
         // GameBoardScreen — bleed.right) — значит её ВНУТРЕННИЙ край (там, где
         // кайма начинает перекрывать контент) находится на (arrowBtnSize -
         // MOBILE_FRAME_BLEED) px от истинного края, а не на 0.
-        const frameEdgeClearance = mobileNav
+        const frameEdgeClearance = hasFrameChrome
             ? Math.max(0, arrowBtnSize - MOBILE_FRAME_BLEED - ROAD_AREA_SPACING)
             : 0;
 
@@ -146,7 +156,7 @@ export function useBoardLayout() {
         // тот же отступ нужно вычесть из бюджета, иначе низ доски вылезет за
         // пределы зоны.
         const roadZoneH = Math.max(0, screenH - panelH - insets.top);
-        const road = computeRoadGeometry(roadZoneW, roadZoneH, null, !mobileNav);
+        const road = computeRoadGeometry(roadZoneW, roadZoneH, null, !hasFrameChrome);
 
         return {
             orientation,

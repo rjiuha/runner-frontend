@@ -12,19 +12,19 @@ import { colors } from '../../theme';
  *    (растёт/уменьшается). Покрывает ВСЕ "сюда можно переместиться/
  *    встать" случаи (tapMode 'move'/'start'/'reaper' — см. GameBoardScreen,
  *    единая семантика "тапни эту клетку, чтобы куда-то переместиться").
- *  - 'shoot' — неподвижный крест в центре + квадратная рамка, вращающаяся
- *    вокруг него (tapMode 'shoot'/'reaperShoot'); за первую половину
- *    оборота рамка схлопывается в точку (центр перекрестия), за вторую —
- *    плавно возвращается к полному размеру (см. squareScale ниже). Цвет (и
- *    рамки, и самого креста) синхронно меняется с размером — красный на
- *    полном размере/"фиксации", жёлтый в точке (см. reticleColor).
+ *  - 'shoot' — неподвижный крест в центре + квадратная рамка (tapMode
+ *    'shoot'/'reaperShoot'). Статичный, одинаковый код на обеих платформах
+ *    (2026-10-16, по прямому запросу пользователя — раньше рамка вращалась
+ *    и схлопывалась в точку, цвет пульсировал красный↔жёлтый; теперь просто
+ *    неподвижный красный прицел, см. CROSSHAIR_COLOR_GROWN).
  *
- * Та же пара путей "native Animated / web CSS @keyframes", что уже
- * используют RunnerToken.js (пульсация кольца выбора) и PulseHighlight.js
- * (цветовой пульс) — JS `Animated` с `useNativeDriver:true` на
- * Android/iOS, чистый `animationKeyframes` через `StyleSheet.create()` на
- * вебе (тот ключ работает ТОЛЬКО через StyleSheet.create, см. докстринг
- * PulseHighlight.js за подтверждённым разбором).
+ * 'move' (единственный оставшийся анимированный kind) — та же пара путей
+ * "native Animated / web CSS @keyframes", что уже используют RunnerToken.js
+ * (пульсация кольца выбора) и PulseHighlight.js (цветовой пульс) — JS
+ * `Animated` с `useNativeDriver:true` на Android/iOS, чистый
+ * `animationKeyframes` через `StyleSheet.create()` на вебе (тот ключ
+ * работает ТОЛЬКО через StyleSheet.create, см. докстринг PulseHighlight.js
+ * за подтверждённым разбором).
  *
  * Форма точки — ТОТ ЖЕ приём "растянутая окружность" (scaleX на круге), что
  * и у кольца выбора в RunnerToken.js, не прямоугольник с `borderRadius:
@@ -44,9 +44,9 @@ const DOT_ASPECT = 1.7; // scaleX — во сколько раз эллипс ш
 const DOT_PULSE_MS = 450;
 const DOT_PULSE_MIN = 0.78;
 const DOT_PULSE_MAX = 1.22;
-const RETICLE_SPIN_MS = 3200;
-const CROSSHAIR_COLOR_GROWN = colors.danger; // полный размер/"фиксация" (spin 0 и 1)
-const CROSSHAIR_COLOR_POINT = '#f1c40f'; // схлопнулся в точку (spin 0.5)
+// 2026-10-16: прицел статичный, цвет зафиксирован на этом (раньше это была
+// одна из двух крайних точек пульса — "полный размер/фиксация").
+const CROSSHAIR_COLOR_GROWN = colors.danger;
 // Рамка прицела — НЕ сплошная линия по периметру: у каждой из 4 сторон свой
 // разрыв посередине (2026-10-14, по прямому запросу пользователя) — вместо
 // одного `borderWidth`-квадрата рисуется 8 коротких закрашенных отрезков
@@ -74,7 +74,6 @@ function frameSegments(squareSize) {
 export default function CellHighlight({ kind, width, height }) {
     const size = Math.min(width, height);
     const dotPulse = useRef(new Animated.Value(0)).current;
-    const spin = useRef(new Animated.Value(0)).current;
 
     useEffect(() => {
         if (kind !== 'move' || Platform.OS === 'web') return undefined;
@@ -90,39 +89,13 @@ export default function CellHighlight({ kind, width, height }) {
         outputRange: [DOT_PULSE_MIN, DOT_PULSE_MAX, DOT_PULSE_MIN],
     });
 
-    useEffect(() => {
-        if (kind !== 'shoot' || Platform.OS === 'web') return undefined;
-        spin.setValue(0);
-        const anim = Animated.loop(
-            Animated.timing(spin, { toValue: 1, duration: RETICLE_SPIN_MS, useNativeDriver: true }),
-        );
-        anim.start();
-        return () => anim.stop();
-    }, [kind, spin]);
-    // Цвет (2026-10-14, по прямому запросу пользователя — красный на полном
-    // размере/"фиксации", жёлтый в точке) — ОТДЕЛЬНЫЙ JS-driven Animated.Value
-    // (`useNativeDriver:false`), не производная от `spin`: `spin` крутится на
-    // НАТИВНОМ потоке (useNativeDriver:true выше), а backgroundColor нативным
-    // драйвером не поддерживается — значение `spin._value` на JS-стороне не
-    // обновляется вообще, пока анимация идёт нативно (та же причина, почему
-    // PulseHighlight.js использует отдельный JS-driven `usePulse`, не делит
-    // Animated.Value с transform-анимациями). Тот же период/фаза
-    // (RETICLE_SPIN_MS, старт в 0 синхронно с spin в эффекте выше) — на глаз
-    // не расходится, хотя это два независимых таймера.
-    const colorPulse = useRef(new Animated.Value(0)).current;
-    useEffect(() => {
-        if (kind !== 'shoot' || Platform.OS === 'web') return undefined;
-        colorPulse.setValue(0);
-        const anim = Animated.loop(
-            Animated.timing(colorPulse, { toValue: 1, duration: RETICLE_SPIN_MS, useNativeDriver: false }),
-        );
-        anim.start();
-        return () => anim.stop();
-    }, [kind, colorPulse]);
-    const reticleColor = colorPulse.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [CROSSHAIR_COLOR_GROWN, CROSSHAIR_COLOR_POINT, CROSSHAIR_COLOR_GROWN],
-    });
+    // 2026-10-16, по прямому запросу пользователя — прицел выстрела больше
+    // НЕ анимируется (ни вращение квадрата, ни схлопывание в точку, ни
+    // пульсация цвета). `spin`/`colorPulse` Animated.Value убраны целиком —
+    // статичный цвет (CROSSHAIR_COLOR_GROWN, тот же "полный размер/
+    // фиксация", что раньше было одной из двух крайних точек пульса) и
+    // неподвижный квадрат (rotate 0, scale 1).
+    const reticleColor = CROSSHAIR_COLOR_GROWN;
 
     if (kind === 'move') {
         const dotD = size * DOT_SIZE;
@@ -148,48 +121,16 @@ export default function CellHighlight({ kind, width, height }) {
     if (kind === 'shoot') {
         const squareSize = size * 0.52;
         const crossLen = size * 0.3;
-        const rotate = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-        // Размер квадрата — от ТОГО ЖЕ spin (0→1 = один оборот), по прямому
-        // запросу пользователя: за первую половину оборота схлопывается в
-        // точку (центр перекрестия), за вторую — плавно возвращается к
-        // полному размеру. Один общий driver — вращение и масштаб всегда
-        // синхронны (не два независимых цикла, которые могли бы разъехаться
-        // по фазе).
-        const squareScale = spin.interpolate({ inputRange: [0, 0.5, 1], outputRange: [1, 0, 1] });
         const segments = frameSegments(squareSize);
         return (
             <View pointerEvents="none" style={[styles.wrap, { width, height }]}>
-                {Platform.OS === 'web' ? (
-                    <View style={[styles.reticleSquareWeb, { width: squareSize, height: squareSize }]}>
-                        {segments.map((seg, i) => (
-                            <View key={i} style={[styles.reticleSegment, styles.reticleColorWeb, seg]} />
-                        ))}
-                    </View>
-                ) : (
-                    <Animated.View
-                        style={{
-                            position: 'absolute',
-                            width: squareSize,
-                            height: squareSize,
-                            transform: [{ rotate }, { scale: squareScale }],
-                        }}
-                    >
-                        {segments.map((seg, i) => (
-                            <Animated.View key={i} style={[styles.reticleSegment, seg, { backgroundColor: reticleColor }]} />
-                        ))}
-                    </Animated.View>
-                )}
-                {Platform.OS === 'web' ? (
-                    <>
-                        <View style={[styles.reticleColorWeb, { position: 'absolute', width: crossLen, height: 2.5 }]} />
-                        <View style={[styles.reticleColorWeb, { position: 'absolute', width: 2.5, height: crossLen }]} />
-                    </>
-                ) : (
-                    <>
-                        <Animated.View style={{ position: 'absolute', width: crossLen, height: 2.5, backgroundColor: reticleColor }} />
-                        <Animated.View style={{ position: 'absolute', width: 2.5, height: crossLen, backgroundColor: reticleColor }} />
-                    </>
-                )}
+                <View style={{ position: 'absolute', width: squareSize, height: squareSize }}>
+                    {segments.map((seg, i) => (
+                        <View key={i} style={[styles.reticleSegment, seg, { backgroundColor: reticleColor }]} />
+                    ))}
+                </View>
+                <View style={{ position: 'absolute', width: crossLen, height: 2.5, backgroundColor: reticleColor }} />
+                <View style={{ position: 'absolute', width: 2.5, height: crossLen, backgroundColor: reticleColor }} />
             </View>
         );
     }
@@ -210,47 +151,10 @@ const styles = StyleSheet.create({
         animationTimingFunction: 'ease-in-out',
         animationIterationCount: 'infinite',
     },
-    reticleSquareWeb: {
-        // position:'relative' — ОБЯЗАТЕЛЕН на вебе (react-native-web
-        // компилирует в настоящий CSS): без него абсолютные reticleSegment-
-        // дети анкерились бы к следующему реально позиционированному
-        // предку выше по дереву (styles.wrap), а не к этому квадрату.
-        // На native лишний (RN сам резолвит absolute-детей к прямому
-        // родителю независимо от его position), но не мешает.
-        position: 'relative',
-        // rotate линейно весь оборот, scale — та же треугольная волна
-        // 1→0→1, что и на native (см. squareScale выше) — один keyframes,
-        // чтобы вращение и схлопывание в точку оставались синхронными.
-        animationKeyframes: [{
-            '0%': { transform: 'rotate(0deg) scale(1)' },
-            '50%': { transform: 'rotate(180deg) scale(0)' },
-            '100%': { transform: 'rotate(360deg) scale(1)' },
-        }],
-        animationDuration: `${RETICLE_SPIN_MS}ms`,
-        animationTimingFunction: 'linear',
-        animationIterationCount: 'infinite',
-    },
     // Один отрезок рамки прицела (см. frameSegments()) — закрашенный
     // прямоугольник, не borderWidth: по 2 коротких штриха на каждую из 4
     // сторон квадрата дают разрыв посередине вместо сплошного периметра.
-    // backgroundColor НЕ тут — анимированный (см. reticleColorWeb/
-    // reticleColor), эта запись задаёт только форму/позицию.
+    // backgroundColor задаётся инлайн (reticleColor, см. тело компонента —
+    // 2026-10-16, статичный цвет, одинаковый на обеих платформах).
     reticleSegment: { position: 'absolute' },
-    // Цвет (красный на полном размере/"фиксации", жёлтый в точке) — ТЕ ЖЕ
-    // 3 контрольные точки (0/0.5/1), что и у squareScale/rotate выше, но
-    // своим keyframes: на вебе CSS сам интерполирует backgroundColor,
-    // отдельный JS-driven Animated.Value (см. colorPulse) тут не нужен —
-    // то ограничение специфично для native (backgroundColor не поддержан
-    // native-драйвером). Общий стиль — используется и сегментами рамки, и
-    // двумя полосками перекрестия ("перекрестие тоже" — прямой запрос).
-    reticleColorWeb: {
-        animationKeyframes: [{
-            '0%': { backgroundColor: CROSSHAIR_COLOR_GROWN },
-            '50%': { backgroundColor: CROSSHAIR_COLOR_POINT },
-            '100%': { backgroundColor: CROSSHAIR_COLOR_GROWN },
-        }],
-        animationDuration: `${RETICLE_SPIN_MS}ms`,
-        animationTimingFunction: 'linear',
-        animationIterationCount: 'infinite',
-    },
 });

@@ -250,22 +250,13 @@ function RunnerToken({
     // кусками, разворот тут делает interpolate, не сама Animated-анимация.
     // JS `Animated` ПОДТВЕРЖДЁННО не прогрессирует на вебе на этом стеке
     // (живой тест, 2026-09-09) — на вебе крутится чистый CSS `@keyframes`
-    // (см. ветку web в JSX ниже), тут только native (Android/iOS).
-    // useNativeDriver:true — scale-transform им поддерживается нативно.
-    const selectPulse = useRef(new Animated.Value(0)).current;
-    useEffect(() => {
-        if (!selected || Platform.OS === 'web') return undefined;
-        selectPulse.setValue(0);
-        const anim = Animated.loop(
-            Animated.timing(selectPulse, { toValue: 1, duration: SELECT_PULSE_MS * 2, useNativeDriver: true }),
-        );
-        anim.start();
-        return () => anim.stop();
-    }, [selected, selectPulse]);
-    const selectScale = selectPulse.interpolate({
-        inputRange: [0, 0.5, 1],
-        outputRange: [SELECT_PULSE_MIN, SELECT_PULSE_MAX, SELECT_PULSE_MIN],
-    });
+    // 2026-10-16, по прямому запросу пользователя — кольцо выбора больше НЕ
+    // пульсирует размером, статичный фиксированный масштаб. `Animated.loop`
+    // убран целиком (не только тут отключён — ЧИСТО удалён, никакого
+    // selectPulse/selectScale больше нет). SELECT_PULSE_MIN/MAX оставлены
+    // объявленными (используются ТОЛЬКО тут ниже, как среднее), но сам
+    // Animated.Value/эффект-цикл не нужен.
+    const selectScale = (SELECT_PULSE_MIN + SELECT_PULSE_MAX) / 2;
 
     // Прогрев (2026-09-25, по прямому запросу пользователя — живая жалоба
     // "еле заметное мигание при смене idle на move", подтверждённая живьём
@@ -489,26 +480,13 @@ const styles = StyleSheet.create({
     ringBottom: {
         justifyContent: 'flex-end',
     },
-    // Пульсация кольца-эллипса НА ВЕБЕ — чистый CSS `@keyframes`, тот же
-    // приём, что react-native-web использует в своём собственном
-    // ActivityIndicator. `animationKeyframes` — web-only ключ StyleSheet
-    // (react-native-web 0.21+), молча игнорируется на native — там пульсирует
-    // Animated.loop (см. JSX выше). Не зависит от JS Animated/rAF вообще —
-    // работает на браузерном compositor.
+    // 2026-10-16, по прямому запросу пользователя — кольцо-эллипс больше НЕ
+    // пульсирует размером ни на одной платформе. Статичный transform —
+    // scaleX растягивает базовый круг в истинный эллипс (см. докстринг
+    // SELECT_RING_* выше), scale — тот же средний масштаб, что и на native
+    // (см. selectScale в теле компонента).
     selectRingWeb: {
-        // scaleX(SELECT_RING_ASPECT) — ПОСТОЯННЫЙ множитель, растягивающий
-        // базовый круг в истинный эллипс (см. докстринг SELECT_RING_* выше),
-        // scale(...) ПОВЕРХ него — та же пульсация размера, что и на native
-        // (комбинация transform-функций в CSS применяется в указанном
-        // порядке, как и массив transform в RN).
-        animationKeyframes: [{
-            '0%': { transform: `scaleX(${SELECT_RING_ASPECT}) scale(${SELECT_PULSE_MIN})` },
-            '50%': { transform: `scaleX(${SELECT_RING_ASPECT}) scale(${SELECT_PULSE_MAX})` },
-            '100%': { transform: `scaleX(${SELECT_RING_ASPECT}) scale(${SELECT_PULSE_MIN})` },
-        }],
-        animationDuration: `${SELECT_PULSE_MS * 2}ms`,
-        animationTimingFunction: 'ease-in-out',
-        animationIterationCount: 'infinite',
+        transform: `scaleX(${SELECT_RING_ASPECT}) scale(${(SELECT_PULSE_MIN + SELECT_PULSE_MAX) / 2})`,
     },
 });
 

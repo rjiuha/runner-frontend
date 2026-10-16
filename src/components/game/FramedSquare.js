@@ -45,7 +45,7 @@ import NeonGlow from '../ui/NeonGlow';
  * скругления (frameNotchRadius/personPanelNotchRadius), чтобы кольцо точно
  * легло по контуру декоративной дуги, а не прямоугольником поверх неё.
  */
-export default function FramedSquare({ width, height, variant = 'frame', targetCornerSize = 10, glow = false, style, children }) {
+function FramedSquare({ width, height, variant = 'frame', targetCornerSize = 10, glow = false, style, children }) {
     const boxW = width;
     const boxH = height ?? width;
     const size = useMemo(() => ({ width: boxW, height: boxH }), [boxW, boxH]);
@@ -80,3 +80,17 @@ export default function FramedSquare({ width, height, variant = 'frame', targetC
         </View>
     );
 }
+
+// React.memo — 2026-10-16, живая жалоба пользователя (рывки в пульсации
+// кольца выбора/прицела на Android, "с каждым днём всё сложнее") — та же
+// причина и тот же приём, что уже применялся к PersonPanel/FramePanel
+// 2026-09-19 ("тормозит при перетаскивании кубика"): этот компонент
+// используется 8 раз в низу экрана (Раунд/Ход/Бонус/настройки/лог/имя/
+// навигация), рендерится напрямую (не через стабильную ссылку) внутри
+// гигантского GameBoardScreen — БЕЗ memo он честно пересобирает себя
+// (включая `frameNotchRadius`/`personPanelNotchRadius`, пересоздание
+// `NeonGlow`) на КАЖДЫЙ ре-рендер родителя, которых во время партии много
+// (каждое событие/шаг анимации). `size` внутри уже стабилен (useMemo от
+// чисел width/height) — memo корректно "срезает" повторный проход там, где
+// width/height/variant/glow/targetCornerSize реально не поменялись.
+export default React.memo(FramedSquare);

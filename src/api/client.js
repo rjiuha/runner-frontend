@@ -1,6 +1,6 @@
 // src/api/client.js
 import { API_URL, REQUEST_TIMEOUT } from '../config/env';
-import { storage, KEYS } from '../lib/storage';
+import { secureStorage, TOKEN_KEYS } from '../lib/secureStorage';
 import { ApiError } from './ApiError';
 import { createLogger } from '../lib/logger';
 
@@ -38,23 +38,23 @@ export function setOnAuthLost(cb) {
 }
 
 export async function loadTokens() {
-    accessToken = await storage.get(KEYS.access);
-    refreshToken = await storage.get(KEYS.refresh);
+    accessToken = await secureStorage.get(TOKEN_KEYS.access);
+    refreshToken = await secureStorage.get(TOKEN_KEYS.refresh);
     return { accessToken, refreshToken };
 }
 
 export async function setTokens({ token, refresh_token }) {
     accessToken = token;
     refreshToken = refresh_token;
-    await storage.set(KEYS.access, token);
-    if (refresh_token) await storage.set(KEYS.refresh, refresh_token);
+    await secureStorage.set(TOKEN_KEYS.access, token);
+    if (refresh_token) await secureStorage.set(TOKEN_KEYS.refresh, refresh_token);
 }
 
 export async function clearTokens() {
     accessToken = null;
     refreshToken = null;
     refreshPromise = null;
-    await storage.multiRemove([KEYS.access, KEYS.refresh]);
+    await secureStorage.multiRemove([TOKEN_KEYS.access, TOKEN_KEYS.refresh]);
 }
 
 export function getAccessToken() {
@@ -103,6 +103,12 @@ function doRefresh() {
     refreshPromise = (async () => {
         if (!refreshToken) {
             log('token/refresh: НЕТ refresh_token');
+            // 2026-10-16: симметрично ветке REFRESH_FAILED ниже — на практике
+            // недостижимо напрямую (request() зовёт doRefresh только когда
+            // refreshToken уже truthy), но если когда-нибудь станет достижимо
+            // (другой вызывающий код), состояние должно чиститься так же.
+            await clearTokens();
+            onAuthLost?.();
             throw new ApiError(401, 'NO_REFRESH', 'Нужен вход');
         }
 

@@ -295,6 +295,29 @@ export function useRunnerAnimations() {
         if (key != null) scheduledSeqsRef.current.add(key);
     }, []);
 
+    // 2026-10-16, живое репро (Мяч на danger-клетке) — см. GameBoardScreen.js
+    // #reduceAndLog, вызывается СРАЗУ, СИНХРОННО, при виде `runner_ball` в
+    // bundle.sequence, ДО онеSeqDone-гейта. Нужна отдельно от trigger(): для
+    // бегуна, который только что в ЭТОМ ЖЕ бандле родился (runner_ball) и в
+    // этом же бандле ещё и получит финальную позицию (runner_save после
+    // коллизии), game-стейт фолдится СИНХРОННО и БЕЗУСЛОВНО целиком до конца
+    // бандла — значит к моменту ПЕРВОГО рендера его токена game.runners уже
+    // содержит ФИНАЛЬНУЮ (после отброса) позицию, а не позицию спавна. Сам
+    // `trigger('start', ...)` для этого бегуна при этом ОТЛОЖЕН (ждёт своей
+    // очереди в причинной цепочке, см. Вариант A выше) и физически не может
+    // сработать раньше этого самого первого рендера. Без сидирования
+    // BoardGrid#effectiveRunners (нет записи в visualPositions ⇒ берёт
+    // "реальную", уже полностью просчитанную позицию) монтирует токен сразу
+    // в конечной точке — а когда отложенный trigger() всё же срабатывает,
+    // бегуна дёргает на клетку спавна и обратно (два лишних "заезда"). Эта
+    // функция сидирует ТОЛЬКО геометрию (не позу/анимацию — та по-прежнему
+    // идёт через trigger() в штатном порядке), и ТОЛЬКО если для ключа ещё
+    // ничего нет — не перезаписывает ничего, что уже успело появиться.
+    const seedVisualPosition = useCallback((runnerId, toPosition) => {
+        if (runnerId == null || !toPosition) return;
+        setVisualPositions((prev) => (runnerId in prev ? prev : { ...prev, [runnerId]: toPosition }));
+    }, []);
+
     // Шаг очереди (с привязанным key) реально закончился — досчитываем
     // счётчик этого key до нуля и тогда settled. Один key может породить
     // НЕСКОЛЬКО шагов очереди (например один элемент бандла двигает сразу
@@ -350,6 +373,24 @@ export function useRunnerAnimations() {
         });
         setHiddenIds((prev) => (prev.has(runnerId) ? prev : new Set(prev).add(runnerId)));
     }, [fireStepWaiters, settleStepSeq]);
+
+    // 2026-10-16 — страховка (см. GameBoardScreen.js, эффект реконсиляции
+    // hiddenIds/game.runners): живая жалоба — Атлет пропал со доски И с
+    // панели после одного урона+аномалии на мине, хотя это ЧИСТО локальный
+    // `hiddenIds` этого клиента (на другом клиенте того же бегуна видно, игра
+    // не считает его уничтоженным) — точный механизм рассинхрона НЕ найден
+    // (нужен android-лог, см. CLAUDE.md), чинится не причина, а инвариант:
+    // hiddenIds не должен держать бегуна, чей РЕАЛЬНЫЙ статус не 'destroyed'.
+    // Чисто аддитивная функция — ничего в существующих finishTerminal/
+    // advanceQueue/completeStep не меняет.
+    const unhide = useCallback((runnerId) => {
+        setHiddenIds((prev) => {
+            if (!prev.has(runnerId)) return prev;
+            const next = new Set(prev);
+            next.delete(runnerId);
+            return next;
+        });
+    }, []);
 
     // Одна самозацикленная функция вместо пары play()/advance(), вызывающих
     // друг друга — избегает циклической зависимости между двумя useCallback.
@@ -691,6 +732,6 @@ export function useRunnerAnimations() {
 
     return {
         anims, visualPositions, hiddenIds, trigger, completeStep, onceStepDone, completeWaitStep, reset,
-        markSeqScheduled, settleSeqIfIdle, onceSeqDone,
+        markSeqScheduled, settleSeqIfIdle, onceSeqDone, seedVisualPosition, unhide,
     };
 }

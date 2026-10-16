@@ -12,6 +12,7 @@ import { useMercure } from '../hooks/useMercure';
 import { useAudioSettings } from '../hooks/useAudioSettings';
 import { SWITCH_ON_SOUND, SWITCH_OFF_SOUND } from '../constants/uiSounds';
 import { lobbyReducer } from '../store/lobbyReducer';
+import { unwrapBundle } from '../lib/mercureBundle';
 import { ROUTES } from '../navigation/routes';
 import { notify } from '../lib/notify';
 import { colors, spacing, font, radius } from '../theme';
@@ -55,15 +56,14 @@ export default function LobbyScreen({ route, navigation }) {
     // рисует боевые анимации).
     const reduce = useCallback((state, bundle) => {
         let current = state;
-        for (const item of bundle.sequence ?? [bundle]) {
-            current = lobbyReducer(current, { ...item, event: item.type ?? item.event });
+        for (const e of unwrapBundle(bundle)) {
+            current = lobbyReducer(current, e);
         }
         return current;
     }, []);
 
     const onTransient = useCallback((bundle) => {
-        for (const item of bundle.sequence ?? [bundle]) {
-            const e = { ...item, event: item.type ?? item.event };
+        for (const e of unwrapBundle(bundle)) {
             if (e.event === 'lobby_closed' && !leftRef.current) {
                 notify('Лобби закрыто');
                 goMenu();

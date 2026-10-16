@@ -1,12 +1,13 @@
 // src/components/game/GameDialogModal.js
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Animated, Text, TouchableOpacity, View, StyleSheet } from 'react-native';
+import { Animated, Platform, Text, TouchableOpacity, View, StyleSheet } from 'react-native';
 import Button from '../ui/Button';
 import PulseHighlight from '../ui/PulseHighlight';
 import { colors, spacing, radius, font } from '../../theme';
 import { DIALOG_ORIENTATION } from '../../lib/dialogSettings';
 import { useDialogOrientation } from '../../hooks/useDialogOrientation';
 import { ROAD_AREA_SPACING } from '../../hooks/useBoardLayout';
+import { TURN_BANNER_MIN_HEIGHT } from '../../constants/GameConstants';
 
 /**
  * 2026-10-12, по прямому запросу пользователя — "вытащить вообще все
@@ -48,6 +49,38 @@ import { ROAD_AREA_SPACING } from '../../hooks/useBoardLayout';
  * своей отдельной заливки — сидит прямо на персистентном фоне `cardOuter`,
  * не нужно отдельно скрывать/показывать.
  *
+ * **Закрытие безкнопочных уведомлений — РЯД ОТКАЧЕННЫХ ПОПЫТОК 2026-10-15,
+ * финал: без изменений поведения.** Перебрано за один заход, по прямому
+ * запросу пользователя каждый раз: (1) замена глифа ручки на ✕ для
+ * безкнопочных диалогов, тап полностью скрывает карточку — откачено,
+ * "не надо было менять ручку-стрелку на крестик"; (2) отдельная квадратная
+ * ✕-кнопка в ряду кнопок "по аналогии с диалогами, где есть выбор" —
+ * откачено, пользователь передумал; (3) глиф-стрелка остаётся, но тап по ней
+ * у безкнопочных диалогов полностью скрывает карточку — живая проверка
+ * показала, что это тоже не то, что ожидалось ("ты чё, блин"). **Финал —
+ * ручка у ВСЕХ диалогов (кнопочных и безкнопочных) делает ОДНО и то же —
+ * сворачивает/разворачивает** (`toggleCollapse`, как было до самого первого
+ * из этих трёх заходов) — у безкнопочных эта возможность и так уже была
+ * (см. следующий абзац), никакого отдельного "закрытия" не существует.
+ * Этим же заходом (2026-10-15) `dialogState` (GameBoardScreen.js) стал
+ * ПОЛНЫМ зеркалом `turnBannerInner`, включая простые безкнопочные подсказки
+ * шага ("Твой ход"+текст) и "Ход игрока: X" — раньше они сюда сознательно не
+ * попадали. Инлайн-дубль в `turnBanner` (зона 11 панели) убран ТОЛЬКО для
+ * `useMobileNavButtons` (портрет+native) — на вебе/landscape `turnBannerInner`
+ * остаётся видимым параллельно с этой модалкой (которая и так рендерится на
+ * ВСЕХ платформах/раскладках, не только mobileNav).
+ *
+ * **Жёстко зафиксированный размер (2026-10-15, по прямому запросу
+ * пользователя — "прям как панель 11")** — высота `cardOuter` (см. styles
+ * ниже) больше не auto-height от контента, а константа
+ * `TURN_BANNER_MIN_HEIGHT` (`constants/GameConstants.js`) — ТА ЖЕ, что
+ * держит зону 11 (`styles.turnBanner`, GameBoardScreen.js), вынесена в общий
+ * файл специально, чтобы оба места менялись синхронно. Длинный текст (2+
+ * строки, например развёрнутый результат коллизии) теперь ОБРЕЗАЕТСЯ
+ * (`overflow:'hidden'` на `cardOuter`, уже был — раньше только для анимации
+ * ширины, теперь работает и по высоте), а не раздувает карточку — тот же
+ * компромисс, что уже принят для зоны 11.
+ *
  * `kind` на `dialogState` (GameBoardScreen.js#dialogState) — стабильный
  * идентификатор ветки/состояния диалога, НЕ сам объект (тот создаётся заново
  * каждый рендер, IIFE без memo) — только по нему понятно, ЭТО ТОТ ЖЕ диалог
@@ -82,6 +115,13 @@ const SLIDE_MS = 220;
 export default function GameDialogModal({ dialogState, width, height, bottomInset }) {
     const orientation = useDialogOrientation();
     const isLeft = orientation !== DIALOG_ORIENTATION.RIGHT;
+    // 2026-10-17, по прямому запросу пользователя, ТОЛЬКО для веба: модалка
+    // прибита к ВЕРХНЕМУ краю дороги (не к нижнему, как везде остальное, см.
+    // wrapper/wrapperBottom ниже), и кнопки стоят ПЕРЕД текстом (слева), а не
+    // после (справа). Native (Android) это не трогает — там якорь/порядок
+    // остаются как были (низ + кнопки справа).
+    const isTop = Platform.OS === 'web';
+    const buttonsOnLeft = Platform.OS === 'web';
 
     const fullWidth = width != null ? Math.max(COLLAPSED_WIDTH, width - spacing.lg * 2) : COLLAPSED_WIDTH;
 
@@ -177,7 +217,8 @@ export default function GameDialogModal({ dialogState, width, height, bottomInse
         <View
             style={[
                 styles.wrapper,
-                { width, height, paddingBottom: resolvedBottomInset },
+                isTop ? styles.wrapperTop : [styles.wrapperBottom, { paddingBottom: resolvedBottomInset }],
+                { width, height },
                 isLeft ? styles.wrapperLeft : styles.wrapperRight,
             ]}
             pointerEvents="box-none"
@@ -213,15 +254,33 @@ export default function GameDialogModal({ dialogState, width, height, bottomInse
                         по прямому запросу пользователя — "как в панельке
                         Твой ход", см. turnBannerInner/turnHintRow в
                         GameBoardScreen.js, тот же приём скопирован сюда, не
-                        переизобретён). Было — текст сверху по центру, кнопки
-                        отдельным рядом ниже. Текст — flex:1 (забирает всю
-                        ширину, оставшуюся ПОСЛЕ кнопок, те не сжимаются), по
-                        центру ТОЛЬКО если кнопок нет (безкнопочные
-                        уведомления вроде "Трасса смещается…" — там нет
-                        соседа справа, от выключки слева было бы криво). */}
+                        переизобретён). Текст — flex:1 (забирает всю ширину,
+                        оставшуюся ПОСЛЕ кнопок, те не сжимаются), по центру
+                        ТОЛЬКО если кнопок нет (безкнопочные уведомления вроде
+                        "Трасса смещается…" — там нет соседа справа, от
+                        выключки слева было бы криво). */}
                     <View style={isLeft ? styles.chromeInsetLeft : styles.chromeInsetRight}>
+                        {/* buttonsOnLeft (веб-only, см. её докстринг выше) —
+                            тот же buttonsNode рендерится ДО текста вместо
+                            после, margin переезжает на противоположную
+                            сторону (buttonRowLeft), чтобы зазор остался
+                            МЕЖДУ кнопками и текстом, а не на внешнем крае. */}
+                        {buttonsOnLeft && hasButtons && (
+                            <View style={[styles.buttonRow, styles.buttonRowLeft]}>
+                                {buttons.map((b) => (
+                                    <Button
+                                        key={b.key}
+                                        title={b.title}
+                                        variant={b.variant}
+                                        onPress={b.onPress}
+                                        style={styles.button}
+                                        textStyle={styles.buttonText}
+                                    />
+                                ))}
+                            </View>
+                        )}
                         <Text style={[styles.text, !hasButtons && styles.textCenter]} noGlobalTint>{text}</Text>
-                        {hasButtons && (
+                        {!buttonsOnLeft && hasButtons && (
                             <View style={styles.buttonRow}>
                                 {buttons.map((b) => (
                                     <Button
@@ -288,24 +347,24 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 0,
         left: 0,
-        // flex-end (2026-10-15, по прямому запросу пользователя — "с
-        // верхней части дороги на нижнюю") — wrapper сам ПО-ПРЕЖНЕМУ
-        // растягивается на ВСЮ высоту дороги (width/height пропы ниже), это
-        // justifyContent (главная ось — вертикальная, flexDirection по
-        // умолчанию 'column') решает, что карточка прижимается к НИЖНЕМУ
-        // краю этой области, а не к верхнему.
-        justifyContent: 'flex-end',
         paddingTop: spacing.lg,
         paddingLeft: spacing.lg,
         paddingRight: spacing.lg,
-        // paddingBottom — НЕ здесь, см. `bottomInset`-проп и его применение
-        // в месте рендера ниже: нижний инсет зависит от раскладки (своя
+        // paddingBottom — НЕ здесь, см. wrapperBottom/`bottomInset`-проп и их
+        // применение в месте рендера: нижний инсет зависит от раскладки (своя
         // декоративная кайма дороги есть только у mobileNav), статика тут не
         // подходит. Попытка №1 (zIndex:12, рисовать МОДАЛКУ ПОВЕРХ рамки) —
         // ОТКЛОНЕНА пользователем по прямому ответу: "рисовать надо не
         // поверх рамки, надо рисовать ВЫШЕ границы рамки, чтобы нахлёста не
         // было" — убрана целиком, см. git-историю.
     },
+    // Якорь по вертикали (2026-10-17) — РАЗДЕЛЁН на два стиля, раньше был
+    // один жёсткий `justifyContent:'flex-end'` в wrapper (см. git-историю,
+    // 2026-10-15 — "с верхней части дороги на нижнюю"). По прямому запросу
+    // пользователя веб вернулся к верхнему краю (см. isTop выше), native
+    // (Android) остался как было — на нижнем, с тем же bottomInset.
+    wrapperTop: { justifyContent: 'flex-start' },
+    wrapperBottom: { justifyContent: 'flex-end' },
     // Ориентация (2026-10-15) — карточка хугается к той же грани, к которой
     // прибита ручка (см. docstring). alignItems на wrapper — единственное,
     // что меняется между 'left'/'right', сама карточка/ручка внутри всегда
@@ -321,6 +380,17 @@ const styles = StyleSheet.create({
     cardOuter: {
         position: 'relative',
         overflow: 'hidden',
+        // height, НЕ auto (2026-10-15, по прямому запросу пользователя —
+        // "модалка 5 жёстко зафиксирована прям как панель 11") — ТА ЖЕ
+        // константа, что и у зоны 11 (styles.turnBanner, GameBoardScreen.js),
+        // вынесена в constants/GameConstants.js специально, чтобы не
+        // завести два магических числа одного смысла. justifyContent:
+        // 'center' — короткий текст (без выбора) центрируется по высоте;
+        // длинный (2+ строки, например результат коллизии) обрезается
+        // overflow:hidden СВЕРХУ И СНИЗУ поровну, не раздувая карточку —
+        // тот же компромисс, что уже принят для зоны 11.
+        height: TURN_BANNER_MIN_HEIGHT,
+        justifyContent: 'center',
         // Фон/рамка — ПОСТОЯННЫЕ, не анимируются и не гаснут (см. docstring
         // у JSX выше) — свёрнутое состояние выглядит как узкая полоска В ТОМ
         // ЖЕ стиле модалки, не прозрачная пустота.
@@ -346,11 +416,20 @@ const styles = StyleSheet.create({
     content: {},
     // Внутренний отступ со стороны ручки (COLLAPSED_WIDTH) — чтобы текст/
     // кнопки не заезжали под неё, пока развёрнуто; с противоположной стороны
-    // — обычный padding. flexDirection:'row' (2026-10-15, по прямому запросу
-    // пользователя — "текст слева, кнопки справа, как в панельке Твой ход")
-    // — было column (текст сверху по центру, кнопки рядом ниже).
-    chromeInsetLeft: { padding: spacing.lg, paddingLeft: spacing.lg + COLLAPSED_WIDTH, flexDirection: 'row', alignItems: 'center' },
-    chromeInsetRight: { padding: spacing.lg, paddingRight: spacing.lg + COLLAPSED_WIDTH, flexDirection: 'row', alignItems: 'center' },
+    // — обычный горизонтальный паддинг. flexDirection:'row' (2026-10-15, по
+    // прямому запросу пользователя — "текст слева, кнопки справа, как в
+    // панельке Твой ход") — было column (текст сверху по центру, кнопки
+    // рядом ниже).
+    // paddingVertical: spacing.xs, НЕ spacing.lg (2026-10-15, живая жалоба
+    // пользователя — "текст не помещается, вторая строка обрезается") —
+    // после фикса высоты cardOuter на константу (TURN_BANNER_MIN_HEIGHT,
+    // 64/78px) старый вертикальный паддинг в spacing.lg (20+20=40px) съедал
+    // БОЛЬШЕ ПОЛОВИНЫ бокса, оставляя контенту всего ~24px на native — туда
+    // не помещалась даже ОДНА кнопка (minHeight:40 у styles.button), не то
+    // что текст в 2 строки. Горизонтальный паддинг (spacing.lg/COLLAPSED_WIDTH)
+    // не трогали — он не конкурирует с высотой.
+    chromeInsetLeft: { paddingVertical: spacing.xs, paddingRight: spacing.lg, paddingLeft: spacing.lg + COLLAPSED_WIDTH, flexDirection: 'row', alignItems: 'center' },
+    chromeInsetRight: { paddingVertical: spacing.xs, paddingLeft: spacing.lg, paddingRight: spacing.lg + COLLAPSED_WIDTH, flexDirection: 'row', alignItems: 'center' },
     // flex:1 — текст забирает всю ширину строки, ОСТАВШУЮСЯ после кнопок
     // (те не сжимаются, см. buttonRow/button ниже) — тот же приём, что у
     // turnHintFlex в GameBoardScreen.js. textCenter — ТОЛЬКО для безкнопочных
@@ -380,21 +459,28 @@ const styles = StyleSheet.create({
         gap: spacing.xs,
         marginLeft: spacing.sm,
     },
+    // 2026-10-17, веб-only (buttonsOnLeft) — кнопки рендерятся ДО текста,
+    // значит зазор нужен с ПРОТИВОПОЛОЖНОЙ стороны (между кнопками и
+    // текстом, который теперь справа), а не marginLeft от buttonRow выше
+    // (тот создавал бы зазор со стороны ручки, а не со стороны текста).
+    buttonRowLeft: { marginLeft: 0, marginRight: spacing.sm },
     button: { minHeight: 40, minWidth: 40, paddingVertical: spacing.xs, paddingHorizontal: spacing.sm },
     buttonText: { fontSize: font.tiny, fontWeight: '600' },
     // Ручка — БЕЗ своей отдельной заливки (видна и развёрнутой, и свёрнутой
     // — в обоих случаях сидит на персистентном фоне cardOuter, см. выше, не
     // прозрачная дыра в доску). top:0+bottom:0 тянет её на всю высоту
-    // cardOuter (та сама по себе auto-height от содержимого content — см.
-    // docstring про absolute+stretch внутри родителя с natural height).
-    // Попытка заменить это на явную измеренную высоту (onLayout/
-    // contentHeight-state) предпринималась 2026-10-15, но откачена тем же
-    // заходом вместе с выносом рамки (см. cardOuter выше) — живая проверка
-    // показала исчезновение всего контента модалки, первопричина не
-    // установлена. Известный побочный эффект текущей (stretch) версии —
-    // мигающая область (PulseHighlight) на 2px меньше истинного контура
-    // карточки (border сдвигает containing-block) — не блокирует
-    // функциональность, отложено.
+    // cardOuter — та теперь ЖЁСТКАЯ (TURN_BANNER_MIN_HEIGHT, см. cardOuter
+    // выше, 2026-10-15), раньше была auto-height от содержимого. Более
+    // ранняя попытка (тот же день) заменить stretch на явную измеренную
+    // высоту через onLayout/contentHeight-state — откачена, живая проверка
+    // показала исчезновение всего контента модалки (та попытка совпала с
+    // выносом рамки в отдельный слой, см. cardOuter выше) — ЭТА правка
+    // (просто статичная константа в height, без onLayout и без выноса
+    // рамки) технически другая и ожидаемо безопаснее, но саму попытку
+    // (другого рода) в прошлый раз уже один раз откатывали — проверить
+    // живьём первым делом. Известный побочный эффект — мигающая область
+    // (PulseHighlight) на 2px меньше истинного контура карточки (border
+    // сдвигает containing-block) — не блокирует функциональность, отложено.
     handle: {
         position: 'absolute',
         top: 0,

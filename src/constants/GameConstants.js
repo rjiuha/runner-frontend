@@ -653,6 +653,22 @@ export const PLAYER_COLOR_HEX = {
   purple: PLAYER_PURPLE,
 };
 
+/**
+ * 2026-10-16 — чисто фронтовый enum (бэк о нём не знает), что сейчас значит
+ * тап по клетке доски (GameBoardScreen.js#highlightedCells/handleCellPress,
+ * BoardGrid.js#highlightMode/CellHighlight.js#kind). Раньше были голые
+ * строковые литералы — опечатка в одном из 5 значений молча отключила бы
+ * ветку (проект на JS, статика такое не поймает), как весь остальной игровой
+ * стейт теперь заведён через именованный enum.
+ */
+export const TAP_MODE = {
+  START: 'start',
+  MOVE: 'move',
+  SHOOT: 'shoot',
+  REAPER_SHOOT: 'reaperShoot',
+  REAPER: 'reaper',
+};
+
 /** Статус партии — зеркалит GameStatus (бэк, Service/Game/Enum/GameStatus.php) */
 export const GAME_STATUS = {
   WAITING: 'waiting',
@@ -725,3 +741,16 @@ export const LAYOUT = {
   PANEL_MAX_H: 375,
   PANEL_HEIGHT_RATIO: 0.4,
 };
+
+// Высота баннера "Твой ход"/коллизия/сдвиг трассы — ЗАФИКСИРОВАНА (не
+// auto-height), чтобы плитка не "прыгала" по высоте между разными
+// состояниями (см. GameBoardScreen.js#turnBanner — history, 2026-09-26).
+// Меньше на native — там баннер встроен в PlayerInfoPanel с ФИКСИРОВАННЫМ
+// общим бюджетом высоты (panelH), а не растягивается вместе с экраном, как
+// на вебе (панель веба высотой во весь столбец) — полные 78 сдвигали бы
+// плитку кубиков/усилений за пределы видимой области.
+// Вынесена сюда из GameBoardScreen.js (2026-10-15, по прямому запросу
+// пользователя — "модалка 5 жёстко зафиксирована прям как панель 11"), чтобы
+// GameDialogModal.js мог взять РОВНО то же число, не плодя второй магический
+// размер того же смысла.
+export const TURN_BANNER_MIN_HEIGHT = Platform.OS === 'web' ? 78 : 64;

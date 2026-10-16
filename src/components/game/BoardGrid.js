@@ -3,13 +3,15 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Animated, Image, Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import {
     BOARD_LAYOUT, CELL_OPACITY, FRAGMENT_COLORS, MINE_BLAST_IMAGES, MINE_BLAST_OFFSET,
-    MINE_BLAST_SCALE, RUNNER_STATUS, RUNNER_TYPES,
+    MINE_BLAST_SCALE, RUNNER_STATUS, RUNNER_TYPES, TAP_MODE,
 } from '../../constants/GameConstants';
 import { indexRunnersByCell, BASE_IMAGE_TYPE } from '../../lib/board';
 import { ghostPairKey } from '../../lib/ghostPairs';
 import { createLogger } from '../../lib/logger';
 import RunnerToken from './RunnerToken';
 import CellHighlight from './CellHighlight';
+import SpritePackAnimation from '../ui/SpritePackAnimation';
+import { RICOCHET_NATIVE_FRAME, RICOCHET_WEB_SOURCE, RICOCHET_BASE_DURATION_MS, RICOCHET_PER_CELL_DURATION_MS } from '../../constants/ricochetVfx';
 
 // ВРЕМЕННО — диагностика "телепорт" (см. RunnerTokenSlide.js#SLIDEDBG), убрать после.
 const dbgLog = createLogger('WINDBG');
@@ -79,7 +81,64 @@ const FRAGMENT_BOUNDARY_LINE_PX = 3;
 // коллизия длилась поменьше") — см. подробный разбор у tokenOverlay ниже.
 const COLLISION_MIN_HOLD_MS = 600;
 
-export default function BoardGrid({
+// Размер пули рикошета — доля от стороны клетки (ПОМЕНЬШЕ токена бегуна,
+// см. tokenSize ниже, это снаряд, а не персонаж).
+const RICOCHET_BULLET_SCALE = 0.4;
+
+/**
+ * 2026-10-17, по прямому запросу пользователя — визуальный след пролетающей
+ * пули рикошета (см. hooks/useRicochetTrails.js/constants/ricochetVfx.js за
+ * контрактом/обоснованием тайминга). Один экземпляр — ОДИН полёт, монтируется
+ * вызывающим кодом (ricochetTrailOverlay ниже) на время жизни записи в
+ * useRicochetTrails и сам анимирует свою позицию от `from` до `to` ОДИН раз
+ * при монтировании — не часть очереди useRunnerAnimations.js (та система
+ * специально не тронута, см. обсуждение с пользователем), чисто
+ * самостоятельный оверлей, как mineBlastOverlay выше по файлу.
+ *
+ * Оба ассета (native-полоска/web-gif, см. ricochetVfx.js) нарисованы летящими
+ * строго ВНИЗ экрана (south) — `rotateDeg` поворачивает их под РЕАЛЬНОЕ
+ * направление полёта (угол между from/to в пиксельных координатах,
+ * посчитанный вызывающим кодом).
+ */
+function RicochetBullet({ from, to, durationMs, rotateDeg, size }) {
+    const progress = useRef(new Animated.Value(0)).current;
+    useEffect(() => {
+        progress.setValue(0);
+        Animated.timing(progress, {
+            toValue: 1,
+            duration: durationMs,
+            useNativeDriver: true,
+        }).start();
+        // from/to/durationMs неизменны на всё время жизни ОДНОГО экземпляра
+        // (новый полёт — это новый `key`/новый экземпляр, не обновление
+        // пропов существующего) — но exhaustive-deps всё равно требует их
+        // перечислить.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const translateX = progress.interpolate({ inputRange: [0, 1], outputRange: [from.x, to.x] });
+    const translateY = progress.interpolate({ inputRange: [0, 1], outputRange: [from.y, to.y] });
+    return (
+        <Animated.View
+            pointerEvents="none"
+            style={{
+                position: 'absolute',
+                width: size,
+                height: size,
+                marginLeft: -size / 2,
+                marginTop: -size / 2,
+                transform: [{ translateX }, { translateY }, { rotate: `${rotateDeg}deg` }],
+            }}
+        >
+            {Platform.OS === 'web' ? (
+                <Image source={RICOCHET_WEB_SOURCE} resizeMode="contain" style={{ width: size, height: size }} />
+            ) : (
+                <SpritePackAnimation frame={RICOCHET_NATIVE_FRAME} boxSize={size} loop frameDurationMs={70} />
+            )}
+        </Animated.View>
+    );
+}
+
+function BoardGrid({
     gridData,
     rows,
     cols,
@@ -92,6 +151,13 @@ export default function BoardGrid({
     runners = [],
     playerColorById = {},
     selectedRunnerId = null,
+    // 2026-10-16, по прямому запросу пользователя — такое же кольцо под
+    // активным бегуном ОППОНЕНТА (не только своим), см. GameBoardScreen.js
+    // #opponentActiveRunner за тем, когда оно заполняется (только во время
+    // чужого хода). Рендер — тем же пропом `selected` у RunnerToken, просто
+    // матчится по ЛЮБОМУ из двух id (см. место рендера ниже) — у них не
+    // бывает совпадений (разные бегуны), конфликта нет.
+    opponentSelectedRunnerId = null,
     highlightedCells = null,
     highlightMode = null,
     runnerAnims = null,
@@ -100,6 +166,7 @@ export default function BoardGrid({
     hiddenRunnerIds = null,
     ghostPairs = null,
     mineBlasts = null,
+    ricochetTrails = null,
     onCollisionPoseStart = null,
     onCollisionPoseEnd = null,
     // Настоящий сигнал "действие для этого бегуна реально закончилось на
@@ -125,7 +192,7 @@ export default function BoardGrid({
     // раз на весь рендер, не внутри .map() по клеткам. 'shoot'/'reaperShoot'
     // — прицел, всё остальное ('move'/'start'/'reaper' — любое "тапни сюда,
     // чтобы переместиться/встать") — точка.
-    const cellHighlightKind = highlightMode === 'shoot' || highlightMode === 'reaperShoot' ? 'shoot' : 'move';
+    const cellHighlightKind = highlightMode === TAP_MODE.SHOOT || highlightMode === TAP_MODE.REAPER_SHOOT ? 'shoot' : 'move';
     // Пока у бегуна играет очередь анимаций (см. hooks/useRunnerAnimations),
     // доска рисует его в позиции ТЕКУЩЕГО шага очереди, а не в реальной
     // (game-стейт уже применил её целиком) — иначе промежуточные "остановки"
@@ -205,6 +272,17 @@ export default function BoardGrid({
     const visibleCells = useMemo(
         () => gridData.filter((cell) => cell.col >= windowStart && cell.col < windowEnd),
         [gridData, windowStart, windowEnd],
+    );
+
+    // 2026-10-16 — та же причина, что у visibleCells выше: раньше filter+sort
+    // по каждой из `rows` дорожек пересчитывались прямо в JSX на каждый
+    // рендер (BoardGrid ре-рендерится на каждое применённое Mercure-событие),
+    // хотя соседние тяжёлые коллекции этого файла (tokenOverlay,
+    // mineBlastOverlay и т.п.) уже мемоизированы.
+    const cellsByLane = useMemo(
+        () => Array.from({ length: rows }, (_, laneIdx) =>
+            visibleCells.filter((cell) => cell.row === laneIdx).sort((a, b) => a.col - b.col)),
+        [visibleCells, rows],
     );
 
     // Ключ карты — "segment|row|localCol" (см. lib/board#indexRunnersByCell —
@@ -760,6 +838,60 @@ export default function BoardGrid({
         return items;
     }, [mineBlasts, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
 
+    // 2026-10-17, по прямому запросу пользователя — визуальный след
+    // пролетающей пули рикошета (см. hooks/useRicochetTrails.js/
+    // constants/ricochetVfx.js за контрактом/обоснованием тайминга). Тот же
+    // приём позиционирования, что у mineBlastOverlay выше (своя копия
+    // формулы, не общая функция — так уже принято в этом файле для
+    // независимых оверлеев), но ЦЕНТР клетки (не якорь по низу) — пуля летит
+    // между центрами клеток `from`/`to`. positionY клэмпится в пределах одной
+    // дорожки за край (та же защита, что у вылета бегуна за боковой край,
+    // см. clampOffTrackLane выше в cellPixelPos) — `to` рикошета-промаха
+    // может указывать на клетку ЗА пределами реальных 6 дорожек (боковой
+    // EDGE). Если `from` ИЛИ `to` вне текущего видимого окна колонок —
+    // запись молча пропускается (тот же компромисс, что у mineBlastOverlay
+    // чуть выше для мин вне окна) — не пытаемся рисовать то, что физически
+    // не на экране. Длительность полёта — база + надбавка за пиксельную
+    // дистанцию (по прямому запросу пользователя, "0.3с + 0.1с за клетку
+    // дистанции"), угол поворота — реальный угол между from/to в пиксельных
+    // координатах (оба ассета нарисованы летящими строго вниз экрана, см.
+    // их докстринг в ricochetVfx.js/RicochetBullet выше).
+    const ricochetTrailOverlay = useMemo(() => {
+        if (!ricochetTrails || ricochetTrails.length === 0) return [];
+        const clampLane = (positionY) => (
+            positionY < 0 ? -1 : positionY > BOARD_LAYOUT.ROWS - 1 ? BOARD_LAYOUT.ROWS : positionY
+        );
+        const centerOf = (cell) => {
+            if (!cell || cell.segment == null || cell.positionX == null) return null;
+            const globalCol = cell.segment * BOARD_LAYOUT.COLS + cell.positionX;
+            if (globalCol < windowStart || globalCol >= windowEnd) return null;
+            const positionY = clampLane(cell.positionY);
+            const localCol = globalCol - windowStart;
+            const x = isPortrait
+                ? positionY * segmentW
+                : localCol * segmentW + (positionY % 2 === 0 ? segmentW / 2 : 0);
+            const y = isPortrait
+                ? (cols - 1 - localCol) * segmentH + (positionY % 2 === 0 ? segmentH / 2 : 0)
+                : positionY * segmentH;
+            return { x: x + segmentW / 2, y: y + segmentH / 2 };
+        };
+        const cellUnit = Math.min(segmentW, segmentH) || 1;
+        const bulletSize = cellUnit * RICOCHET_BULLET_SCALE;
+        const items = [];
+        for (const trail of ricochetTrails) {
+            const from = centerOf(trail.from);
+            const to = centerOf(trail.to);
+            if (!from || !to) continue;
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const distancePx = Math.hypot(dx, dy);
+            const durationMs = RICOCHET_BASE_DURATION_MS + RICOCHET_PER_CELL_DURATION_MS * (distancePx / cellUnit);
+            const rotateDeg = (Math.atan2(dy, dx) * 180) / Math.PI - 90;
+            items.push({ key: trail.id, from, to, durationMs, rotateDeg, size: bulletSize });
+        }
+        return items;
+    }, [ricochetTrails, windowStart, windowEnd, isPortrait, segmentW, segmentH, cols]);
+
     // Подсветка доступной клетки (точка хода/прицел выстрела) — ОТДЕЛЬНЫЙ
     // верхний слой НАД токенами (2026-10-14, по прямому запросу пользователя
     // — сначала для прицела выстрела ("поверх бегунов и других персонажей и
@@ -903,10 +1035,7 @@ export default function BoardGrid({
             ]}
         >
             <View style={isPortrait ? styles.laneRow : undefined}>
-                {Array.from({ length: rows }).map((_, laneIdx) => {
-                    const laneCells = visibleCells
-                        .filter((cell) => cell.row === laneIdx)
-                        .sort((a, b) => a.col - b.col); // возрастание globalCol
+                {cellsByLane.map((laneCells, laneIdx) => {
                     return (
                         <View
                             key={`lane-${laneIdx}`}
@@ -1052,6 +1181,29 @@ export default function BoardGrid({
                     </View>
                 )}
 
+                {ricochetTrailOverlay.length > 0 && (
+                    <View
+                        style={[
+                            styles.ricochetTrailLayer,
+                            isPortrait
+                                ? { width: rows * segmentW, height: cols * segmentH }
+                                : { width: cols * segmentW, height: rows * segmentH },
+                        ]}
+                        pointerEvents="none"
+                    >
+                        {ricochetTrailOverlay.map((item) => (
+                            <RicochetBullet
+                                key={item.key}
+                                from={item.from}
+                                to={item.to}
+                                durationMs={item.durationMs}
+                                rotateDeg={item.rotateDeg}
+                                size={item.size}
+                            />
+                        ))}
+                    </View>
+                )}
+
                 <View
                     style={[
                         styles.tokenOverlayLayer,
@@ -1100,6 +1252,7 @@ export default function BoardGrid({
                             ]}
                         >
                             <RunnerTokenSlide
+                                runnerId={item.runnerId}
                                 x={item.x}
                                 y={item.y}
                                 width={item.boxW}
@@ -1129,7 +1282,7 @@ export default function BoardGrid({
                                     imageScale={item.runner.type === RUNNER_TYPES.SPRINTER ? SPRINTER_ANDROID_IMAGE_SCALE : BOARD_TOKEN_IMAGE_SCALE}
                                     showRing={false}
                                     imageAlign={item.anchorBottom ? 'bottom' : 'center'}
-                                    selected={item.runnerId === selectedRunnerId}
+                                    selected={item.runnerId === selectedRunnerId || item.runnerId === opponentSelectedRunnerId}
                                     // Кольцо выбора (RunnerToken.js#selectRingYOffset) — Скаут на
                                     // Android получает ВНЕШНИЙ сдвиг всего токена вниз на 10%
                                     // высоты сегмента (см. translateY в style ниже, тот самый
@@ -1256,6 +1409,13 @@ export default function BoardGrid({
     );
 }
 
+// 2026-10-16 — React.memo, той же причиной, что у RunnerToken/RunnerCard/
+// PlayerSwitchPanel/NeonGlow в этом же проекте: GameBoardScreen ре-рендерится
+// на каждое применённое Mercure-событие и безусловно рендерит BoardGrid —
+// без этой границы весь JSX-рендер сетки+токенов+подсветок прогонялся бы
+// заново даже когда ни один из пропов BoardGrid реально не менялся.
+export default React.memo(BoardGrid);
+
 const styles = StyleSheet.create({
     // БЕЗ overflow:'hidden' (было раньше) — единственное место во всей цепочке
     // рендера токена (RunnerTokenSlide/tokenLayer/RunnerToken#ring нигде своего
@@ -1303,6 +1463,10 @@ const styles = StyleSheet.create({
     // только порядок в JSX (тот же класс Android-специфичных багов с
     // порядком отрисовки, что и у остальных абсолютных слоёв этого файла).
     mineBlastLayer: { position: 'absolute', top: 0, left: 0, zIndex: 3, elevation: 3 },
+    // Слой следа пули рикошета — НАД токенами (zIndex выше tokenOverlayLayer=4),
+    // чтобы пуля визуально летела ПОВЕРХ бегунов, но НИЖЕ подсветки легальных
+    // клеток (cellHighlightLayer=6) и Жнеца (tokenOnTop=10, см. их styles).
+    ricochetTrailLayer: { position: 'absolute', top: 0, left: 0, zIndex: 5, elevation: 5 },
     // Слой линии-стыка фрагментов (см. fragmentBoundarySegments) — ПОД
     // токенами (zIndex ниже tokenOverlayLayer), та же защита от Android
     // view-flattening (см. CLAUDE.md, пятый заход), что и у остальных

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Animated, Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import ReanimatedAnimated, { useSharedValue, useAnimatedStyle } from 'react-native-reanimated';
 import PlayerSwitcher from './PlayerSwitcher';
+import PlayerSwitchPanel from './PlayerSwitchPanel';
 import DiceTray from './DiceTray';
 import DicePips from './DicePips';
 import AbilityZones from './AbilityZones';
@@ -95,7 +96,7 @@ const REAPER_ROW_SIZE_LANDSCAPE = 80;
  * (onDropOnAbility/onDropOnRunner/onRunnerCardPress/onPressAbilityZone) —
  * вызывать бэк или нет решает GameBoardScreen.
  */
-export default function PlayerInfoPanel({
+function PlayerInfoPanel({
     players,
     activePlayerId,
     onSelectPlayer,
@@ -159,6 +160,23 @@ export default function PlayerInfoPanel({
     // ошибка уже была — живая жалоба "фон панели навигации налезает на
     // панель с ходом", см. историю этого захода в CLAUDE.md).
     switchRowHeight = 0,
+    // hideReaperNode (2026-10-16) — см. её докстринг у leftColumnContent за
+    // полным разбором: подавляет reaperNode И в compactColumns-теле, И в
+    // обычном (landscape, ScrollView) теле (round/turn/bonus переехали в
+    // headerContent, вызывающая сторона сама рисует их снаружи), не трогая
+    // фон/паддинг панели и switchRowHeight-зазор, в отличие от flatBackground.
+    // Независимый проп — landscape (GameBoardScreen.js) передаёт его БЕЗ
+    // flatBackground (своей внешней заливки-обёртки у неё нет).
+    hideReaperNode = false,
+    // rockerSwitcher (2026-10-16, по прямому запросу пользователя — "для
+    // переключателей между игроками используй подход switch из android") —
+    // переключает ВЕРХНИЙ switcher (см. его объявление ниже) с текстовых
+    // табов PlayerSwitcher.js на тот же rocker-переключатель
+    // (PlayerSwitchPanel.js), что уже используется в seamRow мобильной/
+    // веб-компактной раскладки. Независимый от compactColumns проп —
+    // landscape использует rockerSwitcher=true, но НЕ compactColumns (большие
+    // карточки остаются, см. GameBoardScreen.js).
+    rockerSwitcher = false,
 }) {
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
@@ -672,11 +690,29 @@ export default function PlayerInfoPanel({
     );
     const switcher = (
         <View style={[styles.switcherBox, { height: switcherHeight }]}>
-            <PlayerSwitcher
-                players={players.map((p) => ({ id: p.id, name: p.name, color: p.color }))}
-                activeId={activePlayer.id}
-                onSelect={onSelectPlayer}
-            />
+            {rockerSwitcher ? (
+                // players — уже несёт colorKey (GameBoardScreen.js#players),
+                // передаём как есть, без ремаппинга под PlayerSwitcher ниже.
+                <PlayerSwitchPanel
+                    players={players}
+                    activeId={activePlayer.id}
+                    onSelect={onSelectPlayer}
+                    height={switcherHeight}
+                />
+            ) : (
+                // 2026-10-16: раньше тут был `players.map(p=>({id,name,color}))` —
+                // новый массив+объекты на КАЖДЫЙ рендер PlayerInfoPanel, хотя
+                // `players` (GameBoardScreen.js) уже мемоизирован и несёт id/
+                // name/color (и больше) — PlayerTab читает только эти три поля,
+                // лишние не мешают. Передаём как есть, той же причиной, что и
+                // соседняя ветка rockerSwitcher чуть выше — стабильная ссылка
+                // нужна, чтобы PlayerSwitcher/PlayerTab можно было мемоизировать.
+                <PlayerSwitcher
+                    players={players}
+                    activeId={activePlayer.id}
+                    onSelect={onSelectPlayer}
+                />
+            )}
         </View>
     );
 
@@ -705,8 +741,33 @@ export default function PlayerInfoPanel({
     // ОБОИМ при отображении, `turnsPerRound` в саму подпись не идёт (не
     // "X/3", просто номер) — сырые поля в сторе/пропах не трогаем, +1 только
     // тут, на границе рендера.
+    // 2026-10-16: решение "turnsPerRound в подпись не идёт" ПЕРЕСМОТРЕНО по
+    // прямому запросу пользователя (как раз когда на бэке починили задержку
+    // публикации round) — теперь показываем "N/M", лимит (turnsPerRound) без
+    // +1 (это не индекс, а счётчик "сколько ходов всего в раунде").
     const displayRound = gameRound != null ? gameRound + 1 : null;
-    const turnsLabel = activePlayer.turnsTaken != null ? activePlayer.turnsTaken + 1 : null;
+    // 2026-10-17, реальный баг, живая жалоба пользователя ("4/3" на
+    // последнем ходу раунда) — ИСПРАВЛЕНО: `turnsTaken` раньше ошибочно
+    // считался 0-индексным ("сколько уже начато" минус 1), отсюда +1 здесь.
+    // Перечитал бэк (`StepSelectionService.php:43-56`) — инкремент
+    // `turnsTaken` происходит ДО публикации события, которое его несёт,
+    // значит к моменту, когда фронт видит значение, оно УЖЕ "номер текущего
+    // хода" (1-й ход → 1, 2-й → 2, 3-й/последний → 3) — лишний +1 на
+    // каждом ходу тихо давал на 1 больше ожидаемого, заметно только на
+    // последнем ходу раунда (3+1=4 > turnsPerRound=3). `round` (выше) эта
+    // правка НЕ касается — тот меняется ОДИН раз за весь раунд
+    // (`startNewRound()`), остаётся честно 0-индексным всю его длительность,
+    // там +1 корректен. Отдельно — turnsTaken===0 (краткое окно сразу после
+    // `player_reset`, до первого select нового раунда у ЭТОГО игрока) — по
+    // прямому запросу пользователя показываем ПУСТУЮ строку, не "0/3": это
+    // РЕАЛЬНОЕ значение (не null/отсутствие данных, для того уже есть
+    // отдельный фолбэк на дефис в RoundPanel.js), просто "ходов ещё не
+    // было" — показывать 0/3 выглядело так же криво, как было 4/3.
+    const turnsLabel = activePlayer.turnsTaken == null
+        ? null
+        : activePlayer.turnsTaken === 0
+            ? ''
+            : (turnsPerRound != null ? `${activePlayer.turnsTaken}/${turnsPerRound}` : `${activePlayer.turnsTaken}`);
     const roadBonusPanelSize = cardWidth != null
         ? cardWidth
         : compactColumns
@@ -1143,13 +1204,22 @@ export default function PlayerInfoPanel({
                                 по высоте (RunnerCard.js#cardCompact), низ ряда
                                 бегунов теперь ВСЕГДА ровно у низа columnsH. */}
                             <View style={styles.leftColumnContent}>
-                                {/* flatBackground (2026-10-10) — native-портрет:
-                                    раунд/ход/бонус переехали на рамку дороги
-                                    (GameBoardScreen.js), тут их больше нет —
-                                    runnerRow (flex:1) остаётся единственным
-                                    ребёнком и сам растягивается на всю высоту
-                                    колонки, карточки бегунов крупнее. */}
-                                {!flatBackground && reaperNode}
+                                {/* flatBackground (2026-10-10) — native-портрет/
+                                    веб-компакт: раунд/ход/бонус переехали на
+                                    headerContent снаружи (GameBoardScreen.js),
+                                    тут их больше нет — runnerRow (flex:1)
+                                    остаётся единственным ребёнком и сам
+                                    растягивается на всю высоту колонки,
+                                    карточки бегунов крупнее. hideReaperNode
+                                    (2026-10-16) — ТА ЖЕ подмена, но БЕЗ
+                                    остальных эффектов flatBackground
+                                    (прозрачный фон панели/резерв switchRowHeight
+                                    — см. её докстринг у объявления пропа): для
+                                    landscape раунд/ход/бонус тоже переехали в
+                                    headerContent (compactHeaderRow), но у
+                                    панели нет внешней сплошной заливки-обёртки,
+                                    поэтому flatBackground целиком не подходит. */}
+                                {!flatBackground && !hideReaperNode && reaperNode}
                                 <View style={styles.runnerRow} onLayout={onRunnerRowLayout}>{runnerCards}</View>
                             </View>
                         </View>
@@ -1195,7 +1265,11 @@ export default function PlayerInfoPanel({
                         onScrollEndDrag={bumpRemeasure}
                         onMomentumScrollEnd={bumpRemeasure}
                     >
-                        {reaperNode}
+                        {/* hideReaperNode (2026-10-16) — landscape теперь получает
+                            Раунд/Ход/Бонус+настройки/лог через headerContent
+                            (GameBoardScreen.js#landscapeCompactHeaderRow), держать
+                            тут ЕЩЁ и подписанную копию было бы дублем. */}
+                        {!hideReaperNode && reaperNode}
                         {/* Текст "— перетащи кубик хода на бегуна" убран (по прямому
                             запросу пользователя) — то же самое теперь показывает
                             подсказка-пульсация (см. runnersHighlight выше), отдельная
@@ -1280,6 +1354,16 @@ export default function PlayerInfoPanel({
         </View>
     );
 }
+
+// 2026-10-16 — React.memo, та же причина, что у BoardGrid/RunnerToken/
+// RunnerCard в этом же проекте (GameBoardScreen ре-рендерится на каждое
+// Mercure-событие и рендерит обе панели — landscape и portrait — безусловно).
+// Оговорка: вызывающий код (GameBoardScreen.js) передаёт сюда много пропов
+// инлайн (JSX/замыкания) — пока они не стабилизированы, реальный выигрыш
+// ограничен моментами, когда GameBoardScreen ре-рендерится по ПРИЧИНЕ, не
+// затрагивающей ни один из пропов этой панели; дальнейшая стабилизация —
+// отдельная задача, не входила в объём этого захода.
+export default React.memo(PlayerInfoPanel);
 
 const styles = StyleSheet.create({
     panel: {

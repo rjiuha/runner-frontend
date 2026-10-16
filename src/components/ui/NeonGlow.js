@@ -28,7 +28,7 @@ import { colors } from '../../theme';
  * PersonPanel/FramePanel (radius — `NOTCH_RADIUS`/`frameNotchRadius(...)`,
  * чтобы скругление свечения совпадало со скруглением самой рамки).
  */
-export default function NeonGlow({ size, radius = 0, color = colors.neonCyan }) {
+function NeonGlow({ size, radius = 0, color = colors.neonCyan }) {
     if (!size) return null;
     return (
         <View
@@ -45,3 +45,10 @@ export default function NeonGlow({ size, radius = 0, color = colors.neonCyan }) 
         </View>
     );
 }
+
+// React.memo — 2026-10-16, см. FramedSquare.js (её главный потребитель —
+// 8 инстансов в низу экрана) за полным разбором. Сам по себе дешёвый (3
+// статичных View), но раз уж чиним весь этот куст компонентов — тот же
+// приём, без оговорок (no children, все пропы — примитивы/число+объект
+// size, который стабилен через useMemo у вызывающей стороны).
+export default React.memo(NeonGlow);

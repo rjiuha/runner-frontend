@@ -60,4 +60,6 @@ export const MERCURE_URL = LOCAL
     ? `http://${host}${MERCURE_PORT_SUFFIX}/.well-known/mercure`
     : `${SERVER_ORIGIN}/.well-known/mercure`;
 
-export const REQUEST_TIMEOUT = 150000000;
+// 2026-10-16: было 150000000 (~41.6ч) — опечатка (лишние нули), таймаут
+// фактически не работал, зависший запрос не отваливался почти никогда.
+export const REQUEST_TIMEOUT = 15000;

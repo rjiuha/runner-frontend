@@ -89,7 +89,7 @@ function SwitchSlot({ player, active, onSelect, height }) {
  * (GameBoardScreen.js), та же величина, что и у соседних элементов строки
  * (стрелки навигации, имя+настройки+лог) — всё это один визуальный ряд.
  */
-export default function PlayerSwitchPanel({ players, activeId, onSelect, height }) {
+function PlayerSwitchPanel({ players, activeId, onSelect, height }) {
     const slots = Array.from({ length: MAX_SLOTS }, (_, i) => players[i] ?? null);
     // Звук тапа по переключателю (2026-10-14, по прямому запросу пользователя)
     // — свой плеер прямо в компоненте (не тянем через GameBoardScreen,
@@ -124,6 +124,12 @@ export default function PlayerSwitchPanel({ players, activeId, onSelect, height 
         </View>
     );
 }
+
+// React.memo — 2026-10-16, см. FramedSquare.js за полным разбором. `players`
+// уже useMemo'ится в GameBoardScreen.js, `onSelect` — стабильный setState-
+// сеттер, `children` этот компонент не принимает вообще — memo тут работает
+// без оговорок.
+export default React.memo(PlayerSwitchPanel);
 
 /**
  * Панелька с именем ВЫБРАННОГО СЕЙЧАС игрока — тот же декоративный корпус
