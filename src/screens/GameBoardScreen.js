@@ -961,6 +961,48 @@ export default function GameBoardScreen({ route, navigation }) {
                         : (lastSiblingKeyByCause.get(e.causedBy) ?? `${bundleId}:${e.causedBy}`);
                 if (e.causedBy != null && !isParallelTrackShiftDeath) lastSiblingKeyByCause.set(e.causedBy, itemKey);
                 runnerAnim.markSeqScheduled(itemKey);
+                // collisionBridge (2026-10-21, живьём пойман и подтверждён логом —
+                // "бегуна телепортирует 3 раза" при столкновении с Мячом на danger-
+                // клетке, диагноз и план были согласованы ещё 2026-10-16, но не
+                // реализованы). Причина: `runner_save reason:'collision'` с РЕАЛЬНОЙ
+                // сменой позиции (seq=8 в репро-логе) почти всегда ОТЛОЖЕН (ждёт
+                // причину — сам `collision`-эвент, который сам ждёт цепочку
+                // cell_updated→runner_ball→...). Пока ждём, очередь этого бегуна
+                // успевает опустеть (его более ранний `move` на danger-клетку уже
+                // доиграл) — `advanceQueue` у пустой очереди чистит visualPositions
+                // (useRunnerAnimations.js), и рендер падает на уже готовый РЕАЛЬНЫЙ
+                // стейт (синхронный, см. докстринг reduceAndLog) — бегун на миг
+                // виден на КОНЕЧНОЙ клетке раньше времени. Затем `BoardGrid.js#
+                // collisionHoldsRef` силой держит коллизионную пару на клетке
+                // столкновения — бегун визуально "возвращается" туда, и только
+                // потом летит вперёд ещё раз: итог — "туда-обратно-туда".
+                // Узкий фикс — ТОЛЬКО для `runner_save reason:'collision'` с реальной
+                // сменой позиции И отложенного (causeKey!=null): синхронно (ДО
+                // ожидания) резервируем 'wait'-шаг на ТЕКУЩЕЙ (до этого события)
+                // позиции бегуна — очередь никогда не опустеет, пока ждём причину.
+                // Когда runEffects() ниже наконец выполнится, handleSequenceItem уже
+                // поставит В ОЧЕРЕДЬ настоящий 'fly'/'move' — completeWaitStep сразу
+                // после нужен, чтобы ОСВОБОДИТЬ 'wait' в этот момент (а не ждать его
+                // собственный 1650мс страховочный таймаут). Ничего не меняет для
+                // остальных reason/событий — markSeqScheduled/lastSiblingKeyByCause
+                // выше не трогали.
+                const collisionBridgePrev = (e.event === 'runner_save' && e.reason === 'collision' && causeKey != null)
+                    ? stateBeforeItem.runners?.find((r) => r.id === e.runnerId?.id)
+                    : null;
+                const collisionBridgeNeeded = collisionBridgePrev?.segment != null && (
+                    collisionBridgePrev.positionX !== e.runnerId.positionX
+                    || collisionBridgePrev.positionY !== e.runnerId.positionY
+                    || collisionBridgePrev.segment !== e.runnerId.segment
+                );
+                if (collisionBridgeNeeded) {
+                    triggerWithSound(e.runnerId.id, 'wait', {
+                        toPosition: {
+                            segment: collisionBridgePrev.segment,
+                            positionX: collisionBridgePrev.positionX,
+                            positionY: collisionBridgePrev.positionY,
+                        },
+                    }, itemKey);
+                }
                 // Один голосовой комментарий на ВСЮ группу одновременных
                 // track_shift-смертей (см. deathCommentOnStart#suppressDeathComment
                 // в triggerWithSound) — первый сиблинг группы играет его,
@@ -986,6 +1028,12 @@ export default function GameBoardScreen({ route, navigation }) {
                         completeWaitStep: runnerAnim.completeWaitStep,
                         collisionPair: collisionPairAtThisPoint,
                     });
+                    // collisionBridge (см. её резервирование выше, перед
+                    // triggerForItem) — handleSequenceItem только что поставил
+                    // настоящий 'fly'/'move' В ОЧЕРЕДЬ (за 'wait', который мы
+                    // зарезервировали синхронно) — отпускаем 'wait' СРАЗУ, не
+                    // дожидаясь его собственного страховочного таймаута.
+                    if (collisionBridgeNeeded) runnerAnim.completeWaitStep(e.runnerId.id);
                     // Лечение возвращает бегуна к healthy — триггерим 'heal'-
                     // анимацию (проигрывается МЕЖДУ damaged_idle и healthy_idle).
                     if (e.event === 'ability_heal' && e.runner?.id != null) {
@@ -1110,12 +1158,27 @@ export default function GameBoardScreen({ route, navigation }) {
                 // партия тут же завершилась победой оставшегося. Считаем
                 // активных игроков ПОСЛЕ применения патча: если остался
                 // РОВНО 1 — это терминальный случай, иначе игра продолжается,
-                // звук нужен. НЕ отложено через runEffects — это диктуется
-                // сменой СТЕЙТА (чей статус active/out), не каскадом
-                // анимаций, пауза тут неуместна.
+                // звук нужен. Сам СТЕЙТ (строка выше) — НЕ отложен, диктуется
+                // сменой active/out безусловно. Но ЗВУК (2026-10-21, живая
+                // жалоба "при 3+ игроках выбывание прозвучало раньше
+                // комментария смерти") — ждёт причину (causeKey, та же
+                // переменная, что уже решает судьбу runEffects() этого же
+                // item'а выше) тем же приёмом, что уже ждут ricochet/miss
+                // (shootKeyAtThisPoint). Комментарий смерти (`COMMENT_SOUNDS.
+                // destroyed`) играет на onStart терминальной позы бегуна —
+                // ОНА может быть отложена (ждёт причинную цепочку), а звук
+                // выбывания раньше играл СРАЗУ здесь, синхронно с этим же
+                // циклом — при коротких цепочках (2 игрока) это почти
+                // всегда успевало совпасть случайно, при длинных (3+) —
+                // систематически обгоняло. `causeKey==null` — тот же
+                // безопасный fallback (играть сразу), что и у ricochet/miss.
                 if (e.event === 'player_out') {
                     const activeCount = (nextState.gamePlayers ?? []).filter((p) => p.status === PLAYER_STATUS.ACTIVE).length;
-                    if (activeCount !== 1) playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
+                    if (activeCount !== 1) {
+                        const playLost = () => playOneShot(commentSound, pickRandom(COMMENT_SOUNDS.lost));
+                        if (causeKey == null) playLost();
+                        else runnerAnim.onceSeqDone(causeKey, playLost);
+                    }
                 }
                 // Voice-реплика — ставится в очередь (pendingVoiceLineRef), как
                 // только для бегуна РЕАЛЬНО появляются зелёные клетки хода (шаг
@@ -1999,6 +2062,31 @@ export default function GameBoardScreen({ route, navigation }) {
         }
     }, [opponentActiveRunner?.id, opponentActiveRunner?.segment, opponentActiveRunner?.positionX, jumpTo]);
 
+    // 2026-10-21, по прямому запросу пользователя — камера на клетку Жнеца
+    // ПРИ ЕГО РАЗМЕЩЕНИИ ОППОНЕНТОМ (не мной — своё размещение уже имеет
+    // локальный превью-поток, pendingReaperPlacement/reaperPreview выше, не
+    // трогаем). Независимый эффект, тот же приём, что у
+    // jumpedForOpponentSelectionRef выше — прыгаем ОДИН раз, когда на доске
+    // появляется ЧУЖОЙ Жнец (segment!=null), не на каждый ре-рендер, пока он
+    // уже там. "Потом его действие, потом на бегуна игрока" — ничего
+    // специально писать не нужно: Жнец сразу начинает играть 'start'(+
+    // 'attack', если выстрелил при размещении) — runnerAnim.anims
+    // становится непустым, и СЛЕДУЮЩИЙ эффект ниже ("после того как ВСЕ
+    // анимации доиграли") сам вернёт камеру на activeRunner/
+    // opponentActiveRunner, когда Жнец закончит.
+    const lastOpponentReaperIdRef = useRef(undefined);
+    useEffect(() => {
+        const opponentReaper = runners.find(
+            (r) => r.type === RUNNER_TYPES.REAPER && r.playerId !== myPlayer?.id && r.segment != null,
+        );
+        const currentId = opponentReaper?.id ?? null;
+        if (currentId === lastOpponentReaperIdRef.current) return;
+        lastOpponentReaperIdRef.current = currentId;
+        if (opponentReaper) {
+            jumpTo(opponentReaper.segment * BOARD_LAYOUT.COLS + opponentReaper.positionX);
+        }
+    }, [runners, myPlayer?.id, jumpTo]);
+
     // 2026-10-16, по прямому запросу пользователя — после того как ВСЕ
     // анимации (бегуны + сдвиг фрагментов трассы) доиграли, камера сама
     // возвращается на активного бегуна ТЕКУЩЕГО хода — своего ИЛИ
@@ -2758,8 +2846,13 @@ export default function GameBoardScreen({ route, navigation }) {
     // (seamRowWidth===null) — безопасный фолбэк на высоту строки × 2.4,
     // прежнее число (ширина имени от высоты, не от реальной ширины ряда).
     const switchesNaturalWidth = Math.round(seamRowH * SWITCH_ASPECT) * 4 + spacing.xs * 3;
+    // Math.round() на ИТОГОВОЙ ширине (2026-10-21) — `seamRowWidth` приходит
+    // из onLayout и на Android может быть дробным; без округления дробная
+    // ширина попадала бы напрямую в FramedSquare→FramePanel (панель имени),
+    // давая тот же класс 9-slice-швов, что уже описан в CLAUDE.md ("Дробные
+    // размеры/позиции тайлов... Всегда Math.round() ИТОГОВЫЕ размеры").
     const seamNameWidth = seamRowWidth != null
-        ? Math.max(40, seamRowWidth - switchesNaturalWidth - spacing.xs)
+        ? Math.round(Math.max(40, seamRowWidth - switchesNaturalWidth - spacing.xs))
         : Math.round(seamRowH * 2.4);
 
     // 2026-10-16 — ПЕРЕНЕСЕНО СЮДА (было прямо перед boardGridEl, намного

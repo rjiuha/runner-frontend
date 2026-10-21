@@ -323,8 +323,28 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             );
             if (reaperHere) {
                 trigger(reaperHere.id, 'bomb', {});
+                // Живая жалоба 2026-10-21: жертва пропадала с доски НА ВРЕМЯ
+                // bomb-анимации Жнеца, появляясь снова только когда отложенный
+                // 'destroyed' ниже наконец срабатывал. Причина — очередь
+                // жертвы к этому моменту уже ПУСТА (её собственный 'move' на
+                // клетку ловушки давно доиграл), а advanceQueue у пустой
+                // очереди ЧИСТИТ visualPositions (useRunnerAnimations.js) —
+                // токену негде рисоваться: реальная позиция уже обнулена
+                // редьюсером синхронно (см. docstring выше), визуальная —
+                // только что подчищена. Два 'wait'-шага подряд (готовый
+                // механизм, тот же, что держит проигравшего при коллизии) —
+                // каждый держит токен на lastKnownPosition до своего
+                // страховочного тайм-аута (KNOCKBACK_WAIT_MS=1650мс в
+                // useRunnerAnimations.js) — 2×1650мс суммарно покрывают
+                // REAPER_BOMB_TO_DESTROYED_DELAY_MS (1800мс) с запасом, не
+                // трогая сам KNOCKBACK_WAIT_MS (общий с коллизией).
+                triggerPatch('wait', { toPosition: lastKnownPosition });
+                triggerPatch('wait', { toPosition: lastKnownPosition });
                 setTimeout(
-                    () => triggerPatch('destroyed', { toPosition: lastKnownPosition }),
+                    () => animHelpers.completeWaitStep(patch.id, 'destroyed', {
+                        toPosition: lastKnownPosition,
+                        fromStatus: prev.status,
+                    }),
                     REAPER_BOMB_TO_DESTROYED_DELAY_MS,
                 );
             } else {
