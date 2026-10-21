@@ -1082,7 +1082,24 @@ export default function GameBoardScreen({ route, navigation }) {
                     runnerAnim.settleSeqIfIdle(itemKey);
                 };
 
-                if (causeKey == null) runEffects();
+                // isParallelTrackShiftDeath (2026-10-17, живая жалоба) — НЕ ждёт
+                // settle родителя (сам сдвиг трассы), в отличие от обычных
+                // причинных сиблингов. Раньше трагер 'destroyed' откладывался
+                // до этого settle, который фактически совпадает с концом
+                // визуальной волны исчезновения фрагмента (см. docstring
+                // isParallelTrackShiftDeath выше) — бегун был не виден ВООБЩЕ
+                // (ни на старой позиции, ни в анимации) пока играл сдвиг, а
+                // затем все параллельные смерти появлялись уже СРАЗУ в позе
+                // уничтожения, без видимого перехода. Запуская `runEffects()`
+                // немедленно, бегун остаётся на своей текущей (старой) позиции
+                // и начинает доигрывать 'destroyed' сразу же, пока фрагмент всё
+                // ещё визуально исчезает — та же причина, по которой это
+                // затрагивает ТОЛЬКО этот сценарий: markSeqScheduled(itemKey)
+                // выше не трогали, так что любой НЕ-track_shift сиблинг,
+                // который зависит от этого itemKey, по-прежнему ждёт его
+                // настоящего завершения (settleSeqIfIdle/onceStepDone внутри
+                // самого runEffects), а не просто синхронного вызова функции.
+                if (causeKey == null || isParallelTrackShiftDeath) runEffects();
                 else runnerAnim.onceSeqDone(causeKey, runEffects);
 
                 // Стейт — ВСЕГДА синхронно и безусловно, независимо от того,
@@ -1347,16 +1364,30 @@ export default function GameBoardScreen({ route, navigation }) {
     // специально под этот случай, см. её докстринг), по умолчанию её
     // поведение в остальных местах (RunnerCard и т.д.) не изменилось.
     const seamNameH = Math.round(arrowBtnSize * 0.8);
-    // navBoxH (кнопки навигации на кайме рамки дороги) — УБРАН 2026-10-15, по
-    // прямому запросу пользователя: RoadNavButton переехали в строку под
-    // швом (seamRow), где уже используется switchRowH — отдельный размер
-    // для них больше не нужен.
+    // navBoxH (кнопки навигации на кайме рамки дороги) — УБРАН 2026-10-15
+    // (переехали в строку под швом), а 2026-10-21 убраны и ОТТУДА целиком
+    // (не просто переехали) — Android скроллит дорогу свайпом
+    // (boardSwipeGesture), веб — колесом мыши/стрелками (см. handleBoardWheel
+    // и клавиатурный эффект у места рендера низа экрана).
     // roadFrameRoundSize — ВЫСОТА (не ширина — та считается ниже, от
     // измеренной ширины баннера хода) квадратов раунд/ход/бонус/настройки/
     // лога. switchRowH — общая высота строки (= высоте переключателей
     // слева, те получают её готовой как height-проп PlayerSwitchPanel).
     const roadFrameRoundSize = Math.round(arrowBtnSize * 0.95);
     const switchRowH = seamNameH + roadFrameRoundSize + spacing.xs;
+    // seamRowH/headerRowHMobile (2026-10-21, по прямому запросу пользователя) —
+    // раньше обе строки низа (имя+переключатели И раунд/ход/бонус+настройки/
+    // лог) были РОВНО switchRowH. Теперь они разные: строка имя+переключатели
+    // (ниже, см. renderNameSwitchRow) — на 20% ВЫШЕ baseline, строка раунд/
+    // ход/бонус+настройки/лог (выше, абсолютный оверлей под швом, см.
+    // renderCompactHeaderRow) — на 30% НИЖЕ baseline. База (switchRowH) —
+    // всё та же, другие формулы (seamNameH/roadFrameRoundSize) её не трогают.
+    // Итоговая разница (−10% от switchRowH суммарно на обе строки) уходит
+    // телу панели (зоны 13/14, карточки бегунов и кубики/усиления) — те сами
+    // забирают остаток высоты через columnsH (см. PlayerInfoPanel.js), без
+    // отдельного множителя тут.
+    const seamRowH = Math.round(switchRowH * 1.2);
+    const headerRowHMobile = Math.round(switchRowH * 0.7);
 
     const { windowStart, backButtonProps, forwardButtonProps, jumpTo, jumpToStart, step: scrollStep } = useBoardScroll({ cols: viewportCols });
 
@@ -1433,6 +1464,42 @@ export default function GameBoardScreen({ route, navigation }) {
             swipeConsumedSteps.value = totalSteps;
             runOnJS(handleBoardSwipeStep)(newSteps > 0 ? 1 : -1, Math.abs(newSteps));
         });
+
+    // Скролл дороги колесом мыши + стрелками вверх/вниз на клавиатуре —
+    // веб-only (2026-10-21, по прямому запросу пользователя — компенсация за
+    // убранные из seamRow кнопки навигации на веб-портрете, см. её docstring
+    // выше). dir=+1 (вперёд по треку) при скролле/прокрутке ВНИЗ — та же
+    // полярность, что уже выбрана для свайпа на Android ("палец тянут ВНИЗ
+    // = дальше по треку"), а не отдельная интуиция для веба.
+    // handleBoardWheel — проп onWheel на roadFrameWrap (см. место рендера),
+    // react-native-web пробрасывает его как обычный DOM wheel-listener.
+    const handleBoardWheel = useCallback(
+        (e) => {
+            if (!e?.deltaY) return;
+            e.preventDefault?.();
+            scrollStep(e.deltaY > 0 ? 1 : -1);
+        },
+        [scrollStep],
+    );
+    useEffect(() => {
+        if (Platform.OS !== 'web') return;
+        const onKeyDown = (e) => {
+            // Не перехватывать стрелки, если фокус на текстовом поле (на
+            // этом экране их сейчас нет, но window-уровневый листенер — на
+            // всякий случай, дешёвая защита от будущего regressions).
+            const tag = document.activeElement?.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                scrollStep(1);
+            } else if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                scrollStep(-1);
+            }
+        };
+        window.addEventListener('keydown', onKeyDown);
+        return () => window.removeEventListener('keydown', onKeyDown);
+    }, [scrollStep]);
 
     const runners = game?.runners ?? [];
     const gamePlayers = game?.gamePlayers ?? [];
@@ -2627,25 +2694,24 @@ export default function GameBoardScreen({ route, navigation }) {
         const { width, height } = e.nativeEvent.layout;
         setTurnBannerSize({ width, height });
     }, []);
-    // Ширина строки под швом (переключатели+имя+настройки+лог, см. место
-    // рендера) — измеряется отдельно от turnBannerSize (та теперь только
-    // про сам баннер хода, делящий свою строку с колонкой раунд/ход/бонус,
-    // см. комментарий у seamNameWidth ниже).
+    // Ширина строки имя+переключатели (2026-10-21 — эта строка теперь В
+    // ПОТОКЕ (headerContent PlayerInfoPanel, см. renderNameSwitchRow ниже),
+    // не абсолютный оверлей на всю ширину экрана — поэтому onLayout на НЕЙ
+    // САМОЙ уже даёт usable-ширину (родитель — styles.panel с padding:
+    // spacing.md, но та уже вычтена ДО этого View, повторно вычитать не
+    // нужно, в отличие от старой версии, см. её git-историю).
     const [seamRowWidth, setSeamRowWidth] = useState(null);
     const onSeamRowLayout = useCallback((e) => {
         setSeamRowWidth(e.nativeEvent.layout.width);
     }, []);
 
-    // Раунд/Ход/Бонус дороги + настройки/лог — ПЕРЕЕХАЛИ (2026-10-15, по
-    // прямому запросу пользователя) на место, где раньше был баннер хода
-    // (зона 11 на UI-карте) — тот убран целиком для mobileNav, см. место
-    // рендера headerContent ниже. Раунд/Ход/Бонус — РЕЗИНОВЫЕ (делят ПОРОВНУ
-    // всё место, оставшееся ПОСЛЕ настроек/лога, которые остаются тем же
-    // квадратом switchRowH×switchRowH, что и раньше, см. прямой запрос:
-    // "Настройка и Лог должны остаться той же формы... остальные должны
-    // заполнить все пустоты"), а не фиксированный квадрат — высота строки
-    // известна заранее (switchRowH), а не измеряется (в отличие от старой
-    // версии, где сторона считалась от onLayout баннера) — ширина измеряется
+    // Раунд/Ход/Бонус дороги + настройки/лог — теперь ВЕРХНИЙ ряд (абсолютный
+    // оверлей под швом, 2026-10-21 — строки поменялись местами по прямому
+    // запросу пользователя, см. renderCompactHeaderRow/место рендера ниже).
+    // Раунд/Ход/Бонус — РЕЗИНОВЫЕ (делят ПОРОВНУ всё место, оставшееся ПОСЛЕ
+    // настроек/лога, которые остаются тем же квадратом headerRowH×headerRowH),
+    // а не фиксированный квадрат — высота строки известна заранее
+    // (headerRowHMobile/landscapeHeaderRowH), ширина измеряется
     // (panelHeaderRowWidth, см. onPanelHeaderRowLayout) и делится на 3 ТОЧНЫМ
     // распределением остатка округления (`Math.round(W*(i+1)/3)-
     // Math.round(W*i/3)`, тот же приём, что уже спасал abilitiesWrap/
@@ -2657,17 +2723,21 @@ export default function GameBoardScreen({ route, navigation }) {
     const onPanelHeaderRowLayout = useCallback((e) => {
         setPanelHeaderRowWidth(e.nativeEvent.layout.width);
     }, []);
-    // computeRoundTurnBonusLayout(headerRowH) — 2026-10-16, параметризовано по
-    // высоте строки: раньше тут были готовые значения, завязанные жёстко на
-    // switchRowH (высота ПОРТРЕТНОГО seam-ряда, сосчитанная от ширины ВСЕГО
-    // экрана) — для landscape-панели (узкая боковая колонка, см.
-    // landscapeHeaderRowH ниже) это дало бы непропорционально высокие узкие
-    // "плашки" вместо квадратов (живой замер DOM подтвердил: 44×104 вместо
-    // примерно квадратных). Формула не изменилась — просто принимает высоту
-    // параметром, а не читает switchRowH напрямую.
-    const computeRoundTurnBonusLayout = (headerRowH) => {
+    // computeRoundTurnBonusLayout(headerRowH, extraInset) — 2026-10-16,
+    // параметризовано по высоте строки: раньше тут были готовые значения,
+    // завязанные жёстко на switchRowH (высота ПОРТРЕТНОГО seam-ряда,
+    // сосчитанная от ширины ВСЕГО экрана) — для landscape-панели (узкая
+    // боковая колонка, см. landscapeHeaderRowH ниже) это дало бы
+    // непропорционально высокие узкие "плашки" вместо квадратов (живой замер
+    // DOM подтвердил: 44×104 вместо примерно квадратных). `extraInset`
+    // (2026-10-21) — ряд переехал на абсолютный оверлей (styles.seamRow),
+    // у которого теперь СВОЙ paddingHorizontal (spacing.md*2) — `onLayout`
+    // меряет ВНЕШНИЙ бокс (включая этот padding), а не внутреннее usable-
+    // место для детей, поэтому его нужно вычесть явно (landscape-вызов без
+    // такого padding передаёт 0/не передаёт вовсе — дефолт).
+    const computeRoundTurnBonusLayout = (headerRowH, extraInset = 0) => {
         const totalWidth = panelHeaderRowWidth != null
-            ? Math.max(0, panelHeaderRowWidth - headerRowH * 2)
+            ? Math.max(0, panelHeaderRowWidth - extraInset - headerRowH * 2)
             : null;
         const widths = totalWidth != null
             ? [0, 1, 2].map((i) => Math.round((totalWidth * (i + 1)) / 3) - Math.round((totalWidth * i) / 3))
@@ -2677,34 +2747,20 @@ export default function GameBoardScreen({ route, navigation }) {
     };
     // Шрифт — пропорционален высоте строки (0.3, подобрано живьём 2026-10-15,
     // см. computeRoundTurnBonusLayout выше за параметризованной версией).
-    // Ширина панели имени в строке под швом — живой баг 2026-10-11: первая
-    // версия (фиксированный множитель от switchRowH) либо вылезала за край
-    // экрана (кнопки обрезались), либо оставляла дыру — по прямому запросу
-    // пользователя сумма (переключатели+имя+навигация) теперь считается от
-    // РЕАЛЬНО измеренной ширины самой строки (seamRowWidth, см. onSeamRowLayout
-    // ниже), ровно той же техникой, что раньше спасла аналогичный ряд от
-    // того же класса бага (см. старую историю roadFrameRoundRowWidth в
-    // CLAUDE.md, 2026-10-10).
+    // Ширина панели имени — эластичная, ест весь остаток строки после
+    // переключателей (кнопки навигации убраны из этой строки целиком,
+    // 2026-10-21 — см. docstring у renderNameSwitchRow/места рендера).
     // switchesNaturalWidth — ширина 4 переключателей по их собственному
     // аспекту (SWITCH_ASPECT) + 3 внутренних зазора (PlayerSwitchPanel#
-    // styles.row.gap=spacing.xs) между ними. seamIconsWidth — 2 квадратные
-    // switchRowH×switchRowH ячейки в конце строки — раньше настройки+лог,
-    // 2026-10-15 стали кнопками навигации (RoadNavButton) — формула/размер
-    // не изменились, сменился только визуальный смысл. styles.seamRow.gap=0
-    // (по прямому запросу пользователя) — зазоров в строке ДВА явных
-    // marginLeft (не gap): имя→переключатели и переключатели→навигация
-    // (2026-10-15, живая жалоба "налезает, плотнячком" — раньше зазор был
-    // только один), оба по spacing.xs, см. места рендера. Единственный стык
-    // БЕЗ зазора — между самими кнопками навигации (up/down). Отсюда ДВА
-    // (не один) spacing.xs в формуле ниже — забыть прибавить второй при
-    // добавлении зазора было реальной причиной 4px переполнения строки в
-    // этом же заходе. До первого измерения (seamRowWidth===null) —
-    // безопасный фолбэк.
-    const switchesNaturalWidth = Math.round(switchRowH * SWITCH_ASPECT) * 4 + spacing.xs * 3;
-    const seamIconsWidth = switchRowH * 2;
+    // styles.row.gap=spacing.xs) между ними. Единственный стык ЭТОЙ строки —
+    // имя→переключатели (spacing.xs), поэтому в формуле ОДИН (не два, как
+    // было при живущей тут навигации) spacing.xs. До первого измерения
+    // (seamRowWidth===null) — безопасный фолбэк на высоту строки × 2.4,
+    // прежнее число (ширина имени от высоты, не от реальной ширины ряда).
+    const switchesNaturalWidth = Math.round(seamRowH * SWITCH_ASPECT) * 4 + spacing.xs * 3;
     const seamNameWidth = seamRowWidth != null
-        ? Math.max(40, seamRowWidth - spacing.md * 2 - switchesNaturalWidth - spacing.xs * 2 - seamIconsWidth)
-        : Math.round(switchRowH * 2.4);
+        ? Math.max(40, seamRowWidth - switchesNaturalWidth - spacing.xs)
+        : Math.round(seamRowH * 2.4);
 
     // 2026-10-16 — ПЕРЕНЕСЕНО СЮДА (было прямо перед boardGridEl, намного
     // ниже по файлу) — реальный краш, живьём пойман пользователем: "Rendered
@@ -3202,25 +3258,30 @@ export default function GameBoardScreen({ route, navigation }) {
         />
     );
 
-    // renderCompactHeaderRow(headerRowH) — ряд из 5 квадратов (Раунд/Ход/
-    // Бонус дороги, РЕЗИНОВЫЕ + настройки/лог) — ОДНА общая функция,
-    // переиспользуемая ТРЕМЯ раскладками (mobileNav/useWebCompactChrome —
-    // headerContent портретной PlayerInfoPanel при headerRowH=switchRowH, и
-    // landscape — headerContent её левой панели при headerRowH=landscapeHeaderRowH,
-    // см. оба места рендера ниже), а не три копии одного и того же дерева —
-    // иначе "1:1 как Android" переставало бы быть гарантией уже на первой же
-    // будущей правке этого ряда (копии неизбежно разъехались бы). Параметр
-    // height (не захардкоженный switchRowH) — 2026-10-16, живой DOM-замер
-    // вскрыл реальный баг первой версии: switchRowH сосчитан от ШИРИНЫ ВСЕГО
-    // ЭКРАНА (портретный seam-ряд во всю ширину) — применённый напрямую к
-    // узкой (300-430px) landscape-панели давал не квадраты, а узкие высокие
-    // "плашки" (44×104 на реальном замере). landscapeHeaderRowH (см. её
-    // объявление ниже) — своя, пропорциональная ширине ПАНЕЛИ величина.
-    const renderCompactHeaderRow = (headerRowH) => {
-        const { widths, fontStyle } = computeRoundTurnBonusLayout(headerRowH);
+    // renderCompactHeaderRow(headerRowH, overlayStyle?) — ряд из 5 квадратов
+    // (Раунд/Ход/Бонус дороги, РЕЗИНОВЫЕ + настройки/лог) — ОДНА общая
+    // функция, переиспользуемая ТРЕМЯ раскладками (mobileNav/
+    // useWebCompactChrome — теперь АБСОЛЮТНЫЙ оверлей под швом, см. место
+    // рендера ниже, и landscape — headerContent её левой панели при
+    // headerRowH=landscapeHeaderRowH), а не три копии одного и того же
+    // дерева — иначе "1:1 как Android" переставало бы быть гарантией уже на
+    // первой же будущей правке этого ряда (копии неизбежно разъехались бы).
+    // Параметр height (не захардкоженный switchRowH) — 2026-10-16, живой
+    // DOM-замер вскрыл реальный баг первой версии: switchRowH сосчитан от
+    // ШИРИНЫ ВСЕГО ЭКРАНА (портретный seam-ряд во всю ширину) — применённый
+    // напрямую к узкой (300-430px) landscape-панели давал не квадраты, а
+    // узкие высокие "плашки" (44×104 на реальном замере). landscapeHeaderRowH
+    // (см. её объявление ниже) — своя, пропорциональная ширине ПАНЕЛИ
+    // величина. `overlayStyle` (2026-10-21) — ТОЛЬКО для mobile/web: ряд
+    // переехал с места headerContent (в потоке PlayerInfoPanel) на
+    // абсолютный оверлей сразу под швом (строки поменялись местами по
+    // прямому запросу пользователя) — позиционирование накладывается ПОВЕРХ
+    // обычных стилей ряда, landscape-вызов (без overlayStyle) не затронут.
+    const renderCompactHeaderRow = (headerRowH, overlayStyle, extraInset) => {
+        const { widths, fontStyle } = computeRoundTurnBonusLayout(headerRowH, extraInset);
         return (
             <View
-                style={[styles.panelHeaderRow, { height: headerRowH }]}
+                style={[styles.panelHeaderRow, overlayStyle, { height: headerRowH }]}
                 onLayout={onPanelHeaderRowLayout}
             >
                 <FramedSquare width={widths[0]} height={headerRowH} targetCornerSize={8} glow>
@@ -3277,8 +3338,43 @@ export default function GameBoardScreen({ route, navigation }) {
     // квадратными (settings/log — точно квадратные по построению, Р/Х/Б —
     // примерно, см. computeRoundTurnBonusLayout).
     const landscapeHeaderRowH = Math.round(leftPanelW / 5);
-    const compactHeaderRow = renderCompactHeaderRow(switchRowH);
+    // compactHeaderRow (2026-10-21) — теперь рендерится АБСОЛЮТНЫМ оверлеем
+    // сразу под швом (styles.seamRow-позиционирование, см. место рендера),
+    // marginTop:0 перебивает panelHeaderRow#marginTop (та была нужна только
+    // когда этот ряд стоял В ПОТОКЕ после баннера хода — тут неоткуда).
+    const compactHeaderRow = renderCompactHeaderRow(
+        headerRowHMobile,
+        [styles.seamRow, { marginTop: 0, bottom: panelH - headerRowHMobile }],
+        spacing.md * 2,
+    );
     const landscapeCompactHeaderRow = renderCompactHeaderRow(landscapeHeaderRowH);
+    // renderNameSwitchRow(rowH) — имя выбранного игрока + 4 переключателя
+    // (2026-10-21, по прямому запросу пользователя — строки поменялись
+    // местами, эта теперь В ПОТОКЕ, headerContent PlayerInfoPanel, а не
+    // абсолютный оверлей, как раньше). Кнопок навигации тут больше нет
+    // (убраны целиком для mobile/web — Android скроллит дорогу свайпом,
+    // см. boardSwipeGesture выше, веб — колесом мыши/стрелками, см.
+    // handleBoardWheel/клавиатурный эффект ниже места рендера). Переключатели
+    // — mirrored (зеркалит порядок слотов, см. PlayerSwitchPanel.js).
+    const renderNameSwitchRow = (rowH) => (
+        <View style={[styles.panelHeaderRow, { height: rowH, marginTop: 0 }]} onLayout={onSeamRowLayout}>
+            <FramedSquare width={seamNameWidth} height={rowH} targetCornerSize={8} glow>
+                <Text style={styles.seamNameText} numberOfLines={1} noGlobalTint>
+                    {players.find((p) => p.id === activePlayerId)?.name ?? ''}
+                </Text>
+            </FramedSquare>
+            <View style={{ marginLeft: spacing.xs }}>
+                <PlayerSwitchPanel
+                    players={players}
+                    activeId={activePlayerId}
+                    onSelect={setActivePlayerId}
+                    height={rowH}
+                    mirrored
+                />
+            </View>
+        </View>
+    );
+    const nameSwitchRow = renderNameSwitchRow(seamRowH);
     // landscapeSwitcherH — та же история, что у landscapeHeaderRowH чуть
     // выше, но для rocker-переключателя (PlayerSwitchPanel): 2026-10-16,
     // живая жалоба "панель с переключателями выбилась по размерам" —
@@ -3461,7 +3557,11 @@ export default function GameBoardScreen({ route, navigation }) {
                     </View>
                 )}
 
-                <View style={styles.roadFrameWrap} onLayout={handleRoadFrameLayout}>
+                <View
+                    style={styles.roadFrameWrap}
+                    onLayout={handleRoadFrameLayout}
+                    {...(Platform.OS === 'web' ? { onWheel: handleBoardWheel } : null)}
+                >
                     <RoadArea spacing={ROAD_AREA_SPACING} backgroundColor="#3a034b00">
                         {/* Полоса с именем фрагмента(ов) слева от сетки — под неё
                             зарезервирована ширина (labelStripW, см. useBoardLayout)
@@ -3577,9 +3677,9 @@ export default function GameBoardScreen({ route, navigation }) {
                         switcherAtBottom
                         compactColumns
                         flatBackground={useMobileNavButtons || useWebCompactChrome}
-                        switchRowHeight={(useMobileNavButtons || useWebCompactChrome) ? switchRowH : 0}
+                        switchRowHeight={(useMobileNavButtons || useWebCompactChrome) ? headerRowHMobile : 0}
                         headerContent={
-                            (useMobileNavButtons || useWebCompactChrome) ? compactHeaderRow : (
+                            (useMobileNavButtons || useWebCompactChrome) ? nameSwitchRow : (
                                 <View style={styles.turnBannerRow}>
                                     <View style={[styles.turnBanner, styles.turnBannerFlex]} onLayout={onTurnBannerLayout}>
                                         <FramePanel size={turnBannerSize} targetCornerSize={10} />
@@ -3596,85 +3696,27 @@ export default function GameBoardScreen({ route, navigation }) {
                 </View>
             )}
 
-            {/* Единая строка под швом — ОДНИМ рядом: панель имени, 4
-                переключателя игрока, кнопки навигации — ВСЕ одной и той же
-                высоты (switchRowH). Порядок имя→переключатели (2026-10-15,
-                по прямому запросу пользователя — переставлены, раньше было
-                переключатели→имя), настройки/лог ПЕРЕЕХАЛИ в headerContent
-                (см. выше) — их место заняли RoadNavButton (переехали сюда с
-                каймы рамки дороги, см. её докстринг выше). Панель имени —
-                ФИКСИРОВАННОЙ ширины (seamNameWidth), НЕ растягивается на
-                остаток строки — по прямому запросу пользователя ("уже, чем
-                сейчас"); свободное место справа от неё/навигации просто
-                остаётся залито тем же фоном строки (styles.seamRow#
-                backgroundColor), не выглядит как дырка. Лежит ЦЕЛИКОМ ниже
-                стыка, внутри territory панели — рамку дороги не трогает
-                (предыдущая версия стояла ровно на стыке и конфликтовала то
-                с рамкой, то с баннером хода внутри панели — живые жалобы).
-                switchRowH — высота всей строки, та же величина, что
-                PlayerInfoPanel резервирует у себя СВЕРХУ через
-                switchRowHeight (см. её докстринг) — floating-ряд рисуется
-                ровно над этим зарезервированным зазором. Только
-                useMobileNavButtons/useWebCompactChrome — для landscape (!isPortrait)
-                раскладка не менялась, НО старая плашка-бейдж EventLogPanel
-                (правый нижний угол) для неё теперь тоже убрана (2026-10-16) —
-                landscape-панель получила СВОЮ иконку лога в compactHeaderRow
-                (см. её headerContent выше), держать сразу два независимых
-                переключателя "открыт/закрыт" (eventLogOpen тут vs. свой
-                useState внутри EventLogPanel.js) было бы путаницей. См. else
-                ниже — для isPortrait он фактически недостижим (оба флага
-                вместе покрывают isPortrait целиком), оставлен только как
-                defensive-фолбэк. */}
-            {(useMobileNavButtons || useWebCompactChrome) ? (
-                <View style={[styles.seamRow, { bottom: panelH - switchRowH, height: switchRowH }]} onLayout={onSeamRowLayout}>
-                    {/* Панель имени — FramedSquare variant="frame" (по
-                        умолчанию, FramePanel — "как у аватарки бегуна"), НЕ
-                        старый PersonPanel-based NamePanel — финальный выбор
-                        стиля после нескольких правок, см. докстринг у места
-                        рендера кнопок навигации на рамке дороги выше. */}
-                    <FramedSquare width={seamNameWidth} height={switchRowH} targetCornerSize={8} glow>
-                        <Text style={styles.seamNameText} numberOfLines={1} noGlobalTint>
-                            {players.find((p) => p.id === activePlayerId)?.name ?? ''}
-                        </Text>
-                    </FramedSquare>
-                    {/* marginLeft: spacing.xs (2026-10-15 — сдвинулся на
-                        переключатели вместе с перестановкой имя↔переключатели,
-                        раньше был на имени) — тот же зазор, что и между самими
-                        переключателями (PlayerSwitchPanel.js#styles.row.gap).
-                        Такой же marginLeft (2026-10-15, живая жалоба —
-                        "налезает, плотнячком") теперь и у первой кнопки
-                        навигации (см. её рендер ниже) — единственный стык
-                        БЕЗ зазора в этой строке — между самими кнопками
-                        навигации (up/down), см. styles.seamRow#gap=0. */}
-                    <View style={{ marginLeft: spacing.xs }}>
-                        <PlayerSwitchPanel players={players} activeId={activePlayerId} onSelect={setActivePlayerId} height={switchRowH} />
-                    </View>
-                    {/* Кнопки навигации — ПЕРЕЕХАЛИ сюда с каймы рамки дороги
-                        (2026-10-15, по прямому запросу пользователя, на место
-                        настроек/лога — те переехали в headerContent, см.
-                        выше). variant="person" + targetCornerSize/размер —
-                        ТЕ ЖЕ, что были у настроек/лога тут раньше (честная
-                        9-slice рамка без фона, PNG-ассет RoadNavButton и так
-                        не содержит нарисованной линии-рамки, см. CLAUDE.md
-                        2026-10-10). Квадратные (size=switchRowH), не
-                        прямоугольные 2:1, как были на кайме рамки — там
-                        RoadNavButton поддерживает отдельные width/height,
-                        тут используем только size (обе грани равны).
-                        marginLeft: spacing.xs (2026-10-15, живая жалоба
-                        пользователя — "налезает, плотнячком") — тот же
-                        зазор, что уже стоит между именем и переключателями
-                        (см. выше), для единообразия по всей строке: теперь
-                        ЛЮБОЙ стык в seamRow — либо spacing.xs, либо явно
-                        gap:0 (переключатели между собой/настройки-лог —
-                        не трогали). */}
-                    <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow style={styles.seamNavUpSpacer}>
-                        <RoadNavButton direction="up" size={switchRowH} handlers={forwardButtonProps} />
-                    </FramedSquare>
-                    <FramedSquare variant="person" width={switchRowH} targetCornerSize={32} glow>
-                        <RoadNavButton direction="down" size={switchRowH} handlers={backButtonProps} />
-                    </FramedSquare>
-                </View>
-            ) : isPortrait ? (
+            {/* Строка под швом — 2026-10-21, по прямому запросу пользователя
+                строки поменялись местами: ТЕПЕРЬ тут (абсолютный оверлей
+                сразу под швом) рисуется раунд/ход/бонус+настройки/лог
+                (compactHeaderRow, renderCompactHeaderRow(headerRowHMobile,
+                [styles.seamRow,...]) — её собственный style-массив уже несёт
+                position:absolute/left/right/background/zIndex, см. её
+                docstring), а имя+переключатели (renderNameSwitchRow)
+                переехали В ПОТОК — это headerContent PlayerInfoPanel, см.
+                место рендера выше. Кнопки навигации убраны из этой зоны
+                ЦЕЛИКОМ (не просто переехали) — Android скроллит дорогу
+                свайпом (boardSwipeGesture выше), веб — колесом мыши/
+                стрелками вверх-вниз (handleBoardWheel/клавиатурный эффект,
+                см. ниже места рендера). bottom считается от headerRowHMobile
+                (высота ЭТОЙ строки, не switchRowH — строки теперь разной
+                высоты, см. её объявление). Только useMobileNavButtons/
+                useWebCompactChrome — для landscape (!isPortrait) раскладка
+                не менялась (там свой compactHeaderRow, headerContent без
+                overlayStyle). См. else ниже — для isPortrait он фактически
+                недостижим (оба флага вместе покрывают isPortrait целиком),
+                оставлен только как defensive-фолбэк. */}
+            {(useMobileNavButtons || useWebCompactChrome) ? compactHeaderRow : isPortrait ? (
                 <EventLogPanel entries={eventLog} position="top" />
             ) : null}
             </View>
@@ -3797,17 +3839,17 @@ const styles = StyleSheet.create({
     // 26 (всё ещё перебивает 25) — тень заметно слабее; shadowColor:
     // 'transparent' — доп. подстраховка, на части версий RN/Android гасит её
     // почти полностью, не трогая сам z-order (который даёт elevation).
-    // paddingHorizontal: spacing.md (2026-10-10, было spacing.sm, живая
-    // жалоба "пустота справа, не вровень с панелью хода") — ТА ЖЕ величина,
-    // что `padding` у PlayerInfoPanel.js#styles.panel (корень панели, внутри
-    // которого лежит баннер хода) — левый край этой строки совпадает с левым
-    // краем баннера хода. Содержимое строки (2026-10-11, см. место рендера)
-    // вычисляется под точную ширину строки (seamNameWidth, см. seamRowWidth/
-    // onSeamRowLayout) — переключатели+имя+настройки+лог заполняют её ровно
-    // впритык к правому краю, без остатка. gap:0 (2026-10-11, прямой запрос
-    // пользователя "между элементами не должно быть расстояния") — элементы
-    // строки вплотную друг к другу (внутренний зазор МЕЖДУ 4 переключателями
-    // — отдельный, см. PlayerSwitchPanel.js#styles.row, не трогали).
+    // paddingHorizontal: spacing.md (2026-10-10) — ТА ЖЕ величина, что
+    // `padding` у PlayerInfoPanel.js#styles.panel (корень панели) — левый
+    // край этой строки совпадает с левым краем панели ниже. 2026-10-21 —
+    // ЭТОТ стиль теперь накладывается (через overlayStyle) на
+    // renderCompactHeaderRow (раунд/ход/бонус+настройки/лог), а не на
+    // имя+переключатели — строки поменялись местами, см. её docstring; сам
+    // стиль (абсолютная позиция под швом, фон, zIndex) не изменился.
+    // computeRoundTurnBonusLayout учитывает этот padding через extraInset
+    // (см. её docstring) — без этого 3 резиновых квадрата вылезали бы на
+    // 2×spacing.md за правый край. gap:0 (2026-10-11) — элементы строки
+    // вплотную друг к другу.
     seamRow: {
         position: 'absolute',
         left: 0,
@@ -3821,31 +3863,24 @@ const styles = StyleSheet.create({
         elevation: 26,
         shadowColor: 'transparent',
     },
-    // Панель имени в строке под швом (2026-10-11) — просто Text, фиксированная
-    // ширина/высота задаются инлайн через FramedSquare (seamNameWidth/
-    // switchRowH, см. место рендера). 2026-10-15 — сосед справа сменился:
-    // раньше настройки+лог, теперь кнопки навигации (переехали с каймы рамки
-    // дороги, те уехали в headerContent, см. его докстринг).
+    // Панель имени в строке имя+переключатели (2026-10-11, см.
+    // renderNameSwitchRow) — просто Text, фиксированная ширина/высота
+    // задаются инлайн через FramedSquare (seamNameWidth/seamRowH, см. место
+    // рендера).
     seamNameText: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.small },
     // Тот же стиль, что был у RoundPanel/RoadBonusPanel#styles.value (см.
     // их докстринги) — визуальное единообразие сохранено, хотя сам рендер
     // теперь инлайн через FramedSquare, не через эти компоненты (те остались
     // на PersonPanel, используются landscape/web-раскладкой в PlayerInfoPanel).
-    // Используется в styles.panelHeaderRow (headerContent, см. её рендер) —
-    // 2026-10-15 переехал туда с панели "Твой ход" (та убрана целиком для
-    // mobileNav), сам стиль текста не менялся.
     seamRoundValue: { color: colors.textOnDark, fontWeight: 'bold', fontSize: font.h2 },
     seamBonusValue: { color: colors.success, fontWeight: 'bold', fontSize: font.h2 },
-    // Ряд из 5 квадратов (Раунд/Ход/Бонус дороги + настройки/лог) на месте
-    // убранного баннера "Твой ход" — ТОЛЬКО mobileNav, см. headerContent.
-    // marginTop — та же величина, что раньше держал сам turnBanner (верх
-    // ряда начинается на том же месте, где раньше начинался баннер).
+    // Общий флекс-ряд для ОБЕИХ строк низа (раунд/ход/бонус+настройки/лог —
+    // через renderCompactHeaderRow с overlayStyle=styles.seamRow выше, И
+    // имя+переключатели — через renderNameSwitchRow, marginTop:0 там
+    // перебивает marginTop ниже) — сам marginTop относится ТОЛЬКО к
+    // landscape-вызову (headerContent левой панели, где ряд в потоке и ему
+    // нужен верхний отступ от соседей).
     panelHeaderRow: { flexDirection: 'row', marginTop: spacing.xs },
-    // 2026-10-16 — вынесен из инлайн-объекта у кнопки навигации "вверх" в
-    // seamRow: StyleSheet.create даёт СТАБИЛЬНУЮ ссылку на каждый ре-рендер
-    // (в отличие от {marginLeft: spacing.xs} прямо в JSX), что нужно для
-    // корректной работы React.memo у FramedSquare (см. её докстринг).
-    seamNavUpSpacer: { marginLeft: spacing.xs },
     // Блок дороги (кнопки навигации | сетка) — ВСЕГДА строка (кнопки колонкой
     // слева, дорога справа, по прямому запросу пользователя, 2026-08-31,
     // третий заход — было выше/ниже), дорога всегда вертикальная независимо

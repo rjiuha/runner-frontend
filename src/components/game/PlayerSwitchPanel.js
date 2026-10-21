@@ -87,10 +87,21 @@ function SwitchSlot({ player, active, onSelect, height }) {
  *
  * `height` — высота ряда переключателей, приходит от вызывающей стороны
  * (GameBoardScreen.js), та же величина, что и у соседних элементов строки
- * (стрелки навигации, имя+настройки+лог) — всё это один визуальный ряд.
+ * (имя, раунд/ход/бонус) — всё это один визуальный ряд.
+ *
+ * `mirrored` (2026-10-21, по прямому запросу пользователя — компактная
+ * строка на Android/веб-портрете перестраивается, занятые слоты должны
+ * начинаться с ПРАВОГО края) — зеркалит порядок отрисовки всех 4 слотов
+ * целиком (не просто переносит блокированные слоты на другую сторону):
+ * слот с исходным индексом 0 рисуется САМЫМ ПРАВЫМ, 3 — самым левым.
+ * `key` считается от ИСХОДНОГО индекса `i` (не от позиции после зеркала) —
+ * иначе смена `mirrored` на лету переcоздавала бы все слоты.
  */
-function PlayerSwitchPanel({ players, activeId, onSelect, height }) {
+function PlayerSwitchPanel({ players, activeId, onSelect, height, mirrored = false }) {
     const slots = Array.from({ length: MAX_SLOTS }, (_, i) => players[i] ?? null);
+    const order = mirrored
+        ? Array.from({ length: MAX_SLOTS }, (_, i) => MAX_SLOTS - 1 - i)
+        : Array.from({ length: MAX_SLOTS }, (_, i) => i);
     // Звук тапа по переключателю (2026-10-14, по прямому запросу пользователя)
     // — свой плеер прямо в компоненте (не тянем через GameBoardScreen,
     // переключатель самодостаточен) на канале action ("Игровые звуки"),
@@ -112,15 +123,18 @@ function PlayerSwitchPanel({ players, activeId, onSelect, height }) {
 
     return (
         <View style={styles.row}>
-            {slots.map((p, i) => (
-                <SwitchSlot
-                    key={p ? p.id : `empty-${i}`}
-                    player={p}
-                    active={!!p && p.id === activeId}
-                    onSelect={handleSelect}
-                    height={height}
-                />
-            ))}
+            {order.map((i) => {
+                const p = slots[i];
+                return (
+                    <SwitchSlot
+                        key={p ? p.id : `empty-${i}`}
+                        player={p}
+                        active={!!p && p.id === activeId}
+                        onSelect={handleSelect}
+                        height={height}
+                    />
+                );
+            })}
         </View>
     );
 }

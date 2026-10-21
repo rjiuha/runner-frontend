@@ -2,6 +2,20 @@
 import { statusWorsened } from '../constants/runnerAnimHelpers';
 import { forwardNeighbors, neighborPosition } from './hexDirection';
 import { RUNNER_TYPES } from '../constants/GameConstants';
+import { createLogger } from './logger';
+
+// Диагностика ТОЛЬКО (2026-10-21, живая жалоба "при сдвиге трассы не
+// отобразился бегун") — не меняет поведение, только логирует момент раннего
+// `return` ниже. Гипотеза (НЕ подтверждена без живого повтора): бегун, чей
+// `prev.status` уже был 'destroyed'/'broken' ДО этого track_shift-события
+// (например, умер раньше в том же бою на этом же фрагменте), не проходит
+// `statusWorsened()` и тихо не получает анимацию вообще — токен просто
+// пропадает (segment обнуляется редьюсером) без единого визуального кадра.
+// Если в следующий повтор в логе появится ANIMDBG-строка с reason=track_shift
+// для "пропавшего" бегуна — гипотеза подтверждена, чинить ТУТ (решить, какую
+// терминальную позу показать уже-мёртвому бегуну при реальном уходе
+// фрагмента), не трогая тайминг choreography.
+const animDbgLog = createLogger('ANIMDBG');
 
 /**
  * 2026-09-18: бэк добавил явное поле `reason` к `runner_destroy` — терминальная
@@ -278,9 +292,26 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             }
         }
 
-        if (!statusWorsened(prev.status, patch.status)) return;
-
-        if (patch.status === 'destroyed') {
+        // runner_destroy, дошедший сюда (не Жнец/не terrain, см. ранние
+        // return выше) — 2026-10-21, по прямому запросу пользователя: НЕ
+        // полагаемся на statusWorsened(prev.status, patch.status), чтобы
+        // решить, показывать ли 'destroyed'. Раньше тут был именно такой
+        // гейт — и ЛЮБОЙ бегун, чей `patch.status` не распознавался как
+        // "хуже" prev.status (например, `broken`, уже не 'healthy', а
+        // бэк для какого-то reason не бампит статус до 'destroyed' явным
+        // образом), тихо не получал анимацию вообще — токен просто пропадал
+        // (живая жалоба, сдвиг трассы, reason:'track_shift'). Но `broken` —
+        // НЕ терминальный статус: бегуна в этом состоянии можно добить чем
+        // угодно (выстрел, мина, сдвиг фрагмента) — `runner_destroy` для
+        // него должен показывать 'destroyed' так же, как для healthy/
+        // damaged. Единственная причина НЕ показывать анимацию — бегун УЖЕ
+        // был полностью `destroyed` ДО этого события (избыточная уборка с
+        // бэка, та анимация уже отыграла раньше) — остаётся через ANIMDBG.
+        if (e.event === 'runner_destroy') {
+            if (prev.status === 'destroyed') {
+                animDbgLog(`gate skip: runnerId=${patch.id} event=${e.event} reason=${e.reason} prevStatus=${prev.status} nextStatus=${patch.status}`);
+                return;
+            }
             // Ловушка Жнеца: reason:'reaper' подтверждает САМ ФАКТ ловушки,
             // но не называет id конкретного Жнеца — ищем по последней
             // известной позиции жертвы. bomb СНАЧАЛА (у Жнеца), жертва
@@ -299,9 +330,14 @@ export function handleSequenceItem(prevGame, e, trigger, animHelpers) {
             } else {
                 triggerPatch('destroyed', { toPosition: lastKnownPosition });
             }
-        } else {
-            triggerPatch('gotShot', {});
+            return;
         }
+
+        // runner_damage — тут statusWorsened всё ещё нужен: это НЕ
+        // финальное снятие с доски, а просто урон, который иногда приходит
+        // без реального изменения статуса (легитимный no-op, не баг).
+        if (!statusWorsened(prev.status, patch.status)) return;
+        triggerPatch('gotShot', {});
         return;
     }
 
