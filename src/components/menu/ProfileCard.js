@@ -1,28 +1,32 @@
 // src/components/menu/ProfileCard.js
 import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, spacing, font, radius } from '../../theme';
 
 /**
- * Блок профиля. Пока показывает ник из JWT.
+ * Блок профиля. Пока показывает ник из JWT. Нажатие (2026-10-22, по прямому
+ * запросу пользователя) открывает ProfileModal — подтверждение email,
+ * сброс пароля, удаление аккаунта (см. MainMenuScreen).
  * Сюда же добавим аватар, уровень и баланс, когда появится GET /api/me.
  */
-export default function ProfileCard({ username }) {
+export default function ProfileCard({ username, onPress }) {
+    const { t } = useI18n();
     const initial = (username ?? '?').charAt(0).toUpperCase();
 
     return (
-        <View style={styles.card}>
+        <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.8}>
             <View style={styles.avatar}>
                 <Text style={styles.avatarText} noGlobalTint>{initial}</Text>
             </View>
 
             <View style={styles.info}>
-                <Text style={styles.name} numberOfLines={1} noGlobalTint>{username ?? 'Игрок'}</Text>
-                <Text style={styles.sub} noGlobalTint>Уровень 1</Text>
+                <Text style={styles.name} numberOfLines={1} noGlobalTint>{username ?? t('menu.profileCard.defaultName')}</Text>
+                <Text style={styles.sub} noGlobalTint>{t('menu.profileCard.level')}</Text>
             </View>
 
             {/* TODO MVP-2: баланс монет, кнопка магазина */}
-        </View>
+        </TouchableOpacity>
     );
 }
 

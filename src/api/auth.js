@@ -2,12 +2,18 @@
 import { request, setTokens, clearTokens, getRefreshToken } from './client';
 
 export const authApi = {
-    /** POST /api/login → сохраняет токены и возвращает их */
-    async login(email, password) {
+    /**
+     * POST /api/login → сохраняет токены и возвращает их. `login` — email
+     * ИЛИ ник (бэк сам отличает по наличию «@», см. README/UserRepository
+     * на бэке, read-only, 2026-10-22) — поле раньше называлось `email` в
+     * теле запроса, бэк сменил ключ на `login` тем же коммитом, что добавил
+     * вход по нику.
+     */
+    async login(login, password) {
         const tokens = await request('/login', {
             method: 'POST',
             auth: false,
-            body: { email: email.trim(), password },
+            body: { login: login.trim(), password },
         });
         await setTokens(tokens);
         return tokens;
@@ -42,5 +48,31 @@ export const authApi = {
             }
         }
         await clearTokens();
+    },
+
+    /**
+     * POST /api/password/forgot — всегда отвечает {"result":"ok"}, даже если
+     * такого логина нет/email не подтверждён (бэк не раскрывает, кто
+     * зарегистрирован, см. README). `login` — email или ник, как в login().
+     */
+    forgotPassword(login) {
+        return request('/password/forgot', {
+            method: 'POST',
+            auth: false,
+            body: { login: login.trim() },
+        });
+    },
+
+    /**
+     * POST /api/password/reset — код из письма (6 цифр) + новый пароль.
+     * Отзывает все refresh-токены на бэке; уже выданные access-токены
+     * доживают свой срок (до часа) — локально выходить из сессии не нужно.
+     */
+    resetPassword(login, code, password) {
+        return request('/password/reset', {
+            method: 'POST',
+            auth: false,
+            body: { login: login.trim(), code: code.trim(), password },
+        });
     },
 };

@@ -2,6 +2,7 @@
 import React from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import Button from '../ui/Button';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, spacing, font, radius } from '../../theme';
 
 /**
@@ -13,14 +14,15 @@ import { colors, spacing, font, radius } from '../../theme';
  * главный экран (onExit), см. onRequestClose.
  */
 export default function GameFinishModal({ visible, winnerName, onExit }) {
+    const { t } = useI18n();
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onExit}>
             <View style={styles.backdrop}>
                 <View style={styles.sheet}>
                     <Text style={styles.title} noGlobalTint>
-                        {winnerName ? `Игрок ${winnerName} победил!` : 'Игра завершена'}
+                        {winnerName ? t('game.finish.winner', { name: winnerName }) : t('game.finish.gameOver')}
                     </Text>
-                    <Button title="Выйти" onPress={onExit} style={styles.exitBtn} />
+                    <Button title={t('game.finish.exitBtn')} onPress={onExit} style={styles.exitBtn} />
                 </View>
             </View>
         </Modal>

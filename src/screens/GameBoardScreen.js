@@ -55,6 +55,7 @@ import { COMMENT_SOUNDS } from '../constants/commentSounds';
 import { LAND_MINE_SOUND, RADIATION_SOUND, RICOCHET_HIT_SOUNDS } from '../constants/commonSounds';
 import { RUNNER_PICKED_SOUND, LOG_TOGGLE_SOUND } from '../constants/uiSounds';
 import { BACKGROUND_MUSIC_TRACKS, pickRandomTrackIndex } from '../constants/backgroundMusic';
+import { useI18n } from '../hooks/useI18n';
 import { notify, confirm } from '../lib/notify';
 import { createLogger } from '../lib/logger';
 import { runnerGameApi } from '../api/runnerGame';
@@ -66,13 +67,6 @@ import {
     RUNNER_DISPLAY, RUNNER_STATUS, RUNNER_TYPES, TAP_MODE, TURN_BANNER_MIN_HEIGHT,
 } from '../constants/GameConstants';
 import { colors, spacing, font, radius } from '../theme';
-
-const STATUS_LABEL = {
-    connecting: 'Подключение…',
-    syncing: 'Синхронизация…',
-    live: 'В сети',
-    error: 'Нет связи, переподключаемся…',
-};
 
 // Через сколько показать кнопку ручного рефетча, если игрок-цель зависшей
 // коллизии (game.extraTurnPlayer) долго не отвечает — бэк это сам не разруливает.
@@ -157,14 +151,14 @@ const DEAD_STATUSES = [RUNNER_STATUS.BROKEN, RUNNER_STATUS.DESTROYED];
 // нужно явно пройти (усилить или пропустить), прежде чем откроется тап по
 // доске для перемещения/размещения.
 function stepInstruction(
-    step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
+    t, step, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
     pendingReaperPlacement, reaperPreviewReady, canReaperShoot, reaperConfirmed,
 ) {
     if (pendingReaperPlacement) {
         // До того, как "прилёт" из-за края карты успел доиграть
         // (reaperPreviewReady), подсветки на доске ещё нет — тапать некуда,
         // текст объясняет паузу, а не намекает на несуществующие клетки.
-        if (!reaperPreviewReady) return 'Жнец приближается…';
+        if (!reaperPreviewReady) return t('game.hint.reaperApproaching');
         // Два последовательных диалога (2026-10-11, по прямому запросу
         // пользователя): сперва подтверждение размещения (✓/✕, см. кнопки
         // ниже в рендере), ПОТОМ, только после ✓ — выбор выстрела. Текст
@@ -174,8 +168,8 @@ function stepInstruction(
         // реально подсвеченные клетки, см. highlightedCells) — если выстрела
         // в принципе нет, автоэффект (autoNoShotAttemptedRef) решит сам,
         // этот текст виден лишь на миг или не виден вовсе.
-        if (!reaperConfirmed) return 'Жнец на месте — подтверди размещение';
-        return 'Тапни на цель для выстрела или нажми «Скип»';
+        if (!reaperConfirmed) return t('game.hint.reaperConfirmPlacement');
+        return t('game.hint.shootOrSkip');
     }
     if (pendingSelect) {
         // Имя бегуна — по прямому запросу пользователя: раньше текст был безличным
@@ -186,18 +180,18 @@ function stepInstruction(
         // "подтверди или тапни бегуна ещё раз, чтобы отменить" избыточна,
         // но короткое "подтверди действие" оставлено — по отдельному прямому
         // запросу тем же днём, добавить обратно в ту же строку.
-        const label = pendingRunnerName ? `«${pendingRunnerName}»` : 'Бегун';
+        const label = pendingRunnerName ? `«${pendingRunnerName}»` : t('game.hint.runnerFallbackLabel');
         return pendingSelect.type === 'ROLL'
-            ? `Накат для ${label} выбран — подтверди действие`
-            : `Подтверди выбор бегуна ${label}`;
+            ? t('game.hint.rollSelected', { label })
+            : t('game.hint.confirmRunnerSelection', { label });
     }
     switch (step) {
         case PLAYER_STEP.SELECT:
-            return 'Перетащи кубик на карточку бегуна';
+            return t('game.hint.dragDiceToRunner');
         case PLAYER_STEP.ABILITY:
-            if (pendingAbility?.ability === 'heal') return 'Тапни карточку своего повреждённого бегуна';
-            if (pendingAbility?.ability === 'reaper') return 'Тапни подсвеченную клетку, чтобы поставить Жнеца';
-            return 'Выбери усиление, если хочешь';
+            if (pendingAbility?.ability === 'heal') return t('game.hint.tapDamagedRunner');
+            if (pendingAbility?.ability === 'reaper') return t('game.hint.tapCellForReaper');
+            return t('game.hint.chooseAbilityOptional');
         case PLAYER_STEP.MOVE:
             // activeRunner может быть неизвестен клиенту сразу после
             // reconnect/резинка — RunnerPlayer::toArray() на бэке не отдаёт
@@ -207,23 +201,23 @@ function stepInstruction(
             // намекала на подсвеченные клетки, которых физически нет
             // (жалоба пользователя, 2026-09-07 — "не подсвечена доступная
             // клетка... но диалог пропуска вижу").
-            if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — дождись следующего события или обнови соединение';
+            if (!activeRunner) return t('game.hint.noActiveRunnerMove');
             // 2026-10-16, по прямому запросу пользователя: накат должен быть
             // явно назван накатом в тексте подсказки, не слит с обычным
             // ходом — тот же признак наката (activeRunner.dice===0 И
             // rollDice!=null), что уже используется в handleCellPress
             // (isRollMove) и в RunnerCard.js (diceValue).
             if (activeRunner.dice === 0 && activeRunner.rollDice != null) {
-                return 'Накат — выбери направление';
+                return t('game.hint.rollChooseDirection');
             }
             return activeRunner.segment == null
-                ? 'Тапни подсвеченную клетку в заднем ряду — это выход на трассу'
-                : 'Выбери доступную клетку для хода';
+                ? t('game.hint.tapExitCell')
+                : t('game.hint.chooseMoveCell');
         case PLAYER_STEP.SHOOT:
-            if (!activeRunner) return 'Не удалось определить активного бегуна (проблема синхронизации) — доступен только «Скип»';
-            return 'Тапни на цель для выстрела или нажми «Скип»';
+            if (!activeRunner) return t('game.hint.noActiveRunnerShoot');
+            return t('game.hint.shootOrSkip');
         case PLAYER_STEP.ROAD_BONUS:
-            return 'Применить бонус кубика дороги?';
+            return t('game.hint.applyRoadBonus');
         default:
             return null;
     }
@@ -251,6 +245,16 @@ function stepInstruction(
 const gameLog = createLogger('GAME');
 
 export default function GameBoardScreen({ route, navigation }) {
+    const { t } = useI18n();
+    // Те же 4 статуса соединения useMercure, что у LobbyScreen.js — читает
+    // ТЕ ЖЕ ключи словаря (lobby.status.*), слово в слово одинаковый текст,
+    // не дублируем отдельным набором ключей game.*.
+    const STATUS_LABEL = {
+        connecting: t('lobby.status.connecting'),
+        syncing: t('lobby.status.syncing'),
+        live: t('lobby.status.live'),
+        error: t('lobby.status.error'),
+    };
     useAdaptiveOrientation();
     // GameBoardScreen сознательно без SafeAreaView (см. шапку файла) — сам
     // экран считает отступы вручную (insets.top у roadZonePortrait/
@@ -280,10 +284,10 @@ export default function GameBoardScreen({ route, navigation }) {
     // Капаем на 200 записей, чтобы не расти бесконечно за долгую партию.
     const [eventLog, setEventLog] = useState([]);
     const pushLog = useCallback((e) => {
-        const text = describeEvent(e) ?? rawEventFallback(e);
+        const text = describeEvent(e, t) ?? rawEventFallback(e);
         const entry = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, time: new Date().toLocaleTimeString(), text };
         setEventLog((log) => (log.length >= 200 ? [...log.slice(1), entry] : [...log, entry]));
-    }, []);
+    }, [t]);
 
     // Анимации бегунов (пока только Скаут — см. constants/runnerAnimations) —
     // транзиентный стейт "что сейчас играется" по runnerId, отдельно от
@@ -1856,7 +1860,7 @@ export default function GameBoardScreen({ route, navigation }) {
         () =>
             gamePlayers.map((p, i) => ({
                 id: p.id,
-                name: p.user?.username ?? `Игрок ${p.id}`,
+                name: p.user?.username ?? t('game.playerFallback', { id: p.id }),
                 // Цвет — с бэка (RunnerPlayer.color, случайно и без повторов
                 // назначается при создании партии). Индекс — фолбэк на случай
                 // партий, созданных до появления этого поля. 2026-10-14: бэк
@@ -1885,7 +1889,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 // не должны мигать раньше анимации на доске).
                 runners: displayRunners.filter((r) => r.playerId === p.id),
             })),
-        [gamePlayers, displayRunners],
+        [gamePlayers, displayRunners, t],
     );
 
     const playerColorById = useMemo(() => Object.fromEntries(players.map((p) => [p.id, p.color])), [players]);
@@ -2357,7 +2361,7 @@ export default function GameBoardScreen({ route, navigation }) {
             }
         } catch (e) {
             gameLog('действие: ПРОВАЛ —', e.userMessage ?? e.message);
-            notify('Не удалось выполнить действие', e.userMessage ?? e.message);
+            notify(t('game.actionFailTitle'), e.userMessage ?? e.message);
         } finally {
             setBusy(false);
         }
@@ -2374,12 +2378,12 @@ export default function GameBoardScreen({ route, navigation }) {
     // "действие зависло" ему уже не нужен.
     const handleSurrender = useCallback(() => {
         confirm(
-            'Покинуть игру?',
-            'Ваши бегуны будут сняты с трассы, вы выбудете из партии. Остальные игроки продолжат без вас.',
+            t('game.surrender.confirmTitle'),
+            t('game.surrender.confirmMessage'),
             () => runAction(() => runnerGameApi.surrender().then(goToMainMenu), { skipStuckWatch: true }),
-            'Покинуть',
+            t('game.surrender.confirmBtn'),
         );
-    }, [runAction, goToMainMenu]);
+    }, [runAction, goToMainMenu, t]);
 
     // Остальные хендлеры этих панелей — см. useGameMenuModals() выше.
     // handleLeaveFromMenu остаётся тут: закрывает меню (из хука) и зовёт
@@ -2903,7 +2907,7 @@ export default function GameBoardScreen({ route, navigation }) {
         return (
             <View style={styles.wrapper}>
                 <View style={styles.center}>
-                    <LoadingCard label="Ожидание начала партии…" />
+                    <LoadingCard label={t('game.waitingForStart')} />
                 </View>
                 <EventLogPanel entries={eventLog} />
             </View>
@@ -2930,7 +2934,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // отдельный плавающий банер над узкой доской либо перекрывал её, либо
     // занимал место, которое теперь отдано доске/панели.
     const turnHintText = stepInstruction(
-        myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
+        t, myStep, activeRunner, pendingAbility, pendingSelect, pendingRunnerName,
         pendingReaperPlacement, reaperPreviewReady, canReaperShoot, reaperConfirmed,
     );
     // pendingSelect (карточка выбрана, ждём ✓/✕) — кнопки ПРАВЕЕ текста, в
@@ -2954,7 +2958,7 @@ export default function GameBoardScreen({ route, navigation }) {
     // никакого хода/подсказки, GameFinishModal уже показывает результат.
     const turnBannerInner = game.status === GAME_STATUS.FINISH ? null : trackShiftPhase ? (
         <Text style={[styles.turnHint, styles.turnHintCenter]} noGlobalTint>
-            Трасса смещается…
+            {t('game.trackShift')}
         </Text>
     ) : game.extraTurnPlayer != null ? (
         <View style={styles.collisionRow}>
@@ -2971,10 +2975,13 @@ export default function GameBoardScreen({ route, navigation }) {
                     теперь скорее теоретическая, чем реально видимая. */}
                 <Text style={styles.turnHint} noGlobalTint>
                     {myCollision && pendingCollisionRoll
-                        ? `Заруба! Результат: ${collisionFlyingRunnerLabel ?? 'бегун'} отлетит ${directionLabel(pendingCollisionRoll.direction)}. Принять?`
+                        ? t('game.collision.result', {
+                            runner: collisionFlyingRunnerLabel ?? t('game.collision.fallbackRunner'),
+                            direction: directionLabel(pendingCollisionRoll.direction),
+                        })
                         : myCollision
-                            ? 'Заруба! Жду результат…'
-                            : `Заруба! Ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`}
+                            ? t('game.collision.waitingResult')
+                            : t('game.collision.waitingPlayer', { player: collisionWinnerPlayer?.name ?? t('game.collision.fallbackPlayer') })}
                 </Text>
             </View>
             {myCollision && !busy && collisionDecisionReady && (
@@ -2994,7 +3001,7 @@ export default function GameBoardScreen({ route, navigation }) {
             )}
             {!myCollision && showStuckRefresh && (
                 <Button
-                    title="Обновить состояние"
+                    title={t('game.refreshStateBtn')}
                     variant="info"
                     onPress={() => {
                         runnerAnim.reset();
@@ -3013,7 +3020,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 2026-09-14, тем же общим механизмом, что и подсказки "что
                 делать дальше" (см. usePulse/PulseText, CLAUDE.md). */}
             <PulseText active baseColor={colors.textOnDark} toColor={colors.success} style={styles.turnTitleMine}>
-                Твой ход
+                {t('game.yourTurn')}
             </PulseText>
             {pendingReaperPlacement && !busy && !reaperPreviewReady ? (
                 // Approach-фаза (Жнец ещё летит) — БЕЗ диалога вообще, ни
@@ -3049,7 +3056,7 @@ export default function GameBoardScreen({ route, navigation }) {
                                 <Button title="✕" variant="danger" onPress={() => setPendingReaperPlacement(null)} style={styles.turnSkipBtnCompact} />
                             </>
                         ) : (
-                            <Button title="Скип" variant="danger" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtnCompact} />
+                            <Button title={t('game.skipBtn')} variant="danger" onPress={() => handleReaperShoot(undefined)} style={styles.turnSkipBtnCompact} />
                         )}
                     </View>
                 </View>
@@ -3071,7 +3078,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
                     <View style={styles.turnBtnRow}>
                         <Button
-                            title={`Бонус +${game.trackGain ?? ''}`}
+                            title={t('game.roadBonusBtn', { n: game.trackGain ?? '' })}
                             variant="success"
                             onPress={() => handleRoadBonus(true)}
                             style={styles.turnSkipBtnCompact}
@@ -3092,7 +3099,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 // днём, по аналогии с кнопкой пропуска выстрела).
                 <View style={styles.turnHintRow}>
                     <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
-                    <Button title="Скип" variant="danger" onPress={handleAbilitySkip} style={styles.turnSkipBtnCompact} />
+                    <Button title={t('game.skipBtn')} variant="danger" onPress={handleAbilitySkip} style={styles.turnSkipBtnCompact} />
                 </View>
             ) : showShootSkip ? (
                 // "Пропустить выстрел" (2026-10-11, по прямому запросу
@@ -3105,7 +3112,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 // заходе передумал обратно на справа).
                 <View style={styles.turnHintRow}>
                     <Text style={[styles.turnHint, styles.turnHintFlex]} noGlobalTint>{turnHintText}</Text>
-                    <Button title="Скип" variant="danger" onPress={handleShootSkip} style={styles.turnSkipBtnCompact} />
+                    <Button title={t('game.skipBtn')} variant="danger" onPress={handleShootSkip} style={styles.turnSkipBtnCompact} />
                 </View>
             ) : (
                 // Центрировано (по прямому запросу пользователя, 2026-09-14) —
@@ -3117,7 +3124,7 @@ export default function GameBoardScreen({ route, navigation }) {
             )}
             {showActionStuckRefresh && !busy && (
                 <Button
-                    title="Обновить состояние"
+                    title={t('game.refreshStateBtn')}
                     variant="info"
                     onPress={() => {
                         setShowActionStuckRefresh(false);
@@ -3148,7 +3155,7 @@ export default function GameBoardScreen({ route, navigation }) {
         // красит кубики/обводку на доске/пилюлю переключателя (не выдуманный
         // отдельный акцент).
         <Text style={[styles.turnTitle, styles.turnHintCenter]} noGlobalTint>
-            Ход игрока:{' '}
+            {t('game.turnOfLabel')}{' '}
             <Text
                 style={{ color: playerColorById[currentTurnPlayer?.id] ?? colors.textOnDark }}
                 noGlobalTint
@@ -3187,13 +3194,16 @@ export default function GameBoardScreen({ route, navigation }) {
         // функции) ничего не гейтил на статус партии — как и turnBannerInner
         // (тот же пробел, подновлён тем же заходом).
         if (game.status === GAME_STATUS.FINISH) return null;
-        if (trackShiftPhase) return { kind: 'trackShift', text: 'Трасса смещается…' };
+        if (trackShiftPhase) return { kind: 'trackShift', text: t('game.trackShift') };
         if (game.extraTurnPlayer != null) {
             const text = myCollision && pendingCollisionRoll
-                ? `Заруба! Результат: ${collisionFlyingRunnerLabel ?? 'бегун'} отлетит ${directionLabel(pendingCollisionRoll.direction)}. Принять?`
+                ? t('game.collision.result', {
+                    runner: collisionFlyingRunnerLabel ?? t('game.collision.fallbackRunner'),
+                    direction: directionLabel(pendingCollisionRoll.direction),
+                })
                 : myCollision
-                    ? 'Заруба! Жду результат…'
-                    : `Заруба! Ждём ${collisionWinnerPlayer?.name ?? 'игрока'}`;
+                    ? t('game.collision.waitingResult')
+                    : t('game.collision.waitingPlayer', { player: collisionWinnerPlayer?.name ?? t('game.collision.fallbackPlayer') });
             if (myCollision && !busy && collisionDecisionReady) {
                 return {
                     kind: 'collisionDecide',
@@ -3210,7 +3220,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     text,
                     buttons: [{
                         key: 'resync',
-                        title: 'Обновить состояние',
+                        title: t('game.refreshStateBtn'),
                         variant: 'info',
                         onPress: () => { runnerAnim.reset(); setPendingDeathRunnerIds(new Set()); resync(); },
                     }],
@@ -3229,7 +3239,7 @@ export default function GameBoardScreen({ route, navigation }) {
             // ЛЮБОЙ подсказки хода, не только тех, где есть кнопки. kind
             // привязан к id текущего игрока — смена хода разворачивает
             // карточку заново, даже если предыдущий игрок успел её закрыть.
-            return { kind: `opponentTurn:${currentTurnPlayer?.id ?? 'x'}`, text: `Ход игрока: ${currentTurnPlayer?.user?.username ?? '—'}` };
+            return { kind: `opponentTurn:${currentTurnPlayer?.id ?? 'x'}`, text: t('game.opponentTurn', { name: currentTurnPlayer?.user?.username ?? '—' }) };
         }
         if (pendingReaperPlacement && !busy) {
             // Approach-фаза (Жнец ещё летит из-за края карты) — БЕЗ диалога
@@ -3250,7 +3260,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     ],
                 };
             }
-            return { kind: 'reaperShoot', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: () => handleReaperShoot(undefined) }] };
+            return { kind: 'reaperShoot', text: turnHintText, buttons: [{ key: 'skip', title: t('game.skipBtn'), variant: 'danger', onPress: () => handleReaperShoot(undefined) }] };
         }
         if (pendingSelect && !busy) {
             return {
@@ -3267,16 +3277,16 @@ export default function GameBoardScreen({ route, navigation }) {
                 kind: 'roadBonus',
                 text: turnHintText,
                 buttons: [
-                    { key: 'bonus', title: `Бонус +${game.trackGain ?? ''}`, variant: 'success', onPress: () => handleRoadBonus(true) },
+                    { key: 'bonus', title: t('game.roadBonusBtn', { n: game.trackGain ?? '' }), variant: 'success', onPress: () => handleRoadBonus(true) },
                     { key: 'skip', title: '✕', variant: 'danger', onPress: () => handleRoadBonus(false) },
                 ],
             };
         }
         if (showAbilitySkip) {
-            return { kind: 'abilitySkip', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleAbilitySkip }] };
+            return { kind: 'abilitySkip', text: turnHintText, buttons: [{ key: 'skip', title: t('game.skipBtn'), variant: 'danger', onPress: handleAbilitySkip }] };
         }
         if (showShootSkip) {
-            return { kind: 'shootSkip', text: turnHintText, buttons: [{ key: 'skip', title: 'Скип', variant: 'danger', onPress: handleShootSkip }] };
+            return { kind: 'shootSkip', text: turnHintText, buttons: [{ key: 'skip', title: t('game.skipBtn'), variant: 'danger', onPress: handleShootSkip }] };
         }
         // Простая безкнопочная подсказка шага (SELECT в самом начале хода,
         // MOVE/SHOOT без доступного "скип", ожидание второго тапа усиления и
@@ -3288,7 +3298,7 @@ export default function GameBoardScreen({ route, navigation }) {
         // успел закрыть/свернуть её на предыдущем шаге; мелкие изменения
         // turnHintText В РАМКАХ одного шага не меняют kind — карточка
         // остаётся в том виде, в каком её оставил игрок.
-        return { kind: `hint:${myStep}`, text: `Твой ход. ${turnHintText}` };
+        return { kind: `hint:${myStep}`, text: t('game.yourTurnHint', { hint: turnHintText }) };
     })();
 
     // Общий элемент для обеих раскладок (было продублировано дважды —
@@ -3517,7 +3527,7 @@ export default function GameBoardScreen({ route, navigation }) {
                 дольше нескольких секунд неверно в любом случае. */}
             <GameFinishModal
                 visible={game.status === GAME_STATUS.FINISH && (finishModalForced || (!trackShiftPhase && !hasDeathAnimPlaying))}
-                winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? `Игрок ${winnerPlayer.id}` : null)}
+                winnerName={winnerPlayer?.user?.username ?? (winnerPlayer ? t('game.playerFallback', { id: winnerPlayer.id }) : null)}
                 onExit={goToMainMenu}
             />
 

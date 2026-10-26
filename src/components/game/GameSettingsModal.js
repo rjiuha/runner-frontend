@@ -13,16 +13,19 @@ import {
     revertAudioSettings,
     setAudioSettingsLive,
 } from '../../lib/audioSettings';
+import { useI18n } from '../../hooks/useI18n';
 import { confirm } from '../../lib/notify';
 
-// Порядок строк — см. lib/audioSettings.js за разбором, что входит в каждый
-// канал (voice отделён от остальных игровых звуков по прямому запросу
+// Порядок каналов — см. lib/audioSettings.js за разбором, что входит в
+// каждый (voice отделён от остальных игровых звуков по прямому запросу
 // пользователя, 2026-10-04; отдельный регулятор "Комментатор" убран
-// 2026-10-14 — объединён с "Игровые звуки", см. тот же файл).
-const ROWS = [
-    { key: 'music', label: 'Фоновая музыка' },
-    { key: 'voice', label: 'Голоса бегунов' },
-    { key: 'action', label: 'Игровые звуки' },
+// 2026-10-14 — объединён с "Игровые звуки", см. тот же файл). Подписи —
+// ключи словаря (settings.sound.*), не сам текст — собираются в t() ниже,
+// чтобы реагировать на смену языка.
+const ROW_KEYS = [
+    { key: 'music', labelKey: 'settings.sound.music' },
+    { key: 'voice', labelKey: 'settings.sound.voice' },
+    { key: 'action', labelKey: 'settings.sound.action' },
 ];
 
 /**
@@ -36,6 +39,7 @@ const ROWS = [
  * откатывает живые значения к последним сохранённым.
  */
 export default function GameSettingsModal({ visible, onClose }) {
+    const { t } = useI18n();
     const settings = useAudioSettings();
     // 2026-10-14, реальный баг: раньше снимок жил в useRef — мутация ref'а
     // ПОСЛЕ handleSave не вызывает ре-рендер, значит `dirty`/`handleExit`,
@@ -68,10 +72,10 @@ export default function GameSettingsModal({ visible, onClose }) {
         // cancelLabel: 'Назад' (2026-10-14, по прямому запросу пользователя —
         // ТОЛЬКО для этого диалога, не меняет дефолт 'Отмена' у остальных
         // confirm() по проекту, см. lib/notify.js).
-        confirm('Выйти без сохранения?', 'Изменения громкости не будут сохранены.', () => {
+        confirm(t('settings.sound.exitUnsavedTitle'), t('settings.sound.exitUnsavedMessage'), () => {
             revertAudioSettings();
             onClose();
-        }, 'Выйти', 'Назад');
+        }, t('settings.sound.exitBtn'), t('common.back'));
     };
 
     return (
@@ -90,12 +94,12 @@ export default function GameSettingsModal({ visible, onClose }) {
             <GestureHandlerRootView style={styles.gestureRoot}>
                 <View style={styles.backdrop}>
                     <View style={styles.sheet}>
-                        <Text style={styles.title} noGlobalTint>Настройки звука</Text>
+                        <Text style={styles.title} noGlobalTint>{t('settings.sound.title')}</Text>
 
-                        {ROWS.map((row) => (
+                        {ROW_KEYS.map((row) => (
                             <View key={row.key} style={styles.row}>
                                 <View style={styles.rowHeader}>
-                                    <Text style={styles.label} noGlobalTint>{row.label}</Text>
+                                    <Text style={styles.label} noGlobalTint>{t(row.labelKey)}</Text>
                                     <Text style={styles.value} noGlobalTint>{Math.round(settings[row.key] * 100)}%</Text>
                                 </View>
                                 <Slider
@@ -107,14 +111,14 @@ export default function GameSettingsModal({ visible, onClose }) {
 
                         <View style={styles.buttonRow}>
                             <Button
-                                title="Выйти"
+                                title={t('settings.sound.exitBtn')}
                                 variant="muted"
                                 onPress={handleExit}
                                 style={styles.btn}
                                 textStyle={styles.btnText}
                             />
                             <Button
-                                title="Сохранить"
+                                title={t('common.save')}
                                 onPress={handleSave}
                                 disabled={!dirty}
                                 style={styles.btn}

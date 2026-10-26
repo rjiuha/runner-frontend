@@ -14,19 +14,20 @@ import { SWITCH_ON_SOUND, SWITCH_OFF_SOUND } from '../constants/uiSounds';
 import { lobbyReducer } from '../store/lobbyReducer';
 import { unwrapBundle } from '../lib/mercureBundle';
 import { ROUTES } from '../navigation/routes';
+import { useI18n } from '../hooks/useI18n';
 import { notify } from '../lib/notify';
 import { colors, spacing, font, radius } from '../theme';
-
-const STATUS_LABEL = {
-    connecting: 'Подключение…',
-    syncing: 'Синхронизация…',
-    live: 'В сети',
-    error: 'Нет связи, переподключаемся…',
-};
 
 export default function LobbyScreen({ route, navigation }) {
     const { lobbyId } = route.params;
     const { user } = useAuth();
+    const { t } = useI18n();
+    const STATUS_LABEL = {
+        connecting: t('lobby.status.connecting'),
+        syncing: t('lobby.status.syncing'),
+        live: t('lobby.status.live'),
+        error: t('lobby.status.error'),
+    };
     const [busy, setBusy] = useState(false);
     const leftRef = useRef(false); // не дёргать API после выхода
 
@@ -65,11 +66,11 @@ export default function LobbyScreen({ route, navigation }) {
     const onTransient = useCallback((bundle) => {
         for (const e of unwrapBundle(bundle)) {
             if (e.event === 'lobby_closed' && !leftRef.current) {
-                notify('Лобби закрыто');
+                notify(t('lobby.closed'));
                 goMenu();
             }
         }
-    }, [goMenu]);
+    }, [goMenu, t]);
 
     const { state: lobby, status } = useMercure({
         topic: `lobby_${lobbyId}`,
@@ -108,10 +109,10 @@ export default function LobbyScreen({ route, navigation }) {
     // намеренно нейтральный, верен для обоих случаев.
     useEffect(() => {
         if (lobby && me === undefined && !leftRef.current) {
-            notify('Ты больше не в этом лобби');
+            notify(t('lobby.kickedOrLeft'));
             goMenu();
         }
-    }, [lobby, me, goMenu]);
+    }, [lobby, me, goMenu, t]);
 
     // Звук "готов"/"не готов" (2026-10-14, по прямому запросу пользователя —
     // те же файлы, что у PlayerSwitchPanel на доске) — свой плеер прямо тут
@@ -137,7 +138,7 @@ export default function LobbyScreen({ route, navigation }) {
             // Оптимистично НЕ обновляем: настоящий стейт придёт событием player_ready
             await (me.isReady ? lobbyApi.unready() : lobbyApi.ready());
         } catch (e) {
-            notify('Ошибка', e.userMessage ?? e.message);
+            notify(t('common.error'), e.userMessage ?? e.message);
         } finally {
             setBusy(false);
         }
@@ -169,7 +170,7 @@ export default function LobbyScreen({ route, navigation }) {
             // событием player_kicked (тот же принцип, что и у toggleReady).
             await lobbyApi.kick(playerId);
         } catch (e) {
-            notify('Ошибка', e.userMessage ?? e.message);
+            notify(t('common.error'), e.userMessage ?? e.message);
         } finally {
             setKickingId(null);
         }
@@ -191,11 +192,11 @@ export default function LobbyScreen({ route, navigation }) {
                 {/* Заменяет убранную нативную шапку стека (headerShown:false в
                     RootNavigator, 2026-09-14) — та рисовалась на всю ширину
                     экрана системным шрифтом, мимо общего стиля приложения. */}
-                <Text style={styles.screenTitle} noGlobalTint>Лобби #{lobbyId}</Text>
+                <Text style={styles.screenTitle} noGlobalTint>{t('lobby.title', { id: lobbyId })}</Text>
 
                 <View style={styles.headRow}>
                     <Text style={styles.title} noGlobalTint>
-                        {lobby.players.length}/{lobby.maxPlayers} игроков
+                        {t('lobby.playersCount', { count: lobby.players.length, max: lobby.maxPlayers })}
                     </Text>
                     <View style={styles.statusRow}>
                         <View style={[styles.dot, status === 'live' && styles.dotLive]} />
@@ -209,10 +210,10 @@ export default function LobbyScreen({ route, navigation }) {
                             <Text style={styles.playerName} noGlobalTint>
                                 {p.username}
                                 {p.id === lobby.host?.id ? '  👑' : ''}
-                                {p.id === user?.id ? '  (ты)' : ''}
+                                {p.id === user?.id ? t('lobby.youTag') : ''}
                             </Text>
                             <Text style={[styles.badge, p.isReady && styles.badgeReady]} noGlobalTint>
-                                {p.isReady ? 'готов' : 'ждёт'}
+                                {p.isReady ? t('lobby.readyBadge') : t('lobby.waitingBadge')}
                             </Text>
                         </View>
                         {/* Кик — только у хоста, и не над самим собой (бэк
@@ -235,16 +236,16 @@ export default function LobbyScreen({ route, navigation }) {
                 {/* Свободные слоты */}
                 {Array.from({ length: Math.max(0, lobby.maxPlayers - lobby.players.length) }).map((_, i) => (
                     <View key={`slot${i}`} style={[styles.player, styles.slotEmpty]}>
-                        <Text style={styles.slotText} noGlobalTint>Ожидание игрока…</Text>
+                        <Text style={styles.slotText} noGlobalTint>{t('lobby.emptySlot')}</Text>
                     </View>
                 ))}
 
                 <Text style={styles.hint} noGlobalTint>
-                    Готовы {readyCount} из {lobby.maxPlayers}. Игра начнётся автоматически.
+                    {t('lobby.readyHint', { ready: readyCount, max: lobby.maxPlayers })}
                 </Text>
 
                 <Button
-                    title={me?.isReady ? 'Не готов' : 'Готов'}
+                    title={me?.isReady ? t('lobby.notReadyBtn') : t('lobby.readyBtn')}
                     variant={me?.isReady ? 'muted' : 'success'}
                     onPress={toggleReady}
                     loading={busy}
@@ -252,7 +253,7 @@ export default function LobbyScreen({ route, navigation }) {
                     style={styles.action}
                 />
                 <Button
-                    title="Покинуть лобби"
+                    title={t('lobby.leaveBtn')}
                     variant="danger"
                     onPress={leave}
                     loading={leaving}

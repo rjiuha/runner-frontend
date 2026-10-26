@@ -5,37 +5,59 @@ import Button from '../ui/Button';
 import { colors, spacing, font, radius } from '../../theme';
 import { DIALOG_ORIENTATION, setDialogOrientation } from '../../lib/dialogSettings';
 import { useDialogOrientation } from '../../hooks/useDialogOrientation';
+import { LOCALES } from '../../lib/i18n';
+import { useI18n } from '../../hooks/useI18n';
 
-const ORIENTATION_LABELS = {
-    [DIALOG_ORIENTATION.LEFT]: 'Слева',
-    [DIALOG_ORIENTATION.RIGHT]: 'Справа',
-};
 const ORIENTATION_OPTIONS = [DIALOG_ORIENTATION.LEFT, DIALOG_ORIENTATION.RIGHT];
+const LANGUAGE_OPTIONS = [LOCALES.RU, LOCALES.EN];
 
 /**
  * 2026-10-15, по прямому запросу пользователя — раздел "Игра" настроек
- * (см. GameSettingsHubModal.js). Пока одна настройка — "Ориентация
- * диалога" (к какой грани экрана прибита ручка сворачиваемой модалки,
- * GameDialogModal.js), выпадающий список из 2 вариантов.
+ * (см. GameSettingsHubModal.js). "Ориентация диалога" (к какой грани экрана
+ * прибита ручка сворачиваемой модалки, GameDialogModal.js) — выпадающий
+ * список из 2 вариантов.
  *
- * В отличие от GameSettingsModal (звук) — тут НЕТ отдельного шага
- * "Сохранить"/dirty-отслеживания: выбор в списке применяется и пишется в
- * storage сразу (см. lib/dialogSettings.js#setDialogOrientation) — один
- * дискретный переключатель, а не серия слайдеров с live-preview, второй
- * шаг подтверждения тут не несёт пользы.
+ * 2026-10-26, по прямому запросу пользователя — второй такой же
+ * переключатель, "Язык" (lib/i18n.js), тем же дискретным dropdown-приёмом:
+ * применяется и пишется в storage СРАЗУ по выбору, без общего шага
+ * "Сохранить" с остальными настройками этого экрана (у ориентации диалога
+ * уже было так же, см. ниже) — язык полностью независим от неё, просто
+ * второй дискретный переключатель в том же разделе.
+ *
+ * Названия языков в своих пунктах (`Русский`/`English`, settings.general.
+ * languageRu/languageEn) — идут через t(), как и всё остальное, но ЗНАЧЕНИЕ
+ * этих двух ключей ОДИНАКОВОЕ в обоих словарях (ru.js/en.js) — название
+ * языка всегда на родном языке независимо от текущей локали UI, иначе
+ * пользователь, переключивший язык по ошибке, не нашёл бы обратный пункт.
  *
  * Свой мини-dropdown (нет готового select-компонента в проекте, см.
- * components/ui/) — тап по текущему значению разворачивает список из 2
- * строк НИЖЕ (inline, не floating-попап — при 2 опциях всегда помещается).
+ * components/ui/) — тап по текущему значению разворачивает список НИЖЕ
+ * (inline, не floating-попап — при 2 опциях всегда помещается), оба
+ * переключателя делят один и тот же набор стилей (`selectBox`/
+ * `optionsList`/...), но у каждого свой локальный `optionsOpen`-стейт —
+ * разворачивать оба списка одновременно смысла нет, но и взаимно
+ * закрывать друг друга при открытии другого не требовалось.
  */
 export default function GameGeneralSettingsModal({ visible, onClose }) {
+    const { t, locale, setLocale } = useI18n();
     const orientation = useDialogOrientation();
-    const [optionsOpen, setOptionsOpen] = useState(false);
+    const [orientationOptionsOpen, setOrientationOptionsOpen] = useState(false);
+    const [languageOptionsOpen, setLanguageOptionsOpen] = useState(false);
 
     if (!visible) return null;
 
+    const ORIENTATION_LABELS = {
+        [DIALOG_ORIENTATION.LEFT]: t('settings.general.orientationLeft'),
+        [DIALOG_ORIENTATION.RIGHT]: t('settings.general.orientationRight'),
+    };
+    const LANGUAGE_LABELS = {
+        [LOCALES.RU]: t('settings.general.languageRu'),
+        [LOCALES.EN]: t('settings.general.languageEn'),
+    };
+
     const handleClose = () => {
-        setOptionsOpen(false);
+        setOrientationOptionsOpen(false);
+        setLanguageOptionsOpen(false);
         onClose();
     };
 
@@ -43,19 +65,19 @@ export default function GameGeneralSettingsModal({ visible, onClose }) {
         <Modal visible transparent animationType="fade" onRequestClose={handleClose}>
             <View style={styles.backdrop}>
                 <View style={styles.sheet}>
-                    <Text style={styles.title} noGlobalTint>Настройки игры</Text>
+                    <Text style={styles.title} noGlobalTint>{t('settings.general.title')}</Text>
 
                     <View style={styles.row}>
-                        <Text style={styles.label} noGlobalTint>Ориентация диалога</Text>
+                        <Text style={styles.label} noGlobalTint>{t('settings.general.dialogOrientationLabel')}</Text>
                         <TouchableOpacity
                             style={styles.selectBox}
-                            onPress={() => setOptionsOpen((v) => !v)}
+                            onPress={() => setOrientationOptionsOpen((v) => !v)}
                             activeOpacity={0.7}
                         >
                             <Text style={styles.selectValue} noGlobalTint>{ORIENTATION_LABELS[orientation]}</Text>
-                            <Text style={styles.chevron} noGlobalTint>{optionsOpen ? '▲' : '▼'}</Text>
+                            <Text style={styles.chevron} noGlobalTint>{orientationOptionsOpen ? '▲' : '▼'}</Text>
                         </TouchableOpacity>
-                        {optionsOpen && (
+                        {orientationOptionsOpen && (
                             <View style={styles.optionsList}>
                                 {ORIENTATION_OPTIONS.map((opt) => (
                                     <TouchableOpacity
@@ -63,7 +85,7 @@ export default function GameGeneralSettingsModal({ visible, onClose }) {
                                         style={[styles.option, opt === orientation && styles.optionActive]}
                                         onPress={() => {
                                             setDialogOrientation(opt);
-                                            setOptionsOpen(false);
+                                            setOrientationOptionsOpen(false);
                                         }}
                                         activeOpacity={0.7}
                                     >
@@ -74,7 +96,36 @@ export default function GameGeneralSettingsModal({ visible, onClose }) {
                         )}
                     </View>
 
-                    <Button title="Назад" variant="muted" onPress={handleClose} style={styles.btn} />
+                    <View style={styles.row}>
+                        <Text style={styles.label} noGlobalTint>{t('settings.general.languageLabel')}</Text>
+                        <TouchableOpacity
+                            style={styles.selectBox}
+                            onPress={() => setLanguageOptionsOpen((v) => !v)}
+                            activeOpacity={0.7}
+                        >
+                            <Text style={styles.selectValue} noGlobalTint>{LANGUAGE_LABELS[locale]}</Text>
+                            <Text style={styles.chevron} noGlobalTint>{languageOptionsOpen ? '▲' : '▼'}</Text>
+                        </TouchableOpacity>
+                        {languageOptionsOpen && (
+                            <View style={styles.optionsList}>
+                                {LANGUAGE_OPTIONS.map((opt) => (
+                                    <TouchableOpacity
+                                        key={opt}
+                                        style={[styles.option, opt === locale && styles.optionActive]}
+                                        onPress={() => {
+                                            setLocale(opt);
+                                            setLanguageOptionsOpen(false);
+                                        }}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={styles.optionText} noGlobalTint>{LANGUAGE_LABELS[opt]}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </View>
+                        )}
+                    </View>
+
+                    <Button title={t('common.back')} variant="muted" onPress={handleClose} style={styles.btn} />
                 </View>
             </View>
         </Modal>

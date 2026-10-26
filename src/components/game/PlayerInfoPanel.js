@@ -15,6 +15,7 @@ import PulseHighlight from '../ui/PulseHighlight';
 import PersonPanel, { NOTCH_RADIUS as PERSON_PANEL_NOTCH_RADIUS } from '../ui/PersonPanel';
 import FramePanel, { frameNotchRadius } from '../ui/FramePanel';
 import NeonGlow from '../ui/NeonGlow';
+import { useI18n } from '../../hooks/useI18n';
 import {
     PLAYER_ABILITIES,
     PLAYER_ABILITY_ORDER,
@@ -180,6 +181,7 @@ function PlayerInfoPanel({
     // карточки остаются, см. GameBoardScreen.js).
     rockerSwitcher = false,
 }) {
+    const { t } = useI18n();
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
     // экранах (по прямому запросу пользователя — "не думаю, что на маленьких
     // экранах всё будет влезать", после того как один из бегунов уехал за
@@ -782,19 +784,19 @@ function PlayerInfoPanel({
                     2026-10-01 (продолжение сессии, сразу тем же вечером, что
                     и добавил их) — веб не тронут. */}
                 {!isAndroid && (
-                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Раунд</Text>
+                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>{t('game.panel.round')}</Text>
                 )}
                 <RoundPanel round={displayRound} panelSize={roadBonusPanelSize} />
             </View>
             <View style={styles.reaperCell}>
                 {!isAndroid && (
-                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Ход</Text>
+                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>{t('game.panel.turn')}</Text>
                 )}
                 <RoundPanel round={turnsLabel} panelSize={roadBonusPanelSize} />
             </View>
             <View style={styles.reaperCell}>
                 {!isAndroid && (
-                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>Бонус хода</Text>
+                    <Text style={styles.reaperCellLabel} numberOfLines={1} noGlobalTint>{t('game.panel.roadBonus')}</Text>
                 )}
                 <RoadBonusPanel value={roadBonusValue} panelSize={roadBonusPanelSize} />
             </View>
@@ -1283,7 +1285,7 @@ function PlayerInfoPanel({
                             было недостаточно, компонент всё равно перебивал его
                             своим дефолтом, пока не active. */}
                         <PulseText active={runnersHighlight} baseColor={colors.textOnDark} style={styles.sectionTitle}>
-                            Бегуны
+                            {t('game.panel.runnersTitle')}
                         </PulseText>
                         {runnerCards}
                     </ScrollView>

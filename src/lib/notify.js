@@ -1,5 +1,6 @@
 // src/lib/notify.js
 import { createLogger } from './logger';
+import { t } from './i18n';
 
 const log = createLogger('NOTIFY');
 
@@ -36,7 +37,7 @@ export function notify(title, message) {
     showModal?.({
         title,
         message,
-        buttons: [{ label: 'OK', variant: 'primary' }],
+        buttons: [{ label: t('common.ok'), variant: 'primary' }],
     });
 }
 
@@ -44,10 +45,13 @@ export function notify(title, message) {
  * Подтверждение действия (выход, покинуть лобби). `cancelLabel` — опционален
  * (2026-10-14, по прямому запросу пользователя для диалога "Выйти без
  * сохранения?" в GameSettingsModal.js, где кнопка отмены по смыслу — просто
- * возврат в настройки, не "отмена" чего-либо) — дефолт 'Отмена' не трогает
- * остальные вызовы confirm() по проекту.
+ * возврат в настройки, не "отмена" чего-либо) — дефолт common.cancel не
+ * трогает остальные вызовы confirm() по проекту. 2026-10-26: дефолты
+ * confirmLabel/cancelLabel переведены на t(...) — значения по умолчанию в
+ * JS вычисляются НА КАЖДЫЙ вызов без этого аргумента, не один раз при
+ * объявлении функции, так что это читает ТЕКУЩУЮ локаль корректно.
  */
-export function confirm(title, message, onConfirm, confirmLabel = 'Да', cancelLabel = 'Отмена') {
+export function confirm(title, message, onConfirm, confirmLabel = t('common.yes'), cancelLabel = t('common.cancel')) {
     log(title, message ?? '');
     showModal?.({
         title,

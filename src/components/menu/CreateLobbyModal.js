@@ -2,6 +2,7 @@
 import React, { useState } from 'react';
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import Button from '../ui/Button';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, spacing, font, radius } from '../../theme';
 
 const OPTIONS = [2, 3, 4];
@@ -11,14 +12,15 @@ const OPTIONS = [2, 3, 4];
  * поэтому отдельный экран создания не нужен — хватает модалки.
  */
 export default function CreateLobbyModal({ visible, onClose, onSubmit, busy }) {
+    const { t } = useI18n();
     const [maxPlayers, setMaxPlayers] = useState(2);
 
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={styles.backdrop}>
                 <View style={styles.sheet}>
-                    <Text style={styles.title} noGlobalTint>Новое лобби</Text>
-                    <Text style={styles.label} noGlobalTint>Сколько игроков?</Text>
+                    <Text style={styles.title} noGlobalTint>{t('createLobby.title')}</Text>
+                    <Text style={styles.label} noGlobalTint>{t('createLobby.label')}</Text>
 
                     <View style={styles.options}>
                         {OPTIONS.map((n) => {
@@ -37,11 +39,11 @@ export default function CreateLobbyModal({ visible, onClose, onSubmit, busy }) {
                     </View>
 
                     <Text style={styles.hint} noGlobalTint>
-                        Игра начнётся автоматически, когда все {maxPlayers} игроков будут готовы
+                        {t('createLobby.hint', { n: maxPlayers })}
                     </Text>
 
-                    <Button title="Создать" onPress={() => onSubmit(maxPlayers)} loading={busy} />
-                    <Button title="Отмена" variant="muted" onPress={onClose} disabled={busy} style={styles.cancel} />
+                    <Button title={t('createLobby.submitBtn')} onPress={() => onSubmit(maxPlayers)} loading={busy} />
+                    <Button title={t('common.cancel')} variant="muted" onPress={onClose} disabled={busy} style={styles.cancel} />
                 </View>
             </View>
         </Modal>

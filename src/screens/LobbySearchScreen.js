@@ -9,10 +9,12 @@ import Input from '../components/ui/Input';
 import LoadingCard from '../components/ui/LoadingCard';
 import { lobbyApi } from '../api/lobby';
 import { ROUTES } from '../navigation/routes';
+import { useI18n } from '../hooks/useI18n';
 import { notify } from '../lib/notify';
 import { colors, spacing, font, radius } from '../theme';
 
 function LobbyRow({ lobby, onJoin, joining }) {
+  const { t } = useI18n();
   const isFull = lobby.players.length >= lobby.maxPlayers;
 
   return (
@@ -23,26 +25,27 @@ function LobbyRow({ lobby, onJoin, joining }) {
           // причину диалогом. notify() теперь сам рендерит кастомный Modal
           // (см. lib/notify.js/AppModal.js), не системный Alert — отдельный
           // локальный Modal тут больше не нужен.
-          onPress={() => (isFull ? notify('Лобби заполнено') : onJoin(lobby))}
+          onPress={() => (isFull ? notify(t('lobbySearch.full')) : onJoin(lobby))}
           disabled={joining}
           activeOpacity={0.8}
       >
         <View style={styles.rowMain}>
-          <Text style={styles.host} noGlobalTint>Лобби #{lobby.id}</Text>
-          <Text style={styles.meta} noGlobalTint>Хост: {lobby.host?.username ?? '—'}</Text>
+          <Text style={styles.host} noGlobalTint>{t('lobbySearch.lobbyNumber', { id: lobby.id })}</Text>
+          <Text style={styles.meta} noGlobalTint>{t('lobbySearch.host', { name: lobby.host?.username ?? '—' })}</Text>
         </View>
 
         <View style={styles.counter}>
           <Text style={[styles.counterText, isFull && styles.counterFull]} noGlobalTint>
             {lobby.players.length}/{lobby.maxPlayers}
           </Text>
-          <Text style={styles.counterLabel} noGlobalTint>{isFull ? 'полное' : 'игроков'}</Text>
+          <Text style={styles.counterLabel} noGlobalTint>{isFull ? t('lobbySearch.statusFull') : t('lobbySearch.statusPlayers')}</Text>
         </View>
       </TouchableOpacity>
   );
 }
 
 export default function LobbySearchScreen({ navigation }) {
+  const { t } = useI18n();
   const [lobbies, setLobbies] = useState([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -105,7 +108,7 @@ export default function LobbySearchScreen({ navigation }) {
       }
       // Гонка: пока список рисовался, место заняли.
       // Не выкидываем с экрана — сообщаем и обновляем список.
-      notify('Не удалось войти', e.userMessage ?? e.message);
+      notify(t('lobbySearch.joinFailTitle'), e.userMessage ?? e.message);
       load();
     } finally {
       setJoiningId(null);
@@ -123,7 +126,7 @@ export default function LobbySearchScreen({ navigation }) {
   // прыгала между состояниями. Скролл внутри панели — обычное поведение
   // FlatList/индикатора прокрутки: виден, только когда строк больше, чем
   // помещается в styles.panel.height, ничего специально включать не нужно.
-  const title = <Text style={styles.screenTitle} noGlobalTint>Поиск лобби</Text>;
+  const title = <Text style={styles.screenTitle} noGlobalTint>{t('lobbySearch.title')}</Text>;
 
   // "Создать лобби" убрана (2026-09-14, по прямому запросу пользователя) —
   // на этом экране это дублировало главное меню, там уже есть своя кнопка.
@@ -136,11 +139,11 @@ export default function LobbySearchScreen({ navigation }) {
   const actions = (
       <>
         <Button
-            title="↻ Обновить" variant="primary" style={[styles.headerBtn, styles.solidPrimary]}
+            title={t('lobbySearch.refreshBtn')} variant="primary" style={[styles.headerBtn, styles.solidPrimary]}
             loading={refreshing} onPress={() => load(true)}
         />
         <Button
-            title="Назад" variant="danger" style={styles.headerBtn}
+            title={t('common.back')} variant="danger" style={styles.headerBtn}
             onPress={() => navigation.goBack()}
         />
       </>
@@ -161,11 +164,11 @@ export default function LobbySearchScreen({ navigation }) {
           <View style={styles.panel}>
             {showLoadingState ? (
                 <View style={styles.panelCenter}>
-                  <LoadingCard label={error ? 'Не удалось загрузить' : undefined}>
+                  <LoadingCard label={error ? t('lobbySearch.loadFailLabel') : undefined}>
                     {!!error && (
                         <>
                           <Text style={styles.errorText} noGlobalTint>{error}</Text>
-                          <Button title="Повторить" variant="info" onPress={() => load()} style={styles.retryInline} />
+                          <Button title={t('common.retry')} variant="info" onPress={() => load()} style={styles.retryInline} />
                         </>
                     )}
                   </LoadingCard>
@@ -192,12 +195,12 @@ export default function LobbySearchScreen({ navigation }) {
                     ListEmptyComponent={
                       <View style={styles.empty}>
                         <Text style={styles.emptyTitle} noGlobalTint>
-                          {filterText.trim() ? 'Совпадений нет' : 'Пока пусто'}
+                          {filterText.trim() ? t('lobbySearch.emptyFilteredTitle') : t('lobbySearch.emptyTitle')}
                         </Text>
                         <Text style={styles.emptyText} noGlobalTint>
                           {filterText.trim()
-                              ? `Лобби с номером «${filterText.trim()}» не найдено.`
-                              : 'Открытых лобби нет. Создай своё — и другие смогут присоединиться.'}
+                              ? t('lobbySearch.emptyFilteredText', { q: filterText.trim() })
+                              : t('lobbySearch.emptyText')}
                         </Text>
                       </View>
                     }
@@ -208,7 +211,7 @@ export default function LobbySearchScreen({ navigation }) {
           <Input
               value={filterText}
               onChangeText={setFilterText}
-              placeholder="Поиск по номеру лобби"
+              placeholder={t('lobbySearch.filterPlaceholder')}
               keyboardType="numeric"
           />
           {actions}

@@ -1,4 +1,5 @@
 // src/lib/eventLog.js
+import { getLocale, LOCALES } from './i18n';
 
 /**
  * Человеко-читаемое описание Mercure-события runner_game_{id} — для
@@ -6,6 +7,10 @@
  * Без доступа к текущему game (только поля самого события) — этого
  * достаточно, чтобы понять ПОРЯДОК происходящего, id всё равно видны
  * в панели/на доске рядом. Неизвестные события — fallback (raw JSON).
+ *
+ * 2026-10-26, переключение языка UI: `describeEvent(e, t)` теперь принимает
+ * `t` (из useI18n() вызывающей стороны, см. GameBoardScreen.js#pushLog) —
+ * весь текст собирается через словарь game.eventLogEvents.* (ru.js/en.js).
  */
 
 // ВАЖНО: LEFT_UP визуально ведёт ВПРАВО, RIGHT_UP — ВЛЕВО (подтверждено
@@ -14,7 +19,8 @@
 // в названиях направлений backend'а). Стрелки здесь зеркалят это тем же
 // образом (LEFT_UP → ↗, RIGHT_UP → ↖ и симметрично для *_DOWN), иначе
 // диалог переброса столкновения показывает направление, обратное
-// реальному движению на доске.
+// реальному движению на доске. Сами стрелки — универсальные глиф-символы,
+// НЕ текст, в переводе не участвуют.
 const DIRECTION_LABEL = { LEFT_UP: '↗', UP: '↑', RIGHT_UP: '↖', LEFT_DOWN: '↘', DOWN: '↓', RIGHT_DOWN: '↙' };
 const dir = (d) => (d == null ? '—' : DIRECTION_LABEL[d] ?? d);
 // Экспортирован отдельно — переиспользуется в GameBoardScreen.js для показа
@@ -22,94 +28,103 @@ const dir = (d) => (d == null ? '—' : DIRECTION_LABEL[d] ?? d);
 // pendingCollisionRoll там), не только в отладочном логе.
 export const directionLabel = dir;
 
-const STEP_LABEL = ['начало', 'выбор', 'усиление', 'движение', 'выстрел', 'бонус дороги'];
-const step = (s) => STEP_LABEL[s] ?? s;
+// Та же техника, что у constants/gameplayTips.js — не через t() (массив, не
+// строка/функция), читает текущую локаль напрямую.
+const STEP_NAMES_RU = ['начало', 'выбор', 'усиление', 'движение', 'выстрел', 'бонус дороги'];
+const STEP_NAMES_EN = ['start', 'select', 'ability', 'move', 'shoot', 'road bonus'];
+function stepName(s) {
+    const names = getLocale() === LOCALES.EN ? STEP_NAMES_EN : STEP_NAMES_RU;
+    return names[s] ?? s;
+}
 
-export function describeEvent(e) {
+export function describeEvent(e, t) {
+    const ev = (key, params) => t(`game.eventLogEvents.${key}`, params);
     switch (e.event) {
         // 'game_active'/'player_active'/'player_roll_move_dice' удалены
         // бэком целиком, 2026-09-18 (см. runnerGameReducer.js) — партия
         // теперь всегда приходит уже активной первым REST-снапшотом, эти
         // события больше никогда не появятся в логе.
         case 'game_turn_changed':
-            return `Ход игрока ${e.playerOrder}, раунд ${e.round}, шаг «${step(e.step)}»`
-                + (e.extraTurnPlayer != null ? ` — ждём столкновение от игрока ${e.extraTurnPlayer}` : '');
+            return ev('gameTurnChanged', { playerOrder: e.playerOrder, round: e.round, step: stepName(e.step) })
+                + (e.extraTurnPlayer != null ? ev('gameTurnChangedExtra', { extraTurnPlayer: e.extraTurnPlayer }) : '');
         case 'game_track_updated':
-            return `Новый фрагмент трассы №${e.trackNumber}${e.withFinish ? ' (это финишный!)' : ''}`;
+            return ev('gameTrackUpdated', { trackNumber: e.trackNumber }) + (e.withFinish ? ev('gameTrackUpdatedFinish') : '');
         case 'game_cell_updated':
             // 2026-10-14: бэк переименовал row/column → positionX/positionY.
-            return `Клетка (сегм.${e.cell?.segment}, ${e.cell?.positionX}/${e.cell?.positionY}) → ${e.cell?.type}`;
+            return ev('gameCellUpdated', { segment: e.cell?.segment, x: e.cell?.positionX, y: e.cell?.positionY, type: e.cell?.type });
         case 'game_finish':
-            return `Игра завершена, статус: ${e.status}`;
+            return ev('gameFinish', { status: e.status });
         case 'player_out':
-            return `Игрок ${e.player?.username ?? e.player?.id} выбыл из партии`;
+            return ev('playerOut', { name: e.player?.username ?? e.player?.id });
         case 'player_step':
-            return `Игрок ${e.player?.id}: шаг → «${step(e.player?.step)}», активный бегун ${e.player?.activeRunner ?? '—'}`;
+            return ev('playerStep', { id: e.player?.id, step: stepName(e.player?.step), activeRunner: e.player?.activeRunner ?? '—' });
         case 'player_reset':
-            return `Игрок ${e.player?.id}: сброс на новый раунд (усиление ${e.player?.ability ?? '—'})`;
+            return ev('playerReset', { id: e.player?.id, ability: e.player?.ability ?? '—' });
         case 'step_begin':
-            return `Ход/раунд начат: игрок ${e.playerOrder}, шаг игры ${e.step}, кубик дороги ${e.trackGain ?? '—'}`;
+            return ev('stepBegin', { playerOrder: e.playerOrder, step: e.step, trackGain: e.trackGain ?? '—' });
         case 'step_selection':
-            return `Игрок ${e.player?.id} выбрал бегуна ${e.runner?.id}, кубик ${e.runner?.dice ?? e.runner?.rollDice}`;
+            return ev('stepSelection', { player: e.player?.id, runner: e.runner?.id, dice: e.runner?.dice ?? e.runner?.rollDice });
         case 'step_move':
-            return `Игрок ${e.player} двигает бегуна ${e.activeRunner}: `
-                + (e.direction ? dir(e.direction) : `старт, столбец ${e.firstPosition}`);
+            return ev('stepMove', { player: e.player, runner: e.activeRunner })
+                + (e.direction ? dir(e.direction) : ev('stepMoveStart', { col: e.firstPosition }));
         case 'step_collision':
-            return `Игрок ${e.player}: столкновение — ${e.accept ? 'принял' : 'отклонил'}`;
+            return ev('stepCollision', { player: e.player, result: e.accept ? ev('accepted') : ev('declined') });
         case 'step_road_bonus':
-            return `Игрок ${e.player}: бонус кубика дороги — ${e.accept ? 'принял' : 'отклонил'}`;
+            return ev('stepRoadBonus', { player: e.player, result: e.accept ? ev('accepted') : ev('declined') });
         case 'step_shoot':
-            return `Игрок ${e.player}: выстрел бегуном ${e.activeRunner} — `
-                + (e.accept ? `в направлении ${dir(e.direction)}` : 'пропущен');
+            return ev('stepShoot', { player: e.player, runner: e.activeRunner })
+                + (e.accept ? ev('stepShootDirection', { direction: dir(e.direction) }) : ev('stepShootSkipped'));
         case 'step_ability':
-            return `Игрок ${e.player}: усиление — ${e.accept ? e.details?.ability ?? '?' : 'пропущено'}`;
+            return ev('stepAbility', { player: e.player, result: e.accept ? e.details?.ability ?? '?' : ev('stepAbilitySkipped') });
         case 'ability_boost':
-            return `Буст: бегуну ${e.runner?.id} добавлены очки (теперь ${e.runner?.dice})`;
+            return ev('abilityBoost', { id: e.runner?.id, dice: e.runner?.dice });
         case 'ability_ghost':
-            return 'Призрак активирован';
+            return ev('abilityGhost');
         case 'ability_heal':
-            return `Лечение: бегун ${e.runner?.id} → ${e.runner?.status}`;
+            return ev('abilityHeal', { id: e.runner?.id, status: e.runner?.status });
         case 'ability_reaper':
             // 2026-10-14: бэк переименовал attack → attackDirection.
-            return `Жнец выставлен: сегм.${e.reaper?.segment}, (${e.reaper?.positionX}/${e.reaper?.positionY})`
-                + (e.attackDirection ? `, атака ${dir(e.attackDirection)}` : '');
+            return ev('abilityReaper', { segment: e.reaper?.segment, x: e.reaper?.positionX, y: e.reaper?.positionY })
+                + (e.attackDirection ? ev('abilityReaperAttack', { direction: dir(e.attackDirection) }) : '');
         case 'runner_save':
-            return `Бегун ${e.runnerId?.id} (${e.runnerId?.type}) → сегм.${e.runnerId?.segment}, `
-                + `(${e.runnerId?.positionX}/${e.runnerId?.positionY}), очков ${e.runnerId?.dice ?? e.runnerId?.rollDice ?? '—'}`;
+            return ev('runnerSave', {
+                id: e.runnerId?.id, type: e.runnerId?.type, segment: e.runnerId?.segment,
+                x: e.runnerId?.positionX, y: e.runnerId?.positionY, dice: e.runnerId?.dice ?? e.runnerId?.rollDice ?? '—',
+            });
         case 'runner_damage':
-            return `Бегун ${e.runnerId?.id} повреждён → статус ${e.runnerId?.status}`;
+            return ev('runnerDamage', { id: e.runnerId?.id, status: e.runnerId?.status });
         case 'runner_destroy':
             // 2026-10-14: reason теперь всегда DestroyReason-enum ('terrain' вместо
             // прежних прямых 'fire'/'acid'/'wall'/'edge') — конкретная клетка, если
             // причина terrain, лежит отдельно в terrainType.
-            return `Бегун ${e.runnerId?.id} уничтожен`
-                + (e.reason ? ` (причина: ${e.reason}${e.terrainType ? `/${e.terrainType}` : ''})` : '');
+            return ev('runnerDestroy', { id: e.runnerId?.id })
+                + (e.reason ? ev('runnerDestroyReason', { reason: e.reason, terrainType: e.terrainType }) : '');
         case 'runner_ball':
-            return `Появился шар (бегун ${e.runnerId?.id})`;
+            return ev('runnerBall', { id: e.runnerId?.id });
         case 'danger':
-            return `Опасность: ${e.danger}`;
+            return ev('danger', { danger: e.danger });
         case 'collision':
             // 2026-10-14: бэк заменил enum collision (LOWER/TOP) + сырые runnerId/
             // otherRunnerId на явные flyingRunnerId/stayingRunnerId/resolution.
-            return `Столкновение: летит ${e.flyingRunnerId}, направление ${dir(e.direction)}`
-                + (e.resolution === 'pending' ? ` — ждём решения игрока ${e.decisionPlayerId}` : '');
+            return ev('collision', { flyingRunnerId: e.flyingRunnerId, direction: dir(e.direction) })
+                + (e.resolution === 'pending' ? ev('collisionPending', { decisionPlayerId: e.decisionPlayerId }) : '');
         case 'damage':
-            return `Урон: ${e.damage}`;
+            return ev('damage', { damage: e.damage });
         case 'ricochet':
-            return `Рикошет → ${dir(e.direction)}`;
+            return ev('ricochet', { direction: dir(e.direction) });
         case 'rocket':
-            return `Ракета: ${e.stunt} клеток → ${dir(e.direction)}`;
+            return ev('rocket', { n: e.stunt, direction: dir(e.direction) });
         case 'stupor':
-            return `Занос: ${e.stunt} клеток → ${dir(e.direction)}`;
+            return ev('stupor', { n: e.stunt, direction: dir(e.direction) });
         case 'anomaly':
-            return `Аномалия → ${dir(e.direction)}`;
+            return ev('anomaly', { direction: dir(e.direction) });
         case 'attack':
             // 2026-10-14: бэк переименовал target → targetId.
-            return `Выстрел (${e.attack}) по бегуну ${e.targetId}: ${e.hit ? 'попал' : 'промах'}`;
+            return ev('attack', { type: e.attack, target: e.targetId, result: e.hit ? ev('hit') : ev('miss') });
         // 'ghost_pass' убран 2026-09-26 — такого события на бэке нет и не было
         // (см. lib/ghostPairs.js за полным разбором), реальное имя — ниже.
         case 'ghost_consumed':
-            return `Призрак израсходован (игрок ${e.player})`;
+            return ev('ghostConsumed', { player: e.player });
         default:
             return null; // неизвестное событие — вызывающий код сам решает fallback
     }

@@ -1,4 +1,5 @@
 // src/api/ApiError.js
+import { t } from '../lib/i18n';
 
 /**
  * Единый тип ошибки для всего приложения.
@@ -41,10 +42,15 @@ export class ApiError extends Error {
         return this.payload?.error?.details?.gameId ?? null;
     }
 
-    /** Текст для пользователя */
+    /**
+     * Текст для пользователя — читает ТЕКУЩУЮ локаль напрямую (lib/i18n.js#t,
+     * не хук useI18n — этот класс не React-компонент, а ошибка создаётся
+     * вне рендера на каждый неудачный запрос, реактивность на смену языка
+     * тут не нужна, важно лишь прочитать актуальный язык в момент показа).
+     */
     get userMessage() {
-        if (this.isNetwork) return 'Нет связи с сервером. Проверь подключение.';
-        if (this.status >= 500) return 'Сервер недоступен. Попробуй позже.';
-        return this.message || 'Что-то пошло не так';
+        if (this.isNetwork) return t('common.networkError');
+        if (this.status >= 500) return t('common.serverError');
+        return this.message || t('common.genericError');
     }
 }

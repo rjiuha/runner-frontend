@@ -2,6 +2,7 @@
 import React from 'react';
 import { Modal, StyleSheet, Text, View } from 'react-native';
 import Button from '../ui/Button';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, spacing, font, radius } from '../../theme';
 
 /**
@@ -13,14 +14,15 @@ import { colors, spacing, font, radius } from '../../theme';
  * состояния не несёт.
  */
 export default function GameMenuModal({ visible, onClose, onLeave, onSettings }) {
+    const { t } = useI18n();
     return (
         <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
             <View style={styles.backdrop}>
                 <View style={styles.sheet}>
-                    <Text style={styles.title} noGlobalTint>Меню</Text>
-                    <Button title="Покинуть игру" variant="danger" onPress={onLeave} style={styles.btn} />
-                    <Button title="Настройки" onPress={onSettings} style={styles.btn} />
-                    <Button title="Отмена" variant="muted" onPress={onClose} style={styles.btn} />
+                    <Text style={styles.title} noGlobalTint>{t('game.menu.title')}</Text>
+                    <Button title={t('game.menu.leaveBtn')} variant="danger" onPress={onLeave} style={styles.btn} />
+                    <Button title={t('game.menu.settingsBtn')} onPress={onSettings} style={styles.btn} />
+                    <Button title={t('common.cancel')} variant="muted" onPress={onClose} style={styles.btn} />
                 </View>
             </View>
         </Modal>

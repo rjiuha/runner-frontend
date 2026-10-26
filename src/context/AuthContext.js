@@ -4,7 +4,8 @@ import React, {
 } from 'react';
 
 import { authApi } from '../api/auth';
-import { loadTokens, setOnAuthLost, getAccessToken } from '../api/client';
+import { meApi } from '../api/me';
+import { loadTokens, setOnAuthLost, getAccessToken, clearTokens } from '../api/client';
 import { userFromToken } from '../lib/jwt';
 import { createLogger, setLoggerUser } from '../lib/logger';
 
@@ -44,8 +45,9 @@ export function AuthProvider({ children }) {
         return () => { cancelled = true; };
     }, []);
 
-    const signIn = useCallback(async (email, password) => {
-        const { token } = await authApi.login(email, password);
+    // `login` — email ИЛИ ник, см. api/auth.js#login
+    const signIn = useCallback(async (login, password) => {
+        const { token } = await authApi.login(login, password);
         applyUser(setUser, userFromToken(token), 'sign-in');
     }, []);
 
@@ -67,9 +69,21 @@ export function AuthProvider({ children }) {
         applyUser(setUser, null, 'sign-out');
     }, []);
 
+    /**
+     * DELETE /api/me — бэк сам отзывает refresh-токены и чистит cookie
+     * Mercure, но локальный access-токен (в памяти клиента) без явной
+     * чистки продолжил бы считаться "валидным" до следующего 401 — выход
+     * тут ВСЕГДА локальный (не authApi.logout(), тому уже нечего отзывать).
+     */
+    const deleteAccount = useCallback(async (password) => {
+        await meApi.deleteAccount(password);
+        await clearTokens();
+        applyUser(setUser, null, 'account-deleted');
+    }, []);
+
     const value = useMemo(
-        () => ({ isLoading, user, isAuthenticated: user !== null, signIn, signUp, signOut }),
-        [isLoading, user, signIn, signUp, signOut],
+        () => ({ isLoading, user, isAuthenticated: user !== null, signIn, signUp, signOut, deleteAccount }),
+        [isLoading, user, signIn, signUp, signOut, deleteAccount],
     );
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

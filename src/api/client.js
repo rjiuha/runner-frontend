@@ -3,6 +3,7 @@ import { API_URL, REQUEST_TIMEOUT } from '../config/env';
 import { secureStorage, TOKEN_KEYS } from '../lib/secureStorage';
 import { ApiError } from './ApiError';
 import { createLogger } from '../lib/logger';
+import { t } from '../lib/i18n';
 
 const log = createLogger('API');
 
@@ -109,7 +110,7 @@ function doRefresh() {
             // (другой вызывающий код), состояние должно чиститься так же.
             await clearTokens();
             onAuthLost?.();
-            throw new ApiError(401, 'NO_REFRESH', 'Нужен вход');
+            throw new ApiError(401, 'NO_REFRESH', t('common.needLogin'));
         }
 
         const { response, body } = await rawFetch('/refresh', {
@@ -122,7 +123,7 @@ function doRefresh() {
             log(`token/refresh: ПРОВАЛ (${response.status}) — разлогиниваем`);
             await clearTokens();
             onAuthLost?.();
-            throw new ApiError(401, 'REFRESH_FAILED', 'Сессия истекла, войди снова');
+            throw new ApiError(401, 'REFRESH_FAILED', t('common.sessionExpired'));
         }
 
         log('token/refresh: OK, новый access-токен получен');
@@ -195,7 +196,7 @@ export async function request(path, options = {}) {
                 response.status,
                 (typeof errorEnvelope === 'object' ? errorEnvelope?.code : null) ?? null,
                 (typeof errorEnvelope === 'object' ? errorEnvelope?.message : errorEnvelope)
-                    ?? data?.message ?? data?.detail ?? `Ошибка ${response.status}`,
+                    ?? data?.message ?? data?.detail ?? t('common.httpError', { status: response.status }),
                 data,
             );
             log(`<- ${method} ${path} ${response.status} FAIL (${Date.now() - startedAt}мс):`, err.userMessage);

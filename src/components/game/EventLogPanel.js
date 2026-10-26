@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, font, radius, spacing } from '../../theme';
 
 /**
@@ -11,8 +12,9 @@ import { colors, font, radius, spacing } from '../../theme';
  * EVENT_LOG_PANEL_STYLE ниже за тем, почему тот вариант не живёт в этом файле).
  */
 export function EventLogEntries({ entries }) {
+    const { t } = useI18n();
     return entries.length === 0 ? (
-        <Text style={styles.empty} noGlobalTint>Событий пока не было</Text>
+        <Text style={styles.empty} noGlobalTint>{t('game.eventLog.empty')}</Text>
     ) : (
         entries.map((e) => (
             <Text key={e.id} style={styles.line} noGlobalTint>
@@ -79,6 +81,7 @@ export const EVENT_LOG_PANEL_STYLE = {
  *      сопутствующих проблем).
  */
 export default function EventLogPanel({ entries, position = 'bottom-right' }) {
+    const { t } = useI18n();
     const [open, setOpen] = useState(false);
     const scrollRef = useRef(null);
     const isTop = position === 'top';
@@ -94,7 +97,7 @@ export default function EventLogPanel({ entries, position = 'bottom-right' }) {
 
     const toggle = (
         <TouchableOpacity style={styles.toggle} onPress={() => setOpen((v) => !v)} activeOpacity={0.8}>
-            <Text style={styles.toggleText} noGlobalTint>{open ? 'Скрыть лог ▾' : `Лог событий (${entries.length}) ▸`}</Text>
+            <Text style={styles.toggleText} noGlobalTint>{open ? t('game.eventLog.hide') : t('game.eventLog.show', { count: entries.length })}</Text>
         </TouchableOpacity>
     );
 

@@ -6,11 +6,15 @@ import { useFocusEffect } from '@react-navigation/native';
 import Screen from '../components/ui/Screen';
 import MenuCard from '../components/menu/MenuCard';
 import ProfileCard from '../components/menu/ProfileCard';
+import ProfileModal from '../components/menu/ProfileModal';
 import CreateLobbyModal from '../components/menu/CreateLobbyModal';
 import LoadingCard from '../components/ui/LoadingCard';
 import Button from '../components/ui/Button';
+import GameSettingsHubModal from '../components/game/GameSettingsHubModal';
 import GameSettingsModal from '../components/game/GameSettingsModal';
+import GameGeneralSettingsModal from '../components/game/GameGeneralSettingsModal';
 import { useAuth } from '../hooks/useAuth';
+import { useI18n } from '../hooks/useI18n';
 import { lobbyApi } from '../api/lobby';
 import { meApi } from '../api/me';
 import { ROUTES } from '../navigation/routes';
@@ -25,6 +29,7 @@ const RESUMABLE_GAME_STATUSES = [GAME_STATUS.WAITING, GAME_STATUS.ACTIVE];
 
 export default function MainMenuScreen({ navigation }) {
   const { user, signOut } = useAuth();
+  const { t } = useI18n();
 
   const [creating, setCreating] = useState(false);
   // true только до первого резолва проверки активной игры/лобби — дальше не
@@ -43,11 +48,24 @@ export default function MainMenuScreen({ navigation }) {
   const [connectionError, setConnectionError] = useState(null);
   const [retrying, setRetrying] = useState(false);
   // "⚙️ Настройки" (2026-10-04, по прямому запросу пользователя — в меню
-  // уже была заготовка-заглушка под MVP-2, "Профиль и звук") — пока только
-  // звук, тот же GameSettingsModal, что и в игре (кнопка settings в
-  // seam-ряду GameBoardScreen) — общий lib/audioSettings.js стор, одни и те
-  // же 4 канала/значения видны из обоих мест.
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  // уже была заготовка-заглушка под MVP-2, "Профиль и звук") — тот же хаб
+  // "Игра"/"Звук" (GameSettingsHubModal/GameSettingsModal/
+  // GameGeneralSettingsModal), что и в игре (кнопка settings в seam-ряду
+  // GameBoardScreen, см. hooks/useGameMenuModals.js) — ЗДЕСЬ не через хук
+  // (тот тащит ещё и "Покинуть игру"-слой, не нужный в главном меню),
+  // просто 3 стейта напрямую, сама логика переходов идентична.
+  // 2026-10-26: хаб расширен до него (раньше карточка вела прямо в звук) —
+  // "Игра" (GameGeneralSettingsModal) теперь несёт и переключатель языка.
+  const [settingsHubOpen, setSettingsHubOpen] = useState(false);
+  const [gameSettingsOpen, setGameSettingsOpen] = useState(false);
+  const [gameGeneralSettingsOpen, setGameGeneralSettingsOpen] = useState(false);
+  const openSoundSettings = () => { setSettingsHubOpen(false); setGameSettingsOpen(true); };
+  const openGeneralSettings = () => { setSettingsHubOpen(false); setGameGeneralSettingsOpen(true); };
+  const closeSoundSettings = () => { setGameSettingsOpen(false); setSettingsHubOpen(true); };
+  const closeGeneralSettings = () => { setGameGeneralSettingsOpen(false); setSettingsHubOpen(true); };
+  // Модалка профиля (2026-10-22, по прямому запросу пользователя) —
+  // подтверждение email/сброс пароля/удаление аккаунта, см. ProfileModal.js.
+  const [profileOpen, setProfileOpen] = useState(false);
 
   /**
    * Один вызов GET /api/me (см. AuthController::me() на бэке, read-only)
@@ -152,14 +170,14 @@ export default function MainMenuScreen({ navigation }) {
         navigation.navigate(ROUTES.LOBBY, { lobbyId: existing.id });
         return;
       }
-      notify('Не удалось создать лобби', e.userMessage ?? e.message);
+      notify(t('menu.createLobby.failTitle'), e.userMessage ?? e.message);
     } finally {
       setCreating(false);
     }
   };
 
   const handleLogout = () => {
-    confirm('Выйти из аккаунта?', 'Придётся войти заново', signOut, 'Выйти');
+    confirm(t('menu.logout.confirmTitle'), t('menu.logout.confirmMessage'), signOut, t('menu.logout.confirmBtn'));
   };
 
   // Пока не резолвнулась первая проверка активной игры/лобби — не мелькаем
@@ -175,13 +193,13 @@ export default function MainMenuScreen({ navigation }) {
   return (
       <Screen scroll contentContainerStyle={styles.content}>
         <View style={styles.column}>
-          <ProfileCard username={user?.username} />
+          <ProfileCard username={user?.username} onPress={() => setProfileOpen(true)} />
 
           {connectionError && (
               <View style={styles.connectionBanner}>
                 <Text style={styles.connectionBannerText} noGlobalTint>{connectionError}</Text>
                 <Button
-                    title="Обновить соединение"
+                    title={t('menu.retryConnection')}
                     variant="danger"
                     loading={retrying}
                     onPress={handleRetryConnection}
@@ -191,33 +209,33 @@ export default function MainMenuScreen({ navigation }) {
           )}
 
           <MenuCard
-              title="Создать лобби"
-              description="Собрать игроков и начать партию"
+              title={t('menu.createLobby.title')}
+              description={t('menu.createLobby.description')}
               color={colors.primary}
               onPress={() => setModalOpen(true)}
           />
 
           <MenuCard
-              title="Найти лобби"
-              description="Присоединиться к открытой игре"
+              title={t('menu.findLobby.title')}
+              description={t('menu.findLobby.description')}
               color={colors.primary}
               onPress={() => navigation.navigate(ROUTES.LOBBY_SEARCH)}
           />
 
           <MenuCard
-              title="⚙️ Настройки"
-              description="Громкость звука"
+              title={t('menu.settings.title')}
+              description={t('menu.settings.description')}
               color={colors.muted}
-              onPress={() => setSettingsOpen(true)}
+              onPress={() => setSettingsHubOpen(true)}
           />
 
           {/* Заготовка под MVP-2 — оставлена намеренно, чтобы был виден план */}
           <View style={styles.soonBlock}>
-            <Text style={styles.soonLabel} noGlobalTint>Скоро</Text>
-            <MenuCard title="🛒 Магазин" description="Скины и бонусы" color={colors.muted} disabled />
+            <Text style={styles.soonLabel} noGlobalTint>{t('menu.comingSoon')}</Text>
+            <MenuCard title={t('menu.shop.title')} description={t('menu.shop.description')} color={colors.muted} disabled />
           </View>
 
-          <MenuCard title="🚪 Выйти" color={colors.muted} onPress={handleLogout} />
+          <MenuCard title={t('menu.logout.title')} color={colors.muted} onPress={handleLogout} />
         </View>
 
         <CreateLobbyModal
@@ -226,7 +244,15 @@ export default function MainMenuScreen({ navigation }) {
             onClose={() => setModalOpen(false)}
             onSubmit={handleCreate}
         />
-        <GameSettingsModal visible={settingsOpen} onClose={() => setSettingsOpen(false)} />
+        <GameSettingsHubModal
+            visible={settingsHubOpen}
+            onClose={() => setSettingsHubOpen(false)}
+            onSound={openSoundSettings}
+            onGeneral={openGeneralSettings}
+        />
+        <GameSettingsModal visible={gameSettingsOpen} onClose={closeSoundSettings} />
+        <GameGeneralSettingsModal visible={gameGeneralSettingsOpen} onClose={closeGeneralSettings} />
+        <ProfileModal visible={profileOpen} onClose={() => setProfileOpen(false)} />
       </Screen>
   );
 }
