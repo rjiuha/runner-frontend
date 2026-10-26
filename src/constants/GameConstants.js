@@ -451,16 +451,23 @@ export const RUNNER_DISPLAY = {
   // возвращают null для них — RunnerToken.js's `?? display.icon` не имел
   // реального шанса сработать, только тянул мёртвый require() (который и
   // валил Metro после удаления файлов, "Unable to resolve").
-  [RUNNER_TYPES.TANK]: { label: 'Танк', size: 3 },
-  [RUNNER_TYPES.ATHLETE]: { label: 'Атлет', size: 2 },
-  [RUNNER_TYPES.SPRINTER]: { label: 'Скаут', size: 1 },
-  [RUNNER_TYPES.REAPER]: { label: 'Жнец', size: 0 },
+  //
+  // `label` УБРАН (2026-10-26, живой баг): это plain-объект, читается не
+  // через хук — значение застывало бы на языке, который был активен в
+  // момент импорта модуля, и никогда не обновлялось бы при setLocale().
+  // Название типа теперь — t(`game.runnerTypes.${runner.type}`) в месте
+  // рендера (RunnerCard.js/GameBoardScreen.js), `runner.type` уже совпадает
+  // с ключом словаря (`tank`/`athlete`/`sprinter`/`reaper`/`ball`).
+  [RUNNER_TYPES.TANK]: { size: 3 },
+  [RUNNER_TYPES.ATHLETE]: { size: 2 },
+  [RUNNER_TYPES.SPRINTER]: { size: 1 },
+  [RUNNER_TYPES.REAPER]: { size: 0 },
   // "Мяч" — ничейный (playerId всегда null), никогда не показывается в
   // панели игрока (RUNNER_ORDER его не перечисляет, а карточки и так
   // фильтруются по runner.playerId === p.id) — запись тут нужна ТОЛЬКО
   // чтобы RunnerToken (BoardGrid) не бэйлился на `!display` и рисовал токен
   // на доске.
-  [RUNNER_TYPES.BALL]: { label: 'Мяч', size: 1 },
+  [RUNNER_TYPES.BALL]: { size: 1 },
 };
 
 /** Состояния бегуна — зеркалят RunnerStatus (бэк) */
@@ -488,14 +495,20 @@ export const RUNNER_STATUS_LABEL = {
  * Командные усиления — зеркалят PlayerAbility (бэк, без служебного unghost).
  * min/max — допустимый номинал кубика для активации (см. правила), используется
  * только для визуальной подсказки при перетаскивании кубика на зону.
- * shortHint — то же самое, но без слова "кубик" (компактная раскладка,
- * портрет — по прямому запросу пользователя, места мало).
+ *
+ * `label`/`hint`/`shortHint` УБРАНЫ (2026-10-26, живой баг): это plain-объект,
+ * читается не через хук — значение застывало бы на языке, который был
+ * активен в момент импорта модуля. Текст подсказки теперь —
+ * t(`game.abilities.${abilityKey}.hint`/`.shortHint`) в месте рендера
+ * (AbilityZone.js), `abilityKey` уже совпадает с ключом словаря (`boost`/
+ * `heal`/`reaper`/`ghost`). `label` не рендерится нигде (убран из UI
+ * 2026-09-19, см. AbilityZone.js) — переводить нечего.
  */
 export const PLAYER_ABILITIES = {
-  boost: { label: 'Буст', min: 1, max: 3, hint: 'кубик 1–3', shortHint: '1–3' },
-  heal: { label: 'Лечение', min: 6, max: 6, hint: 'кубик 6', shortHint: '6' },
-  reaper: { label: 'Жнец', min: 1, max: 6, hint: 'любой кубик', shortHint: 'любой' },
-  ghost: { label: 'Призрак', min: 3, max: 5, hint: 'кубик 3–5', shortHint: '3–5' },
+  boost: { min: 1, max: 3 },
+  heal: { min: 6, max: 6 },
+  reaper: { min: 1, max: 6 },
+  ghost: { min: 3, max: 5 },
 };
 
 export const PLAYER_ABILITY_ORDER = ['boost', 'heal', 'reaper', 'ghost'];

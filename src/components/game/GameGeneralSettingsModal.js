@@ -67,7 +67,7 @@ export default function GameGeneralSettingsModal({ visible, onClose }) {
                 <View style={styles.sheet}>
                     <Text style={styles.title} noGlobalTint>{t('settings.general.title')}</Text>
 
-                    <View style={styles.row}>
+                    <View style={[styles.row, orientationOptionsOpen && styles.rowOpen]}>
                         <Text style={styles.label} noGlobalTint>{t('settings.general.dialogOrientationLabel')}</Text>
                         <TouchableOpacity
                             style={styles.selectBox}
@@ -96,7 +96,7 @@ export default function GameGeneralSettingsModal({ visible, onClose }) {
                         )}
                     </View>
 
-                    <View style={styles.row}>
+                    <View style={[styles.row, languageOptionsOpen && styles.rowOpen]}>
                         <Text style={styles.label} noGlobalTint>{t('settings.general.languageLabel')}</Text>
                         <TouchableOpacity
                             style={styles.selectBox}
@@ -146,7 +146,15 @@ const styles = StyleSheet.create({
         fontSize: font.h2, fontWeight: 'bold', color: colors.textOnDark,
         marginBottom: spacing.lg, textAlign: 'center',
     },
-    row: { marginBottom: spacing.lg },
+    // position:'relative' — якорь для абсолютно спозиционированного
+    // optionsList ниже (2026-10-26, живая жалоба: модалка раздувалась по
+    // размеру раскрытого списка). rowOpen (zIndex) — применяется только на
+    // РАСКРЫТОМ ряду: без явного zIndex более поздний сосед (второй ряд/
+    // кнопка "Назад") рисуется поверх floating-списка первого ряда — тот же
+    // класс грабель, что уже задокументирован в CLAUDE.md ("Android
+    // сортирует ВСЕХ соседей по zIndex, как только хоть один его объявил").
+    row: { marginBottom: spacing.lg, position: 'relative' },
+    rowOpen: { zIndex: 20 },
     label: { fontSize: font.body, color: colors.textOnDark, marginBottom: spacing.xs },
     selectBox: {
         flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
@@ -156,7 +164,12 @@ const styles = StyleSheet.create({
     },
     selectValue: { fontSize: font.body, color: colors.textOnDark },
     chevron: { fontSize: font.small, color: colors.textOnDarkSecondary },
+    // position:'absolute' (2026-10-26) — список вариантов плавает ПОВЕРХ
+    // контента под ним, не раздвигает layout (раньше был обычным block-
+    // потомком row, и modal#sheet растягивался на его высоту). top:'100%' —
+    // сразу под selectBox, независимо от его реальной высоты.
     optionsList: {
+        position: 'absolute', top: '100%', left: 0, right: 0,
         marginTop: spacing.xs,
         borderRadius: radius.md,
         overflow: 'hidden',

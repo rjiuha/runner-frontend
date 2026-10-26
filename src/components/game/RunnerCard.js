@@ -13,6 +13,7 @@ import {
     RUNNER_DISPLAY,
     RUNNER_STATUS,
 } from '../../constants/GameConstants';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, font, spacing } from '../../theme';
 
 /**
@@ -272,6 +273,7 @@ function RunnerCard({
     // 1 (по умолчанию) — обычная раскладка/без роста, размеры как раньше.
     sizeScale = 1,
 }) {
+    const { t } = useI18n();
     // Размер АВАТАРКИ меняется от sizeScale (та же логика, что и раньше —
     // ужимается, когда коробка теснее минимума, см. NATURAL_CONTENT_
     // HEIGHT_COMPACT) — ширина (avatarSizeCompact) всегда участвует и в
@@ -713,7 +715,7 @@ function RunnerCard({
                             именно "убрать", не "заменить чем-то ещё". */}
                         {!isAndroid && (
                             <Text style={[styles.name, turnActive && styles.nameTurnActive]} numberOfLines={1} noGlobalTint>
-                                {display?.label ?? runner.type}
+                                {display ? t(`game.runnerTypes.${runner.type}`) : runner.type}
                             </Text>
                         )}
                         {/* Кружки урона — на Android СТОЛБИКОМ (друг под другом),

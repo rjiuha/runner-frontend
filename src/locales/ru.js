@@ -239,6 +239,27 @@ export default {
     },
 
     game: {
+        // Названия типов бегунов (RUNNER_DISPLAY в GameConstants.js больше НЕ
+        // хранит их строками — тот plain-объект читался бы один раз при
+        // импорте модуля и не обновлялся бы при переключении языка, см.
+        // 2026-10-26 находку живым тестом). Ключи — значения RUNNER_TYPES
+        // (`runner.type`), а не художественные имена.
+        runnerTypes: {
+            tank: 'Танк',
+            athlete: 'Атлет',
+            sprinter: 'Скаут',
+            reaper: 'Жнец',
+            ball: 'Мяч',
+        },
+        // Подсказки усилений (диапазон кубика) — та же причина выноса из
+        // PLAYER_ABILITIES (GameConstants.js), что и у runnerTypes выше.
+        // `label` не переведён — нигде не рендерится (убран из UI 2026-09-19).
+        abilities: {
+            boost: { hint: 'кубик 1–3', shortHint: '1–3' },
+            heal: { hint: 'кубик 6', shortHint: '6' },
+            reaper: { hint: 'любой кубик', shortHint: 'любой' },
+            ghost: { hint: 'кубик 3–5', shortHint: '3–5' },
+        },
         menu: {
             title: 'Меню',
             leaveBtn: 'Покинуть игру',
@@ -259,6 +280,12 @@ export default {
             turn: 'Ход',
             roadBonus: 'Бонус хода',
             runnersTitle: 'Бегуны',
+            // Однобуквенные сокращения для узкого ряда под швом дороги/панели
+            // (GameBoardScreen.js#renderCompactHeaderRow — компактные квадраты
+            // "Р: N"/"Х: N/M"/"Б: N"), где полным словам не хватает места.
+            roundShort: 'Р',
+            turnShort: 'Х',
+            roadBonusShort: 'Б',
         },
         hint: {
             reaperApproaching: 'Жнец приближается…',

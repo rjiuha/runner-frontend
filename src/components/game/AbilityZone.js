@@ -9,6 +9,7 @@ import {
     PLAYER_ABILITIES,
     PLAYER_ABILITY_ICONS,
 } from '../../constants/GameConstants';
+import { useI18n } from '../../hooks/useI18n';
 import { colors, spacing } from '../../theme';
 
 // Platform.OS не меняется в течение жизни приложения — модульная константа
@@ -105,6 +106,7 @@ function AbilityZone({
     // заведомо больше, чем разумный рост от нехватки высоты.
     sizeScale = 1,
 }) {
+    const { t } = useI18n();
     const ref = useRef(null);
     const ability = PLAYER_ABILITIES[abilityKey];
     // Размер зоны для FramePanel (см. её докстринг) — тот же приём, что уже
@@ -304,7 +306,9 @@ function AbilityZone({
                 источником нескольких живых жалоб в этом файле. Веб/iOS не
                 тронуты — там подсказка остаётся. */}
             {!isAndroid && (
-                <Text style={styles.hint} noGlobalTint>{compact ? ability.shortHint : ability.hint}</Text>
+                <Text style={styles.hint} noGlobalTint>
+                    {t(`game.abilities.${abilityKey}.${compact ? 'shortHint' : 'hint'}`)}
+                </Text>
             )}
             {/* Число/галочка при занятой зоне убраны целиком (были — только
                 для Лечения, min===max) по прямому запросу пользователя,

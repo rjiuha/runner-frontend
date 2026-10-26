@@ -1842,8 +1842,8 @@ export default function GameBoardScreen({ route, navigation }) {
         if (!pendingSelect) return null;
         const runner = runners.find((r) => r.id === pendingSelect.runnerId);
         if (!runner) return null;
-        return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
-    }, [runners, pendingSelect]);
+        return RUNNER_DISPLAY[runner.type] ? t(`game.runnerTypes.${runner.type}`) : runner.type;
+    }, [runners, pendingSelect, t]);
 
     // Тип бегуна, который реально отлетит при столкновении — бэк теперь
     // называет его явно (`flyingRunnerId`, см. CollisionEvent выше), старая
@@ -1853,8 +1853,8 @@ export default function GameBoardScreen({ route, navigation }) {
         if (!pendingCollisionRoll) return null;
         const runner = runners.find((r) => String(r.id) === String(pendingCollisionRoll.flyingRunnerId));
         if (!runner) return null;
-        return RUNNER_DISPLAY[runner.type]?.label ?? runner.type;
-    }, [runners, pendingCollisionRoll]);
+        return RUNNER_DISPLAY[runner.type] ? t(`game.runnerTypes.${runner.type}`) : runner.type;
+    }, [runners, pendingCollisionRoll, t]);
 
     const players = useMemo(
         () =>
@@ -3389,12 +3389,13 @@ export default function GameBoardScreen({ route, navigation }) {
             >
                 <FramedSquare width={widths[0]} height={headerRowH} targetCornerSize={8} glow>
                     <Text style={[styles.seamRoundValue, fontStyle]} numberOfLines={1} noGlobalTint>
-                        {`Р: ${game.round != null ? game.round + 1 : '-'}`}
+                        {`${t('game.panel.roundShort')}: ${game.round != null ? game.round + 1 : '-'}`}
                     </Text>
                 </FramedSquare>
                 <FramedSquare width={widths[1]} height={headerRowH} targetCornerSize={8} glow>
                     <Text style={[styles.seamRoundValue, fontStyle]} numberOfLines={1} noGlobalTint>
                         {(() => {
+                            const turnLabel = t('game.panel.turnShort');
                             const turnsTaken = players.find((p) => p.id === activePlayerId)?.turnsTaken;
                             // 2026-10-16 — тот же формат "N/M", что и в PlayerInfoPanel.js#turnsLabel
                             // (landscape), добавлен сюда же по прямому запросу пользователя.
@@ -3402,17 +3403,17 @@ export default function GameBoardScreen({ route, navigation }) {
                             // полным разбором): убран лишний +1 (бэк уже шлёт turnsTaken
                             // 1-индексным к моменту публикации), turnsTaken===0 — пустая строка
                             // после "Х: " вместо "0/3" (ещё не было ни одного хода в раунде).
-                            if (turnsTaken == null) return 'Х: -';
-                            if (turnsTaken === 0) return 'Х: ';
+                            if (turnsTaken == null) return `${turnLabel}: -`;
+                            if (turnsTaken === 0) return `${turnLabel}: `;
                             return game.turnsPerRound != null
-                                ? `Х: ${turnsTaken}/${game.turnsPerRound}`
-                                : `Х: ${turnsTaken}`;
+                                ? `${turnLabel}: ${turnsTaken}/${game.turnsPerRound}`
+                                : `${turnLabel}: ${turnsTaken}`;
                         })()}
                     </Text>
                 </FramedSquare>
                 <FramedSquare width={widths[2]} height={headerRowH} targetCornerSize={8} glow>
                     <Text style={[styles.seamBonusValue, fontStyle]} numberOfLines={1} noGlobalTint>
-                        {`Б: ${game.trackGain != null && game.trackGain > 0 ? game.trackGain : '—'}`}
+                        {`${t('game.panel.roadBonusShort')}: ${game.trackGain != null && game.trackGain > 0 ? game.trackGain : '—'}`}
                     </Text>
                 </FramedSquare>
                 <FramedSquare variant="person" width={headerRowH} targetCornerSize={32} glow>

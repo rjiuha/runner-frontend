@@ -237,6 +237,19 @@ export default {
     },
 
     game: {
+        runnerTypes: {
+            tank: 'Tank',
+            athlete: 'Athlete',
+            sprinter: 'Scout',
+            reaper: 'Reaper',
+            ball: 'Ball',
+        },
+        abilities: {
+            boost: { hint: 'dice 1–3', shortHint: '1–3' },
+            heal: { hint: 'dice 6', shortHint: '6' },
+            reaper: { hint: 'any dice', shortHint: 'any' },
+            ghost: { hint: 'dice 3–5', shortHint: '3–5' },
+        },
         menu: {
             title: 'Menu',
             leaveBtn: 'Leave game',
@@ -257,6 +270,9 @@ export default {
             turn: 'Turn',
             roadBonus: 'Road bonus',
             runnersTitle: 'Runners',
+            roundShort: 'R',
+            turnShort: 'T',
+            roadBonusShort: 'B',
         },
         hint: {
             reaperApproaching: 'The Reaper is approaching…',
@@ -265,7 +281,7 @@ export default {
             runnerFallbackLabel: 'Runner',
             rollSelected: ({ label }) => `Roll move for ${label} selected — confirm the action`,
             confirmRunnerSelection: ({ label }) => `Confirm the selection of ${label}`,
-            dragDiceToRunner: 'Drag a die onto a runner card',
+            dragDiceToRunner: 'Drag a dice onto a runner card',
             tapDamagedRunner: 'Tap the card of your damaged runner',
             tapCellForReaper: 'Tap a highlighted cell to place the Reaper',
             chooseAbilityOptional: 'Pick a perk, if you want one',
@@ -274,7 +290,7 @@ export default {
             tapExitCell: 'Tap a highlighted cell in the back row — that\'s the way onto the track',
             chooseMoveCell: 'Pick an available cell to move to',
             noActiveRunnerShoot: 'Couldn\'t determine the active runner (sync issue) — only "Skip" is available',
-            applyRoadBonus: 'Apply the road bonus die?',
+            applyRoadBonus: 'Apply the road bonus dice?',
         },
         collision: {
             result: ({ runner, direction }) => `Clash! Result: ${runner} will fly off ${direction}. Accept?`,
@@ -310,12 +326,12 @@ export default {
             playerOut: ({ name }) => `Player ${name} is out of the match`,
             playerStep: ({ id, step, activeRunner }) => `Player ${id}: step → "${step}", active runner ${activeRunner}`,
             playerReset: ({ id, ability }) => `Player ${id}: reset for a new round (ability ${ability})`,
-            stepBegin: ({ playerOrder, step, trackGain }) => `Turn/round started: player ${playerOrder}, game step ${step}, road die ${trackGain}`,
-            stepSelection: ({ player, runner, dice }) => `Player ${player} selected runner ${runner}, die ${dice}`,
+            stepBegin: ({ playerOrder, step, trackGain }) => `Turn/round started: player ${playerOrder}, game step ${step}, road dice ${trackGain}`,
+            stepSelection: ({ player, runner, dice }) => `Player ${player} selected runner ${runner}, dice ${dice}`,
             stepMove: ({ player, runner }) => `Player ${player} moves runner ${runner}: `,
             stepMoveStart: ({ col }) => `start, column ${col}`,
             stepCollision: ({ player, result }) => `Player ${player}: collision — ${result}`,
-            stepRoadBonus: ({ player, result }) => `Player ${player}: road bonus die — ${result}`,
+            stepRoadBonus: ({ player, result }) => `Player ${player}: road bonus dice — ${result}`,
             stepShoot: ({ player, runner }) => `Player ${player}: runner ${runner} shoots — `,
             stepShootDirection: ({ direction }) => `towards ${direction}`,
             stepShootSkipped: 'skipped',
