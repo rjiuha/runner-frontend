@@ -22,12 +22,23 @@ import { spacing } from '../../theme';
 function DiceTray({
     dice, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size,
     ghostX, ghostY, panelOriginX, panelOriginY, vertical = false, color, slotHeight = null,
+    rolling = false,
 }) {
+    // "Слот-машина" (2026-10-26/27, по прямому запросу пользователя) — пока
+    // кубики раскрываются первым ходом игрока в раунде (см. PlayerInfoPanel.js
+    // #startDiceReveal, который на время анимации подменяет `dice`-проп на
+    // случайные мелькающие значения), каждый кубик трясётся САМ (не весь
+    // трей одним блоком — живая жалоба, что все 4 дёргались синхронно как
+    // единое целое). Тряска/поп теперь живут В `DiceDie.js` (каждый
+    // инстанс — свой reanimated shared value + случайная длительность
+    // полуцикла, чтобы визуально не совпадать с соседями) — `rolling`
+    // просто прокидывается вниз без собственной анимации здесь.
     const renderDie = (value, index) => (
         <DiceDie
             key={index}
             value={value}
             draggable={draggable}
+            rolling={rolling}
             onDragStart={onDragStart}
             onDragMove={(x, y, v) => onDragMove(index, x, y, v)}
             onDrop={(x, y, v) => onDrop(index, x, y, v)}

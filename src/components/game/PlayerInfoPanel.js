@@ -180,6 +180,11 @@ function PlayerInfoPanel({
     // landscape использует rockerSwitcher=true, но НЕ compactColumns (большие
     // карточки остаются, см. GameBoardScreen.js).
     rockerSwitcher = false,
+    // myDiceRolled (2026-10-27) — явное нажатие "Бросить кубики" этим
+    // раундом (GameBoardScreen.js, сбрасывается там же на новый раунд) —
+    // см. docstring у diceHidden ниже за полным разбором обоих триггеров
+    // раскрытия кубиков.
+    myDiceRolled = false,
 }) {
     const { t } = useI18n();
     // compactColumns: левая колонка (бегуны) может не поместиться на маленьких
@@ -509,6 +514,12 @@ function PlayerInfoPanel({
         ?? players.find((p) => p.id === myPlayerId)
         ?? players[0];
     const isMyPanel = canAct && activePlayer.id === myPlayerId;
+    // isOwnPlayer (2026-10-26) — ОТДЕЛЬНО от isMyPanel: та ещё гейтится
+    // `canAct` (разрешение именно сейчас тащить кубики), а видимость СВОИХ
+    // кубиков не должна пропадать только потому, что сейчас не мой ход —
+    // владелец видит свои кубики всегда. Используется ТОЛЬКО для
+    // "скрыть/раскрыть кубики другого игрока", см. trayDice ниже.
+    const isOwnPlayer = activePlayer.id === myPlayerId;
     // Панель показывает игрока activePlayer (переключатель), а не обязательно
     // того, чей сейчас реальный игровой ход (game.playerOrder) — см.
     // RunnerCard#turnActive, зелёное имя бегуна должно гаснуть, как только ход
@@ -533,12 +544,95 @@ function PlayerInfoPanel({
     // каждый рендер панели (обычный `.map()`), даже когда ничего из
     // зависимостей реально не менялось — сводило бы на нет `React.memo` у
     // DiceTray ниже (проп `dice` всегда "новый" по ссылке).
-    const trayDice = useMemo(
-        () => activePlayer.dice.map((v, i) =>
+    // Кубики скрыты до "раскрытия" (2026-10-26/27, по прямому запросу
+    // пользователя, живьём откорректировано после первой версии) — ДВА
+    // РАЗНЫХ триггера для двух разных зрителей одной и той же механики:
+    //   - ЧУЖОЙ игрок (наблюдатель) — раскрывается, как только очередь
+    //     ДОХОДИТ до него (не дожидаясь, что он реально сделает ход —
+    //     первая версия ждала подтверждённый SELECT, живой тест показал,
+    //     что пользователь имел в виду именно приход очереди). `turnArrived`
+    //     ниже выведена из уже существующих сигналов, без нового ref/Set на
+    //     "раунд сброса": "сейчас его очередь" (currentTurnPlayerId) ИЛИ
+    //     "уже сделал хотя бы один подтверждённый ход в этом раунде"
+    //     (turnsTaken>0, SELECT всегда идёт первым шагом хода, так что это
+    //     надёжно покрывает "очередь уже была у него раньше в этом раунде,
+    //     сейчас у другого"). Оба сигнала сами сбрасываются на новый раунд
+    //     бэком (player_reset/новый playerOrder) — отдельной ручной очистки
+    //     по raунду не требуется.
+    //   - СВОЙ игрок — раскрывается ТОЛЬКО по явному нажатию кнопки
+    //     "Бросить кубики" в диалоге хода (см. GameBoardScreen.js#
+    //     dialogState, ветка 'rollDice') — `myDiceRolled`-проп, флаг чисто
+    //     фронтовый (бэк кубики уже прислал заранее, тут только ритуал
+    //     показа), сбрасывается на новый раунд там же, в GameBoardScreen.js.
+    // Оба триггера зовут ОДНУ и ту же анимацию "слот-машина" (startDiceReveal),
+    // просто с разным playerId на входе — сам механизм общий.
+    const prevArrivedRef = useRef({});
+    const prevMyDiceRolledRef = useRef(myDiceRolled);
+    const revealTimerRef = useRef(null);
+    const [revealFrame, setRevealFrame] = useState(null); // { playerId, dice:[4] } | null
+
+    const startDiceReveal = useCallback((playerId) => {
+        if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+        const STEPS = 10;
+        let i = 0;
+        const tick = () => {
+            if (i < STEPS) {
+                setRevealFrame({
+                    playerId,
+                    dice: [0, 0, 0, 0].map(() => 1 + Math.floor(Math.random() * 6)),
+                });
+                const t = i / STEPS;
+                i += 1;
+                revealTimerRef.current = setTimeout(tick, 70 + t * t * 320);
+            } else {
+                setRevealFrame(null);
+            }
+        };
+        tick();
+    }, []);
+
+    useEffect(() => () => {
+        if (revealTimerRef.current) clearTimeout(revealTimerRef.current);
+    }, []);
+
+    // Наблюдатель — приход очереди к ЧУЖОМУ игроку, чья панель сейчас
+    // открыта. `prevArrivedRef` копит значение для ВСЕХ игроков (не только
+    // открытого сейчас) — иначе переключение таба на игрока, у которого
+    // очередь была давно (вне поля видимости), ошибочно засчиталось бы за
+    // "только что произошедший" переход.
+    useEffect(() => {
+        players.forEach((p) => {
+            const arrived = String(currentTurnPlayerId) === String(p.id)
+                || (p.turnsTaken != null && p.turnsTaken > 0);
+            const prev = prevArrivedRef.current[p.id];
+            prevArrivedRef.current[p.id] = arrived;
+            if (arrived && prev === false && p.id !== myPlayerId && p.id === activePlayer.id) {
+                startDiceReveal(p.id);
+            }
+        });
+    }, [players, currentTurnPlayerId, activePlayer.id, myPlayerId, startDiceReveal]);
+
+    // Свой игрок — явное нажатие "Бросить кубики" (myDiceRolled: false→true).
+    useEffect(() => {
+        const prev = prevMyDiceRolledRef.current;
+        prevMyDiceRolledRef.current = myDiceRolled;
+        if (myDiceRolled && !prev) {
+            startDiceReveal(myPlayerId);
+        }
+    }, [myDiceRolled, myPlayerId, startDiceReveal]);
+
+    const isRevealing = revealFrame != null && revealFrame.playerId === activePlayer.id;
+    const activePlayerTurnArrived = String(currentTurnPlayerId) === String(activePlayer.id)
+        || (activePlayer.turnsTaken != null && activePlayer.turnsTaken > 0);
+    const diceHidden = !isRevealing && (isOwnPlayer ? !myDiceRolled : !activePlayerTurnArrived);
+
+    const trayDice = useMemo(() => {
+        if (isRevealing) return revealFrame.dice;
+        if (diceHidden) return [null, null, null, null];
+        return activePlayer.dice.map((v, i) =>
             isMyPanel && (pendingAbility?.diceIndex === i || pendingSelect?.diceIndex === i) ? null : v,
-        ),
-        [activePlayer.dice, isMyPanel, pendingAbility?.diceIndex, pendingSelect?.diceIndex],
-    );
+        );
+    }, [activePlayer.dice, isMyPanel, pendingAbility?.diceIndex, pendingSelect?.diceIndex, isRevealing, revealFrame, diceHidden]);
 
     // Подсказка "что делать дальше" (2026-09-14, по прямому запросу
     // пользователя) — `draggingValue` живёт ЗДЕСЬ (не в GameBoardScreen):
@@ -1103,6 +1197,7 @@ function PlayerInfoPanel({
                 <PulseHighlight active={diceHighlight} borderRadius={frameNotchRadius(diceTraySize, 8)} showBackground showBorder={false} />
                 <DiceTray
                     dice={trayDice}
+                    rolling={isRevealing}
                     draggable={dragMode != null}
                     onDragStart={handleDieDragStart}
                     onDragMove={handleDragMove}

@@ -1655,6 +1655,18 @@ export default function GameBoardScreen({ route, navigation }) {
     // опциональный direction в ТОМ ЖЕ вызове /ability, см. handleReaperShoot
     // ниже). pendingAbility к этому моменту уже сброшен в null.
     const [pendingReaperPlacement, setPendingReaperPlacement] = useState(null);
+    // myDiceRolled (2026-10-27, по прямому запросу пользователя) — "Бросить
+    // кубики" на первом ходу раунда — чисто фронтовый ритуал-гейт, бэк уже
+    // прислал значения кубиков заранее вместе со снапшотом раунда, тут
+    // только момент показа. Сбрасывается на НОВЫЙ раунд (game.round
+    // меняется) — см. PlayerInfoPanel.js#diceHidden за полным разбором,
+    // как это сочетается со вторым (автоматическим) триггером раскрытия
+    // для наблюдателей.
+    const [myDiceRolled, setMyDiceRolled] = useState(false);
+    useEffect(() => {
+        setMyDiceRolled(false);
+    }, [game?.round]);
+    const handleRollDice = useCallback(() => setMyDiceRolled(true), []);
     const [busy, setBusy] = useState(false);
     // Игровое меню (кнопка settings в seam-ряду, см. GameMenuButton/
     // GameMenuModal/GameSettingsModal, 2026-10-04) — было 2 уровня, оба
@@ -3241,6 +3253,21 @@ export default function GameBoardScreen({ route, navigation }) {
             // карточку заново, даже если предыдущий игрок успел её закрыть.
             return { kind: `opponentTurn:${currentTurnPlayer?.id ?? 'x'}`, text: t('game.opponentTurn', { name: currentTurnPlayer?.user?.username ?? '—' }) };
         }
+        // "Бросить кубики" (2026-10-27, по прямому запросу пользователя) —
+        // ТОЛЬКО на шаге SELECT, пока сам игрок не нажал кнопку этим
+        // раундом (myDiceRolled). До нажатия кубики на панели пусты (см.
+        // PlayerInfoPanel.js#diceHidden) — тапать по ним всё равно нечему,
+        // поэтому эта ветка стоит ПЕРЕД pendingSelect/обычной SELECT-
+        // подсказкой, а не наоборот: pendingSelect физически не может стать
+        // true раньше, чем кубики видны. Остальные шаги (ABILITY/MOVE/
+        // SHOOT/ROAD_BONUS/коллизия/Жнец) не затронуты — узко на SELECT.
+        if (myStep === PLAYER_STEP.SELECT && !myDiceRolled) {
+            return {
+                kind: 'rollDice',
+                text: t('game.hint.rollDicePrompt'),
+                buttons: [{ key: 'roll', title: t('game.rollDiceBtn'), variant: 'success', onPress: handleRollDice }],
+            };
+        }
         if (pendingReaperPlacement && !busy) {
             // Approach-фаза (Жнец ещё летит из-за края карты) — БЕЗ диалога
             // вообще, ни текста, ни кнопок (2026-10-12, по прямому запросу
@@ -3582,6 +3609,7 @@ export default function GameBoardScreen({ route, navigation }) {
                     myStep={myStep}
                     pendingAbility={pendingAbility}
                     pendingSelect={pendingSelect}
+                    myDiceRolled={myDiceRolled}
                     canSelectRunner={canSelectRunner}
                     highlightSelectIdle={highlightSelectIdle}
                     highlightAbilityIdle={showAbilitySkip}
@@ -3768,6 +3796,7 @@ export default function GameBoardScreen({ route, navigation }) {
                         myStep={myStep}
                         pendingAbility={pendingAbility}
                         pendingSelect={pendingSelect}
+                        myDiceRolled={myDiceRolled}
                         canSelectRunner={canSelectRunner}
                     highlightSelectIdle={highlightSelectIdle}
                     highlightAbilityIdle={showAbilitySkip}

@@ -1,8 +1,10 @@
 // src/components/game/DiceDie.js
-import React, { useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { runOnJS, useAnimatedStyle, useSharedValue, withSpring } from 'react-native-reanimated';
+import Animated, {
+    runOnJS, useAnimatedStyle, useSharedValue, withRepeat, withSequence, withSpring, withTiming,
+} from 'react-native-reanimated';
 import DicePips from './DicePips';
 import { colors } from '../../theme';
 
@@ -68,13 +70,50 @@ const IS_WEB = Platform.OS === 'web';
 export default function DiceDie({
     value, draggable = true, onDragStart, onDragMove, onDrop, onDragEnd, size = 44,
     ghostX, ghostY, panelOriginX, panelOriginY, color,
+    // rolling (2026-10-27, по прямому запросу пользователя — "анимация
+    // общая на все 4 кубика, должна быть своя для каждого") — раньше тряска
+    // жила ОДНИМ Animated.View-враппером вокруг всего DiceTray (все 4
+    // кубика дёргались синхронно, как единый блок). Теперь каждый DiceDie
+    // трясётся САМ — `rollSeedRef` даёт каждому инстансу свою (случайную,
+    // фиксированную на весь жизненный цикл компонента) длительность
+    // полуцикла тряски, чтобы 4 кубика визуально не были в фазе друг с
+    // другом. DiceTray.js больше не оборачивает ряд в свой Animated.View —
+    // просто прокидывает rolling вниз, сюда.
+    rolling = false,
 }) {
     const originX = useSharedValue(0);
     const originY = useSharedValue(0);
     const translateX = useSharedValue(0);
     const translateY = useSharedValue(0);
     const dragging = useSharedValue(false);
+    const rollShake = useSharedValue(0);
+    const rollPop = useSharedValue(1);
+    const rollSeedRef = useRef(100 + Math.random() * 80);
+    const wasRollingRef = useRef(rolling);
     const dieRef = useRef(null);
+
+    useEffect(() => {
+        const wasRolling = wasRollingRef.current;
+        wasRollingRef.current = rolling;
+        if (rolling) {
+            const half = rollSeedRef.current;
+            rollShake.value = withRepeat(
+                withSequence(
+                    withTiming(1, { duration: half }),
+                    withTiming(-1, { duration: half }),
+                ),
+                -1,
+            );
+        } else {
+            rollShake.value = withTiming(0, { duration: 100 });
+            if (wasRolling) {
+                rollPop.value = withSequence(
+                    withTiming(1.12, { duration: 120 }),
+                    withTiming(1, { duration: 120 }),
+                );
+            }
+        }
+    }, [rolling, rollShake, rollPop]);
 
     const measure = useCallback(() => {
         // requestAnimationFrame — см. тот же приём и объяснение в RunnerCard.js.
@@ -87,7 +126,10 @@ export default function DiceDie({
     }, [originX, originY]);
 
     const pan = Gesture.Pan()
-        .enabled(value != null && draggable)
+        // !rolling — во время анимации броска кубик показывает мелькающие
+        // случайные грани (см. PlayerInfoPanel.js#startDiceReveal), но это
+        // ещё не настоящее значение — тащить его в этот момент нельзя.
+        .enabled(value != null && draggable && !rolling)
         .onStart(() => {
             dragging.value = true;
             // onDragStart/onDragEnd (2026-09-14) — сигнал ВЫШЕ (PlayerInfoPanel),
@@ -131,7 +173,8 @@ export default function DiceDie({
         transform: [
             { translateX: translateX.value },
             { translateY: translateY.value },
-            { scale: dragging.value ? 1.18 : 1 },
+            { scale: dragging.value ? 1.18 : rollPop.value },
+            { rotate: `${rollShake.value * 6}deg` },
         ],
         zIndex: dragging.value ? 10 : 1,
         // elevation — Android-специфичный аналог zIndex (2026-09-20, живая
